@@ -66,6 +66,7 @@ create table public.options (
   prompt text not null default '',     -- team only in the UI: how it was generated
   model text not null default '',
   reasoning text not null default '' check (length(reasoning) <= 1000), -- why this option works for the scene
+  refs jsonb not null default '[]',    -- team only in the UI: the images that went into it, [{"label", "path", "thumb"}] in the bucket
   created_by text,
   sort double precision not null default extract(epoch from clock_timestamp()), -- upload order
   created_at timestamptz not null default now()

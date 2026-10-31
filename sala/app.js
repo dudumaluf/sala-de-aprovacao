@@ -44,6 +44,11 @@ const ICON = {
   menu: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="2"/><path d="M6 3v10" /></svg>',
   info: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 7.2v3.8" stroke-linecap="round"/><circle cx="8" cy="5" r="0.4" fill="currentColor"/></svg>',
   up: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M8 10.5V2.5M4.8 5.6 8 2.5l3.2 3.1M2.5 10v3.5h11V10" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  down: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M8 2.5v8M4.8 7.4 8 10.5l3.2-3.1M2.5 13.5h11" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  plus: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke-linecap="round"/></svg>',
+  send: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M14 2 2 6.8l5 2.2 2.2 5zM14 2 7 9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  prev: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  next: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
 };
 const PROMPT_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3M3.6 3.6l2 2M10.4 10.4l2 2M3.6 12.4l2-2M10.4 5.6l2-2" stroke-linecap="round"/></svg>';
 const CMP = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="3" width="5" height="10" rx="1"/><rect x="9" y="3" width="5" height="10" rx="1"/></svg>';
@@ -59,8 +64,9 @@ const S = {
   page: { kind: "round", round: null, scene: null, item: null }, pageKey: "",
   me: store.get(`sala-name-${SIDE}`), drawer: null, mode: {}, uploading: {}, lightbox: null, modal: null,
   navOpen: false, pending: false, flash: null, matFilter: "all",
-  ov: { kind: "all", curate: false, dropped: false, view: store.get("sala-ov-view2") === "grid" ? "grid" : "hero" }, ovList: [], ovSel: {},
-  more: null, sheet: {}, sideOff: store.get("sala-side-off") === "1", scenesOff: store.get("sala-scenes-off") === "1", infoOff: store.get("sala-info-off") === "1",
+  ov: { kind: "all", curate: false, dropped: true, view: store.get("sala-ov-view2") === "grid" ? "grid" : "hero" }, ovList: [], ovSel: {},
+  more: null, dl: false, sheet: {}, wipe: {}, sideOff: store.get("sala-side-off") === "1", scenesOff: store.get("sala-scenes-off") === "1", infoOff: true,
+  navPages: (() => { try { return JSON.parse(store.get("sala-nav-pages") || "{}"); } catch { return {}; } })(),
 };
 
 // ---------- helpers ----------
@@ -125,6 +131,9 @@ const optsOf = (id) => {
   const list = S.options.filter((o) => o.item_id === id);
   return TEAM ? [...list.filter((o) => !dropped(o)), ...list.filter(dropped)] : list;
 };
+// the team's cards show the dropped options too (last, dimmed, "Descartada"), to decide with them on screen;
+// the Descartadas toggle on Visão geral hides them everywhere
+const shownOpts = (id) => optsOf(id).filter((o) => S.ov.dropped || !dropped(o));
 const commentsOf = (id) => S.comments.filter((c) => c.item_id === id);
 const filesOf = (id) => S.files.filter((f) => f.request_id === id);
 const roundOf = (id) => S.rounds.find((r) => r.id === id);
@@ -185,11 +194,12 @@ function resolvePage() {
 }
 function onRoute() {
   resolvePage();
-  const key = `${S.page.kind}/${S.page.round}/${S.page.scene}`;
+  // the team opens an item on its own (its own page); the client still scrolls to it on the scene and flashes it
+  const key = `${S.page.kind}/${S.page.round}/${S.page.scene}${TEAM ? `/${S.page.item || ""}` : ""}`;
   const changed = key !== S.pageKey;
   S.pageKey = key;
   if (changed) { S.drawer = null; S.navOpen = false; }
-  S.flash = S.page.item || null;
+  S.flash = TEAM ? null : S.page.item || null;
   render(true, changed);
   if (S.flash) {
     const el = document.getElementById(`item-${S.flash}`);
@@ -335,7 +345,7 @@ async function zipDownload(pairs, name) {
     const used = new Set();
     const clean = (s) => s.replace(/[\\/:*?"<>|]+/g, "-").trim();
     for (const [n, [f, folder]] of pairs.entries()) {
-      toast(`Preparando o .zip: ${n + 1} de ${pairs.length}…`);
+      toast(`Preparando ${clean(name)}.zip: ${n + 1} de ${pairs.length}…`);
       let entry = (folder ? `${clean(folder)}/` : "") + clean(f.name);
       while (used.has(entry)) entry = entry.replace(/(\.[^.]*)?$/, (ext) => `-${n}${ext}`);
       used.add(entry);
@@ -468,6 +478,7 @@ function render(force = false, newPage = false) {
     if (k === focusKey) { el.focus({ preventScroll: true }); if (caret) try { el.setSelectionRange(...caret); } catch {} }
   });
   $app.querySelectorAll("textarea.brief").forEach(fit);
+  $app.querySelectorAll(".tfit > input").forEach(fitTitle);
   hydrate();
 }
 function fit(t) { t.style.height = "auto"; t.style.height = `${t.scrollHeight}px`; }
@@ -507,8 +518,23 @@ function navGroup(r, scenes) {
   return `<div class="nav-group">
     <div class="nav-parent"><a class="nav ${parentOn ? "on" : ""}" href="#/r/${r.id}${TEAM ? "/visao" : ""}"><span class="ico">${TEAM ? ICON.list : ICON.grid}</span>${TEAM ? "Visão geral" : "Apresentação"}</a>
       ${scenes.length ? `<button class="nav-fold ${S.scenesOff ? "" : "open"}" data-act="fold" aria-expanded="${!S.scenesOff}" title="${S.scenesOff ? "Mostrar" : "Esconder"} as cenas" aria-label="${S.scenesOff ? "Mostrar" : "Esconder"} as cenas"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 4l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>` : ""}</div>
-    ${kids.length ? `<div class="nav-kids">${kids.map(([n, list]) => `<a class="nav ${onScene(n) ? "on" : ""}" href="${sceneHref(r.id, n)}"><span class="num">${two(n)}</span>${esc(sceneName(n))}<i class="dot ${sceneDot(list)}"></i></a>`).join("")}</div>` : ""}
+    ${kids.length ? `<div class="nav-kids">${kids.map(([n, list]) => {
+      const row = `<a class="nav ${onScene(n) ? (S.page.item && TEAM ? "in" : "on") : ""}" href="${sceneHref(r.id, n)}"><span class="num">${two(n)}</span>${esc(sceneName(n))}<i class="dot ${sceneDot(list)}"></i></a>`;
+      if (!TEAM) return row;
+      const open = pageOpen(n, onScene(n));
+      return `<div class="nav-parent">${row}${foldButton("fold-page", open, "os itens", n)}</div>${open ? navItems(r, n, list) : ""}`;
+    }).join("")}</div>` : ""}
   </div>`;
+}
+// each scene folds its list of items on its own, like Visão geral folds the scenes; by default only the open scene is unfolded
+const pageOpen = (n, current) => S.navPages[n] ?? current;
+const foldButton = (act, open, what, v = "") => `<button class="nav-fold ${open ? "open" : ""}" data-act="${act}" data-v="${v}" aria-expanded="${open}" title="${open ? "Esconder" : "Mostrar"} ${what}" aria-label="${open ? "Esconder" : "Mostrar"} ${what}"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M6 4l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg></button>`;
+// the open scene lists its items (team): a click shows that item alone, the scene row goes back to all of them
+function navItems(r, n, list) {
+  return `<div class="nav-items">${list.map((it) => {
+    const [cls, label] = stageOf(it);
+    return `<a class="nav nav-item ${S.page.item === it.id ? "on" : ""}" href="${sceneHref(r.id, n, it.id)}" title="${esc(it.title)} · ${label}"><i class="ovx-dot ${cls}"></i><span>${esc(it.title)}</span></a>`;
+  }).join("")}</div>`;
 }
 const mobileBar = () => `<div class="mobile-bar"><span class="logo">${esc(PROJECT.logo)}</span><button class="btn small" data-act="nav">Menu</button></div>`;
 // the menu icon lives in the sidebar while it is open, and at the start of the page head once it is hidden
@@ -527,9 +553,52 @@ function page() {
   return TEAM ? boardPage(r) : summaryPage(r);
 }
 
+// the page head's actions are round icon buttons with tooltips; a disabled one keeps its tooltip on a wrapper
+// (a disabled .btn takes no pointer events)
 function sendButton(r) {
   const n = itemsOf(r.id).filter(sendable).length;
-  return `<button class="btn primary" data-act="send" ${n ? "" : "disabled"} title="Mostra para ${A_CL} os itens marcados como Pronto: só as opções com ✓ quando o item tem alguma, senão todas menos as descartadas">${n ? `Enviar ${plural(n, "item", "itens")} para ${A_CL}` : "Nada pronto para enviar"}</button>`;
+  const label = n ? `Enviar ${plural(n, "item", "itens")} para ${A_CL}` : "Nada pronto para enviar";
+  return `<span class="hico-tip" title="${label}&#10;Mostra para ${A_CL} os itens marcados como Pronto: só as opções com ✓ quando o item tem alguma, senão todas menos as descartadas"><button class="btn primary hico" data-act="send" ${n ? "" : "disabled"} aria-label="${label}">${ICON.send}${n ? `<b class="badge">${n}</b>` : ""}</button></span>`;
+}
+const addButton = (n) => `<button class="btn hico" data-act="add-item" ${n === undefined ? "" : `data-scene="${n}"`} title="Novo item" aria-label="Novo item">${ICON.plus}</button>`;
+// ⤓ downloads what the page shows: the whole round on its round pages, the scene's items on a scene, the item on its own
+function dlScope() {
+  const p = S.page, r = roundOf(p.round);
+  if (p.kind === "scene") {
+    const items = itemsOf(r.id).filter((x) => x.scene === p.scene);
+    const it = TEAM && p.item && items.find((x) => x.id === p.item);
+    if (it) return { items: [it], label: esc(it.title), zip: `${r.code} ${it.title}` };
+    return { items, label: `${esc(sceneName(p.scene))} · ${plural(items.length, "item", "itens")}`, zip: `${r.code} ${sceneName(p.scene)}` };
+  }
+  const items = itemsOf(r.id);
+  return { items, label: `a rodada ${esc(r.code)} · ${plural(items.length, "item", "itens")}`, zip: `${r.code} ${r.title}`, folders: true };
+}
+// "só aprovadas": what the client approved or picked (the chosen option; the whole set, or the only option, once
+// approved) and, for the team, what it checked (✓); never a dropped option
+function approvedOpts(it) {
+  const opts = optsOf(it.id).filter((o) => !dropped(o));
+  const whole = it.decision === "approved" && (it.mode === "set" || opts.length === 1);
+  return opts.filter((o) => whole || (o.id === it.chosen_option && it.decision !== "changes") || (TEAM && reviewOf(o.id)?.verdict === "keep"));
+}
+// the originals, named like 01_Cozinha_A.jpg (the letter the client sees), one folder per scene for a round
+const slug = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "");
+function dlFiles(s, approved) {
+  return s.items.flatMap((it) => {
+    const all = optsOf(it.id);
+    return (approved ? approvedOpts(it) : TEAM ? shownOpts(it.id) : all).map((o) => {
+      const i = all.indexOf(o);
+      const lab = dropped(o) ? "descartada" : it.mode === "set" ? String(i + 1).padStart(2, "0") : letter(i);
+      const ext = /\.[a-z0-9]+$/i.exec(o.name || o.path)?.[0] || "";
+      return [{ name: `${two(it.scene)}_${slug(it.title)}_${lab}${ext}`, path: o.path }, s.folders ? `${two(it.scene)} ${sceneName(it.scene)}` : ""];
+    });
+  });
+}
+function dlButton() {
+  const s = dlScope();
+  const pop = S.dl ? `<div class="dl-pop" role="menu"><p class="dl-head">Baixar ${s.label}</p>
+    ${[["all", "Tudo"], ["ok", TEAM ? "Só aprovadas" : "Só o que aprovamos"]].map(([v, t]) => { const k = dlFiles(s, v === "ok").length; return `<button class="dl-item" role="menuitem" data-act="dl-zip" data-v="${v}" ${k ? "" : "disabled"}>${t}<small>${plural(k, "arquivo", "arquivos")}</small></button>`; }).join("")}
+  </div>` : "";
+  return `<div class="dl"><button class="btn hico ${S.dl ? "on" : ""}" data-act="dl" title="Baixar ${s.label}" aria-label="Baixar ${s.label}" aria-haspopup="menu" aria-expanded="${!!S.dl}">${ICON.down}</button>${pop}</div>`;
 }
 const sendable = (i) => i.status === "ready" && !i.visible && optsOf(i.id).length > 0;
 
@@ -549,8 +618,8 @@ function boardPage(r) {
     </section>`;
   }).join("");
   return head(esc(r.title), `Até ${fmtDay(r.due)}${r.sent_at ? ` · enviada ${fmtTime(r.sent_at)}` : ""}${r.confirmed_at ? ` · <b class="ok">${esc(CL)} confirmou ${fmtTime(r.confirmed_at)}</b>` : ""}`,
-    `${progress(ready, all.length, `${ready} de ${all.length} prontos · ${withClient} com ${A_CL} · ${approved} aprovados`)}<button class="btn" data-act="add-item">Novo item</button>${sendButton(r)}`, esc(r.code)) +
-    `<div class="main-body fill">${all.length ? `<div class="board" style="--cols:${keys.length}">${cols}</div>` : '<p class="empty">Nenhum item nesta rodada ainda. Use “Novo item” para começar.</p>'}</div>`;
+    `${progress(ready, all.length, `${ready} de ${all.length} prontos · ${withClient} com ${A_CL} · ${approved} aprovados`)}${addButton()}${dlButton()}${sendButton(r)}`, esc(r.code)) +
+    `<div class="main-body fill">${all.length ? `<div class="board" style="--cols:${keys.length}">${cols}</div>` : '<p class="empty">Nenhum item nesta rodada ainda. Use o + (Novo item), no alto, para começar.</p>'}</div>`;
 }
 // how many options each person proposed for an item, most first
 function authorsOf(opts) {
@@ -562,6 +631,8 @@ function authorsOf(opts) {
 // Hover a tile to view, download or give the team verdict; click it for the modal with the scene's reasoning,
 // the prompt and Compare. Everything writes to the same rows the scene pages read.
 const ICO = {
+  copy: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V3.5a1 1 0 0 0-1-1h-6a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2" stroke-linecap="round"/></svg>',
+  open: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9 3h4v4M13 3 7.5 8.5M11.5 9.5v3a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1h3" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   view: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5l-4.5 4.5M2.5 13.5 7 9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   down: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 2.5v8M4.8 7.6 8 10.8l3.2-3.2M2.5 13.5h11" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   keep: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M3 8.5l3.2 3L13 4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>',
@@ -579,13 +650,17 @@ const keptOf = (it) => {
 };
 const toCurate = (it) => it.mode !== "set" && keptOf(it).length > 3;
 // one option as an image with its letter, author and verdict, plus the hover actions: overview cards, contact sheets and scene tiles
-function optFace(it, o, { size, by = false, act = "ov-open", del = false } = {}) {
+function optFace(it, o, { size, by = false, act = "ov-open", del = false, chip = "" } = {}) {
   const i = optsOf(it.id).indexOf(o);
   const rv = reviewOf(o.id) || {};
   const lab = dropped(o) ? "–" : it.mode === "set" ? "" : letter(i);
   const who = by && o.created_by ? `<small>${esc(o.created_by.split(" ")[0])}</small>` : "";
   return `<button class="hero-img" data-act="${act}" data-id="${it.id}" data-i="${i}" aria-label="Abrir ${esc(it.title)} ${lab}">${media(o, size)}</button>
-    ${lab || who ? `<span class="hero-lab">${lab}${who}</span>` : ""}${rv.verdict && rv.verdict !== "drop" ? `<span class="hero-mark ${rv.verdict}" title="${REVIEW[rv.verdict]}${rv.note ? `: ${esc(rv.note)}` : ""}">${ICO[rv.verdict]}</span>` : ""}
+    ${(() => {
+      const tagEl = lab || who || chip ? `<span class="hero-lab">${chip}${lab}${who}</span>` : "";
+      const mark = rv.verdict && rv.verdict !== "drop" ? `<span class="hero-mark ${rv.verdict}" title="${REVIEW[rv.verdict]}${rv.note ? `: ${esc(rv.note)}` : ""}">${ICO[rv.verdict]}</span>` : "";
+      return chip ? `<span class="hero-tags">${tagEl}${mark}${rv.verdict === "drop" ? DROP_TAG : ""}${curateTag(it)}${talkTag(it)}</span>` : tagEl + mark;
+    })()}
     <div class="hero-acts">
       ${Object.keys(REVIEW).map((v) => `<button class="rv ${rv.verdict === v ? "on" : ""}" data-act="review" data-id="${o.id}" data-v="${v}" title="${REVIEW[v]}${v === "drop" ? ` (${A_CL} não vê)` : ""}">${ICO[v]}</button>`).join("")}
       <span class="sep"></span>
@@ -609,11 +684,70 @@ function heroOf(it, opts, { act = "ov-open", del = false } = {}) {
     verdict: reviewOf(o.id)?.verdict,
     pos: `${lab ? `${lab} · ` : ""}${k + 1}/${opts.length}`,
     html: `<div class="hero">
-        ${optFace(it, o, { act, del })}
+        ${optFace(it, o, { act, del, chip: typeChip(it) })}
         ${opts.length > 1 ? `<button class="hero-nav prev" data-act="ov-cycle" data-id="${it.id}" data-v="-1" aria-label="Variação anterior">‹</button><button class="hero-nav next" data-act="ov-cycle" data-id="${it.id}" data-v="1" aria-label="Próxima variação">›</button>
-          <div class="hero-dots">${opts.map((x, j) => `<i class="${j === k ? "on" : ""} ${reviewOf(x.id)?.verdict || ""}"></i>`).join("")}</div>` : ""}
+          <div class="hero-dots">${opts.map((x, j) => `<i class="${j === k ? "on" : ""} ${dropped(x) ? "dropped" : reviewOf(x.id)?.verdict || ""}"></i>`).join("")}</div>` : ""}
       </div>`,
   };
+}
+// what kind of item this is, read from what it holds: a before/after comparison (see pairsOf), renders of a 3D
+// blocking (model "Blender…"), camera angles (kind "plano") or AI generations; a small icon in the corner tag
+const TYPE_ICON = {
+  compare: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M2.8 3.8H8v8.4H2.8z" fill="currentColor" stroke="none" opacity=".45"/><path d="M8 1.8v12.4"/></svg>',
+  blocking: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-dasharray="2 1.6" aria-hidden="true"><path d="M8 1.8 13.5 5v6L8 14.2 2.5 11V5zM2.5 5 8 8.2 13.5 5M8 8.2v6" stroke-linejoin="round"/></svg>',
+  angles: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="1.8" y="4.5" width="9" height="7" rx="1.2"/><path d="M10.8 7.2 14.2 5.4v5.2L10.8 8.8" stroke-linejoin="round"/></svg>',
+  ai: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M8 1.8 9.5 6.5 14.2 8 9.5 9.5 8 14.2 6.5 9.5 1.8 8 6.5 6.5z" stroke-linejoin="round"/></svg>',
+};
+function typeOf(it) {
+  const opts = optsOf(it.id);
+  const pairs = pairsOf(opts);
+  if (pairs.length) return ["compare", pairs.some((p) => p.light) ? "Comparação sem × com" : "Comparação blocking × IA"];
+  if (opts.length && opts.filter((o) => (o.model || "").startsWith("Blender")).length * 2 > opts.length) return ["blocking", "Renders do blocking 3D"];
+  if (it.kind === "plano") return ["angles", "Variações de ângulo"];
+  return ["ai", opts.length > 1 ? "Variações geradas com IA" : "Geração de IA"];
+}
+const typeBadge = (it) => { const [k, label] = typeOf(it); return `<i class="tbadge ${k}" title="${label}" aria-label="${label}">${TYPE_ICON[k]}</i>`; };
+// the same icon, in the item's corner tag on the image (where the option letter is)
+const typeChip = (it) => { const [k, label] = typeOf(it); const t = `${KINDS[it.kind] ? `${KINDS[it.kind]} · ` : ""}${label}`; return `<i class="tico ${k}" title="${t}" aria-label="${t}">${TYPE_ICON[k]}</i>`; };
+const curateTag = (it) => (toCurate(it) ? '<b class="hero-warn" title="Curar até 3 antes de enviar">→ 3</b>' : "");
+const DROP_TAG = `<b class="hero-drop" title="Descartada: ${A_CL} não vê">${ICO.drop}Descartada</b>`;
+// the item's signals stay on the image at all times (top left); its tools live in the bar that shows on hover
+const talkTag = (it) => { const n = commentsOf(it.id).length; return n ? `<b class="hero-talk" title="${plural(n, "comentário", "comentários")}">${CHAT}${n}</b>` : ""; };
+// before/after pairs: options named "<chave>__blocking.*" and "<chave>__ia.*" show as one image with a hover wipe
+// (blocking left of the line, the AI result right of it; the line follows the mouse); arrows and dots step through pairs.
+// "<chave>__sem.*" / "<chave>__com.*" is the same wipe for a look change on one plate (without / with sun), labelled by the captions.
+function pairsOf(opts) {
+  const m = new Map();
+  for (const o of opts) {
+    const r = /^(.*)__(blocking|ia|sem|com)\.[a-z0-9]+$/i.exec(o.name || "");
+    if (!r) continue;
+    const p = m.get(r[1]) || m.set(r[1], {}).get(r[1]);
+    const side = r[2].toLowerCase();
+    if (side === "sem" || side === "com") p.light = true;
+    p[side === "sem" ? "blocking" : side === "com" ? "ia" : side] = o;
+  }
+  return [...m.values()].filter((p) => p.blocking && p.ia).map((p) => Object.assign(p, p.light
+    ? { l: p.blocking.caption || "Sem", r: p.ia.caption || "Com" }
+    : { l: "Blocking 3D", r: "IA" })).sort((a, b) => dropped(a.ia) - dropped(b.ia)); // a dropped result goes last
+}
+function wipeHero(it, pairs) {
+  const k = Math.min(S.wipe[it.id] || 0, pairs.length - 1), p = pairs[k];
+  const rv = reviewOf(p.ia.id) || {};
+  return `<div class="hero wipe ${rv.verdict === "drop" ? "rv-drop" : ""}" data-wipe data-act="wipe-open" data-id="${it.id}" title="Clique para ver grande">
+      <div class="wipe-ia">${media(p.ia, "big")}</div>
+      <div class="wipe-blk">${media(p.blocking, "big")}</div>
+      <i class="wipe-line" aria-hidden="true"></i>
+      <span class="wipe-lab l">${esc(p.l)}</span><span class="wipe-lab r">${esc(p.r)}</span>
+      <span class="hero-tags"><span class="hero-lab">${typeChip(it)}${k + 1}/${pairs.length}</span>${rv.verdict === "drop" ? DROP_TAG : rv.verdict ? `<span class="hero-mark ${rv.verdict}" title="${REVIEW[rv.verdict]}">${ICO[rv.verdict]}</span>` : ""}${talkTag(it)}</span>
+      <div class="hero-acts">
+        ${Object.keys(REVIEW).map((v) => `<button class="rv ${rv.verdict === v ? "on" : ""}" data-act="review" data-id="${p.ia.id}" data-v="${v}" title="${REVIEW[v]} (o resultado da IA)">${ICO[v]}</button>`).join("")}
+        <span class="sep"></span>
+        <button data-act="wipe-open" data-id="${it.id}" title="Ver grande, com as informações">${ICO.view}</button>
+        <button data-act="download" data-id="${p.ia.id}" title="Baixar o resultado">${ICO.down}</button>
+      </div>
+      ${pairs.length > 1 ? `<button class="hero-nav prev" data-act="wipe-step" data-id="${it.id}" data-v="-1" aria-label="Par anterior">‹</button><button class="hero-nav next" data-act="wipe-step" data-id="${it.id}" data-v="1" aria-label="Próximo par">›</button>
+        <div class="hero-dots">${pairs.map((x, j) => `<i class="${j === k ? "on" : ""} ${dropped(x.ia) ? "dropped" : ""}"></i>`).join("")}</div>` : ""}
+    </div>`;
 }
 // a scene reads the same everywhere: the first main kind (casting) on the left, the rest (location…) on the right
 function splitCols(items, fn) {
@@ -631,12 +765,13 @@ function overviewPage(r) {
   const ready = all.filter((i) => i.status === "ready" || i.visible).length;
   const owed = S.requests.filter((q) => !q.done && (!filesOf(q.id).length && !q.note.trim() || /falta/i.test(q.note || ""))).length;
   S.ovList = [];
-  const itemLine = (it, right) => {
+  const itemLine = (it, right, full = true) => {
     const [cls, label] = stageOf(it);
-    return `<span class="t"><i class="ovx-dot ${cls}" title="${label}"></i><small>${KINDS[it.kind] || ""}</small>${esc(it.title)}</span><span class="pos">${right}${toCurate(it) ? ' <b class="warn" title="Curar até 3 antes de enviar">→ 3</b>' : ""}</span>`;
+    if (!full) return `<span class="t"><i class="ovx-dot ${cls}" title="${label}"></i>${esc(it.title)}</span>`;
+    return `<span class="t"><i class="ovx-dot ${cls}" title="${label}"></i>${typeBadge(it)}<small>${KINDS[it.kind] || ""}</small>${esc(it.title)}</span><span class="pos">${right}${toCurate(it) ? ' <b class="warn" title="Curar até 3 antes de enviar">→ 3</b>' : ""}</span>`;
   };
   const visibleOpts = (it) => {
-    const opts = optsOf(it.id).filter((o) => f.dropped || !dropped(o));
+    const opts = shownOpts(it.id);
     opts.forEach((o) => S.ovList.push({ id: it.id, i: optsOf(it.id).indexOf(o) }));
     return opts;
   };
@@ -648,7 +783,7 @@ function overviewPage(r) {
     const h = heroOf(it, opts);
     return `<article class="hcard ${h.verdict ? `rv-${h.verdict}` : ""}">
       ${h.html}
-      <footer class="hcard-foot">${itemLine(it, h.pos)}</footer>
+      <footer class="hcard-foot">${itemLine(it, "", false)}</footer>
     </article>`;
   };
   // "Grade": every option of the item at once, like a contact sheet, to judge range and variety at a glance
@@ -675,9 +810,9 @@ function overviewPage(r) {
     <div class="seg seg-ico" role="group" aria-label="Como ver">${[["hero", ICON.list, "Uma por item"], ["grid", ICON.grid, "Grade"]].map(([k, ico, n]) => `<button data-act="ov-view" data-v="${k}" class="${f.view === k ? "on" : ""}" aria-pressed="${f.view === k}" title="${k === "grid" ? "Todas as opções de cada item lado a lado" : "Uma imagem grande por item"}">${ico}${n}</button>`).join("")}</div>
     <span class="grow"></span>
     <button class="icon-toggle ${f.curate ? "on" : ""}" data-act="ov-curate" aria-pressed="${f.curate}" title="Só os itens com mais de 3 opções ou sem nenhuma">${ICO.funnel}A curar <b>${curate}</b></button>
-    <button class="icon-toggle ${f.dropped ? "on" : ""}" data-act="ov-dropped" aria-pressed="${f.dropped}" title="Mostrar as descartadas (${A_CL} não vê)">${ICO.drop}Descartadas <b>${droppedCount}</b></button>
+    <button class="icon-toggle ${f.dropped ? "on" : ""}" data-act="ov-dropped" aria-pressed="${f.dropped}" title="${f.dropped ? "Esconder" : "Mostrar"} as descartadas em todos os itens (${A_CL} não vê)">${ICO.drop}Descartadas <b>${droppedCount}</b></button>
   </div>`;
-  return head("Visão geral", sub, sendButton(r), `${esc(r.code)} · ${esc(r.title)}`) +
+  return head("Visão geral", sub, dlButton() + sendButton(r), `${esc(r.code)} · ${esc(r.title)}`) +
     `<div class="main-body ov-body" data-keep="main">${bar}${sections || '<p class="empty">Nada com esse filtro.</p>'}</div>`;
 }
 function boardCard(it) {
@@ -720,7 +855,7 @@ function summaryPage(r) {
     return `<div class="ovx"><div class="ovx-head"><i class="ovx-dot ${cls || "pending"}" title="${label}"></i><a class="ovx-title" href="${href}">${esc(it.title)}</a><span class="ovx-meta ${cls}">${label}</span></div>
       <div class="ovt-grid">${opts.map((o, i) => `<a class="ovt ${o.id === it.chosen_option ? "chosen" : ""}" href="${href}" aria-label="${esc(it.title)}">${media(o, "thumb")}${opts.length > 1 && it.mode !== "set" ? `<span class="ovt-lab">${letter(i)}</span>` : ""}</a>`).join("")}</div></div>`;
   };
-  return head(esc(r.title), replyLine(r), progress(done, items.length, `${done} de ${items.length} decididos`), roundLabel(r)) +
+  return head(esc(r.title), replyLine(r), progress(done, items.length, `${done} de ${items.length} decididos`) + dlButton(), roundLabel(r)) +
     `<div class="main-body" data-keep="main">
       <section class="cover">
         <div>
@@ -752,28 +887,45 @@ function reviewPage(r) {
   const box = r.confirmed_at ? `<p><b>${esc(r.code)} confirmada</b> por ${esc(r.confirmed_by)} · ${fmtTime(r.confirmed_at)}.${TEAM ? "" : " Obrigado!"}</p>`
     : pending.length ? `<p>Faltam <b>${plural(pending.length, "decisão", "decisões")}</b> para ${TEAM ? `${A_CL} confirmar` : "confirmar"} a ${esc(r.code)}.</p>${TEAM ? "" : `<a class="btn primary" href="${sceneHref(r.id, pending[0].scene, pending[0].id)}">Ir para a próxima →</a>`}`
     : `<p><b>Tudo decidido</b>${changes ? `, com ${plural(changes, "ajuste pedido", "ajustes pedidos")}` : ""}. ${TEAM ? `Aguardando ${A_CL} confirmar.` : "Confirme para a gente seguir."}</p>${TEAM ? "" : `<button class="btn primary" data-act="confirm-round" data-id="${r.id}">Confirmar ${esc(r.code)}</button>`}`;
-  return head(`Resumo da ${esc(r.code)}`, replyLine(r), progress(done, items.length, `${done} de ${items.length} decididos`), `${esc(r.code)} · ${esc(r.title)}`) +
+  return head(`Resumo da ${esc(r.code)}`, replyLine(r), progress(done, items.length, `${done} de ${items.length} decididos`) + dlButton(), `${esc(r.code)} · ${esc(r.title)}`) +
     `<div class="main-body" data-keep="main"><div class="confirm ${r.confirmed_at ? "ok" : ""}">${box}</div>${sceneTable(r, cell)}</div>`;
 }
 
 // one scene: every item with its options side by side
-function scenePage(r, n) {
+// the pages before and after n (the team also counts the empty page it is looking at)
+function sceneSteps(r, n) {
   const scenes = scenesOf(r.id).map(([k]) => k);
   const all = TEAM ? [...new Set([...scenes, n])].sort((a, b) => a - b) : scenes;
   const i = all.indexOf(n);
-  const prev = all[i - 1], next = all[i + 1];
+  return [all[i - 1], all[i + 1]];
+}
+function scenePage(r, n) {
+  const [prev, next] = sceneSteps(r, n);
   const items = itemsOf(r.id).filter((x) => x.scene === n);
-  const stepper = (prev === undefined ? "" : `<a class="btn small" data-step="-1" href="${sceneHref(r.id, prev)}" title="Cena anterior (←)">‹ ${two(prev)}</a>`) +
-    (next === undefined ? "" : `<a class="btn small" data-step="1" href="${sceneHref(r.id, next)}" title="Próxima cena (→)">${two(next)} ${esc(sceneName(next))} ›</a>`);
+  const focus = TEAM && S.page.item && items.find((x) => x.id === S.page.item);
+  if (focus) return focusPage(r, n, items, focus);
   const approved = items.filter((x) => x.decision === "approved").length;
-  const right = TEAM ? `${stepper}<button class="btn" data-act="add-item" data-scene="${n}">Novo item</button>${sendButton(r)}`
-    : `${progress(approved, items.length, `${approved} de ${items.length} aprovados`)}${stepper}`;
+  const right = TEAM ? `${addButton(n)}${dlButton()}${sendButton(r)}`
+    : `${progress(approved, items.length, `${approved} de ${items.length} aprovados`)}${dlButton()}`;
   const look = lookOf(n);
   const line = [sceneLine(n) ? `“${esc(sceneLine(n))}”` : "",
     look ? `<span class="look"><span class="sw">${(look.palette || []).map((c) => `<i style="background:${esc(c)}"></i>`).join("")}</span>${esc(look.label || "")}</span>` : "",
     TEAM && lookPrompt(n) ? `<button class="link copy" data-act="copy-look" data-v="${n}" title="${esc(lookPrompt(n))}">Copiar prompt da cena</button>` : ""].filter(Boolean).join(" · ");
   return head(`<span class="num">${two(n)}</span>${esc(sceneName(n))}`, line, right, `${esc(r.code)} · ${esc(r.title)}`) +
     `<div class="main-body" data-keep="main">${!items.length ? `<p class="empty">Nenhum item nesta cena.${TEAM ? ' <button class="link" data-act="add-item" data-scene="' + n + '">Criar um</button>' : ""}</p>` : TEAM ? splitCols(items, teamRow) : `<div class="items">${items.map(clientRow).join("")}</div>`}${TEAM ? "" : `<nav class="cnav">${prev !== undefined ? `<a class="btn" href="${sceneHref(r.id, prev)}">← ${two(prev)} ${esc(sceneName(prev))}</a>` : `<a class="btn" href="#/r/${r.id}">← Apresentação</a>`}<span class="grow"></span>${next !== undefined ? `<a class="btn primary" href="${sceneHref(r.id, next)}">Próxima: ${two(next)} ${esc(sceneName(next))} →</a>` : `<a class="btn primary" href="#/r/${r.id}/resumo">Ver o resumo e confirmar →</a>`}</nav>`}</div>`;
+}
+// one item on its own (team, from the menu): the item at full width, every version of it underneath, and the
+// arrows (and ← →) going to the previous or next item of the scene
+function focusPage(r, n, items, it) {
+  const k = items.indexOf(it), prev = items[k - 1], next = items[k + 1];
+  const arrow = (x, d, ico, t) => x ? `<a class="btn hico" data-step="${d}" href="${sceneHref(r.id, n, x.id)}" title="${t} (${d < 0 ? "←" : "→"}): ${esc(x.title)}" aria-label="${t}">${ico}</a>` : `<span class="btn hico off" aria-hidden="true">${ico}</span>`;
+  const stepper = `<a class="btn hico" href="${sceneHref(r.id, n)}" title="Todos os itens de ${esc(sceneName(n))}" aria-label="Todos os itens da cena">${ICON.grid}</a>`
+    + arrow(prev, -1, ICON.prev, "Item anterior") + arrow(next, 1, ICON.next, "Próximo item");
+  const opts = shownOpts(it.id);
+  const strip = opts.length > 1
+    ? `<section class="focus-all"><p class="side-label">${plural(opts.length, "versão", "versões")}</p><div class="csh-grid">${opts.map((o) => sheetTile(it, o, { act: "zoom", del: true })).join("")}</div></section>` : "";
+  return head(`<span class="num">${two(n)}</span>${esc(it.title)}`, it.brief ? esc(it.brief) : "", `<span class="hgroup">${stepper}</span>${dlButton()}${sendButton(r)}`, `${esc(r.code)} · ${esc(sceneName(n))} · ${k + 1} de ${items.length}`) +
+    `<div class="main-body focus-body" data-keep="main"><div class="focus-one">${teamRow(it)}</div>${strip}</div>`;
 }
 // an item's refs are the client's files: photos for Compare, voice takes to listen to next to the options
 const refFiles = (it) => (it.refs || []).map((id) => S.files.find((f) => f.id === id)).filter(Boolean);
@@ -817,47 +969,56 @@ function clientRow(it) {
   </article>`;
 }
 // team item on a scene page: the overview card (one big image, arrows through the versions), the grid icon swaps it
-// for the contact sheet of every version; title, tools and "⋯" share the thin line under the image
+// for the contact sheet of every version; title, tools and "⋯" show in two pills on the image
+// the title pill is as wide as its text: a hidden copy of it (data-v, see .tfit) sets the width
+const fitTitle = (t) => (t.parentNode.dataset.v = t.value);
 function teamRow(it) {
   const all = optsOf(it.id);
-  const opts = all.filter((o) => S.ov.dropped || !dropped(o));
+  const opts = shownOpts(it.id);
   const [cls, label] = stageOf(it);
   const ci = all.findIndex((o) => o.id === it.chosen_option);
   const L = ci >= 0 && all.length > 1 ? letter(ci) : "";
+  // the client's answer, short in the title pill; who and when in its tooltip
   const fb = it.visible && (it.decision !== "pending" || L)
-    ? `${esc(CL)} ${it.decision === "approved" ? "aprovou" : it.decision === "changes" ? "pediu ajuste" : "escolheu"}${L ? ` ${L}` : ""}${it.decided_by ? ` · ${esc(it.decided_by)}, ${fmtTime(it.decided_at)}` : ""}` : "";
+    ? `${esc(CL)} ${it.decision === "approved" ? "aprovou" : it.decision === "changes" ? "pediu ajuste" : "escolheu"}${L ? ` ${L}` : ""}` : "";
+  const fbBy = fb && it.decided_by ? ` · ${esc(it.decided_by)}, ${fmtTime(it.decided_at)}` : "";
   const n = commentsOf(it.id).length;
   const open = S.more === it.id;
   const grid = S.sheet[it.id] || (all.length && !opts.length);
-  const h = opts.length && !grid ? heroOf(it, opts, { act: "zoom", del: true }) : null;
+  const pairs = !grid ? pairsOf(opts) : [];
+  const h = opts.length && !grid && !pairs.length ? heroOf(it, opts, { act: "zoom", del: true }) : null;
   const upload = `<input type="file" multiple hidden accept="image/*,video/*" data-upload-item="${it.id}">`;
-  const body = !all.length
+  const body = pairs.length ? wipeHero(it, pairs)
+    : !all.length
     ? `<label class="hero hero-empty" title="Arraste, clique ou cole (⌘V)">${upload}${S.uploading[it.id] ? esc(S.uploading[it.id]) : "Adicionar opções"}</label>`
     : h ? h.html : `<div class="csh-grid">${all.map((o) => sheetTile(it, o, { act: "zoom", del: true })).join("")}</div>`;
-  const pos = S.uploading[it.id] ? esc(S.uploading[it.id]) : h ? h.pos : all.length ? plural(all.length, "versão", "versões") : "";
+  // nothing under the image: signals sit top left on it, the image's own actions top right, and on hover two small
+  // pills along the bottom edge, status and title on the left, the card's tools on the right; they stay up while
+  // the popover or the comments are open
+  const pos = S.uploading[it.id] ? esc(S.uploading[it.id]) : "";
   return `<article class="hcard sitem ${h?.verdict ? `rv-${h.verdict}` : ""} ${S.flash === it.id ? "flash" : ""}" id="item-${it.id}" data-drop="${it.id}">
+    <div class="sitem-media">
     ${body}
-    <footer class="hcard-foot sitem-foot">
-      <span class="t"><i class="ovx-dot ${cls}" title="${label}${it.assignee ? ` · ${esc(PEOPLE[it.assignee] || it.assignee)}` : ""}${it.visible ? ` · ${A_CL} vê` : ""}"></i><small>${KINDS[it.kind] || ""}</small><input class="inline title" data-field="title" data-id="${it.id}" value="${esc(it.title)}" maxlength="120" aria-label="Título"></span>
-      ${fb ? `<span class="sitem-fb">${fb}</span>` : ""}
-      ${pos ? `<span class="pos">${pos}${toCurate(it) ? ' <b class="warn" title="Curar até 3 antes de enviar">→ 3</b>' : ""}</span>` : ""}
-      <span class="sitem-tools">
+    <footer class="hcard-foot sitem-foot ${open || S.drawer === it.id || pos ? "pin" : ""}">
+      <span class="t sitem-pill"><i class="ovx-dot ${cls}" title="${label}${it.assignee ? ` · ${esc(PEOPLE[it.assignee] || it.assignee)}` : ""}${it.visible ? ` · ${A_CL} vê` : ""}"></i><span class="tfit" data-v="${esc(it.title)}"><input class="inline title" data-field="title" data-id="${it.id}" value="${esc(it.title)}" maxlength="120" size="1" aria-label="Título" title="${esc(it.brief || it.title)}"></span>${fb ? `<span class="sitem-fb" title="${fb}${fbBy}">${fb}</span>` : ""}${pos ? `<span class="pos">${pos}</span>` : ""}</span>
+      <span class="sitem-tools sitem-pill">
         ${all.length > 1 ? `<button class="ibtn ${grid ? "on" : ""}" data-act="item-sheet" data-id="${it.id}" aria-pressed="${!!grid}" title="${grid ? "Voltar para a imagem grande" : "Ver todas as versões juntas"}" aria-label="Ver todas as versões juntas">${ICON.grid}</button>` : ""}
         ${refsOf(it).length && all.length ? `<button class="ibtn" data-act="compare" data-id="${it.id}" title="Comparar com as fotos originais" aria-label="Comparar">${CMP}</button>` : ""}
-        <button class="ibtn ${S.drawer === it.id ? "on" : ""}" data-act="drawer" data-id="${it.id}" title="Comentários" aria-label="Comentários">${CHAT}${n ? `<b>${n}</b>` : ""}</button>
+        <button class="ibtn ${S.drawer === it.id ? "on" : ""} ${n ? "has" : ""}" data-act="drawer" data-id="${it.id}" title="Comentários" aria-label="Comentários">${CHAT}${n ? `<b>${n}</b>` : ""}</button>
         ${all.length ? `<label class="ibtn" title="Adicionar opções (ou arraste para o card, ou cole com ⌘V)" aria-label="Adicionar opções">${upload}+</label>` : ""}
         <button class="ibtn ${open ? "on" : ""}" data-act="more" data-id="${it.id}" title="Dono, status, o que ${A_CL} vê, prompts" aria-label="Mais" aria-expanded="${open}">⋯</button>
+        ${open ? morePop(it) : ""}
       </span>
-      ${open ? morePop(it) : ""}
     </footer>
-    <input class="inline brief-in" data-field="brief" data-id="${it.id}" value="${esc(it.brief)}" placeholder="Briefing para o time" maxlength="400" title="${esc(it.brief)}" aria-label="Briefing">
+    </div>
     ${voicesLine(it)}
   </article>`;
 }
 function morePop(it) {
   const vars = Object.keys(it.variants || {}).sort();
   return `<div class="more-pop" role="dialog" aria-label="Ajustes de ${esc(it.title)}">
-    <div class="mp-row"><span>Dono</span><select class="sel" data-field="assignee" data-id="${it.id}" aria-label="Responsável"><option value="">Sem dono</option>${Object.entries(PEOPLE).map(([k, n]) => `<option value="${k}" ${it.assignee === k ? "selected" : ""}>${n}</option>`).join("")}</select></div>
+    <div class="mp-row"><span>Briefing</span><input class="field mp-brief" data-field="brief" data-id="${it.id}" value="${esc(it.brief)}" placeholder="Briefing para o time" maxlength="400" aria-label="Briefing"></div>
+    <div class="mp-row"><span>Dono</span><select class="sel" data-field="assignee" data-id="${it.id}" aria-label="Responsável"><option value="">Sem dono</option>${Object.entries(PEOPLE).map(([k, n]) => `<option value="${k}" ${it.assignee === k ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
     <div class="mp-row"><span>Status</span><div class="seg" role="group" aria-label="Status">${Object.entries(STATUS).map(([k, n]) => `<button data-act="status" data-id="${it.id}" data-v="${k}" class="${it.status === k ? "on" : ""}" aria-pressed="${it.status === k}">${n}</button>`).join("")}</div></div>
     <div class="mp-row"><span>${esc(cap(A_CL))}</span><button class="vis" data-act="mode" data-id="${it.id}" title="${it.mode === "set" ? `As opções são vistas como uma coisa só: ${A_CL} aprova o conjunto` : `${cap(A_CL)} escolhe uma das opções`}">${it.mode === "set" ? "Aprova o conjunto" : "Escolhe uma"}</button><button class="vis ${it.visible ? "on" : ""}" data-act="visible" data-id="${it.id}" title="${it.visible ? `${cap(A_CL)} está vendo. Clique para esconder.` : `Mostrar só este item para ${A_CL}`}">${it.visible ? "Já vê" : "Oculto"}</button></div>
     ${vars.length ? `<div class="mp-row"><span>Prompts</span><span class="vars" title="Prompt pronto de cada direção do briefing: clique para copiar e colar no gerador de imagens">${vars.map((k) => { const n = k.charCodeAt(0) - 64; return `<button class="link" data-act="copy-var" data-id="${it.id}" data-v="${k}" data-n="${n}" title="Copiar o prompt da direção ${n}: ${esc(variantPrompt(it, k))}">${n}</button>`; }).join("")}</span></div>` : ""}
@@ -971,7 +1132,42 @@ function compareView() {
     </div>
   </div>`;
 }
+// the same before/after wipe, full screen: arrows (and ← →) step through the pairs
+function wipeView() {
+  const it = itemOf(S.lightbox.wipe);
+  const pairs = it ? pairsOf(shownOpts(it.id)) : [];
+  if (!pairs.length) return "";
+  const k = Math.min(S.wipe[it.id] || 0, pairs.length - 1), p = pairs[k];
+  const note = p.light
+    ? `<p class="lb-text dim">Passe o mouse na imagem: à esquerda do traço ${esc(p.l.toLowerCase())}, à direita ${esc(p.r.toLowerCase())}. A legenda, a avaliação e o prompt abaixo são da versão da direita.</p>`
+    : `<p class="lb-text dim">Passe o mouse na imagem: à esquerda do traço o blocking 3D, à direita o resultado da IA. A legenda, a avaliação e o prompt abaixo são do resultado.</p>`;
+  return `<div class="lb lb-team" data-act="lb-bg" role="dialog" aria-modal="true" aria-label="Comparar ${esc(it.title)}">
+    <div class="lb-top"><span><b>${esc(it.title)}</b> · par ${k + 1} de ${pairs.length}</span>${lbTools()}</div>
+    <div class="lb-split ${S.infoOff ? "info-off" : ""}">
+      <div class="lb-stage">
+        ${pairs.length > 1 ? `<button class="lb-nav prev" data-act="wipe-step" data-id="${it.id}" data-v="-1" aria-label="Par anterior">‹</button><button class="lb-nav next" data-act="wipe-step" data-id="${it.id}" data-v="1" aria-label="Próximo par">›</button>` : ""}
+        <div class="lb-frame wipe" data-wipe>
+          <div class="wipe-ia">${media(p.ia, "big")}</div>
+          <div class="wipe-blk">${media(p.blocking, "big")}</div>
+          <i class="wipe-line" aria-hidden="true"></i>
+          <span class="wipe-lab l">${esc(p.l)}</span><span class="wipe-lab r">${esc(p.r)}</span>
+          ${lbHud(it, p.ia)}
+        </div>
+      </div>
+      ${infoPanel(it, p.ia, { note })}
+    </div>
+  </div>`;
+}
+// the option a team lightbox is showing (for the wipe, the AI result of the current pair)
+function lbOption() {
+  if (S.lightbox?.wipe) {
+    const pairs = pairsOf(shownOpts(S.lightbox.wipe));
+    return pairs[Math.min(S.wipe[S.lightbox.wipe] || 0, pairs.length - 1)]?.ia;
+  }
+  return S.lightbox?.id ? optsOf(S.lightbox.id)[S.lightbox.i] : null;
+}
 function lightbox() {
+  if (S.lightbox.wipe) return wipeView();
   if (S.lightbox.cmp) return compareView();
   if (S.lightbox.req) return fileViewer();
   const { id, i } = S.lightbox;
@@ -996,40 +1192,64 @@ function lightbox() {
 }
 
 function teamLightbox(it, opts, o, i) {
-  const rv = reviewOf(o.id) || {};
   const lab = dropped(o) ? "descartada" : it.mode === "set" ? `${i + 1} de ${opts.length}` : `Opção ${letter(i)} de ${opts.filter((x) => !dropped(x)).length}`;
   const pos = S.lightbox.ov ? S.ovList.findIndex((x) => x.id === it.id && x.i === i) : -1;
   const many = S.lightbox.ov ? S.ovList.length > 1 : opts.length > 1;
   return `<div class="lb lb-team" data-act="lb-bg" role="dialog" aria-modal="true" aria-label="${esc(it.title)}">
-    <div class="lb-top"><span><b>${esc(it.title)}</b> · ${lab}${pos >= 0 ? ` · ${pos + 1} de ${S.ovList.length} na visão geral` : ""}</span>
-      <span class="lb-tools"><button class="lb-info ${S.infoOff ? "" : "on"}" data-act="lb-info" aria-pressed="${!S.infoOff}" title="${S.infoOff ? "Mostrar" : "Esconder"} as informações (I)" aria-label="Informações">${ICON.info}</button><button class="link" data-act="lb-close">Fechar ✕</button></span></div>
+    <div class="lb-top"><span><b>${esc(it.title)}</b> · ${lab}${pos >= 0 ? ` · ${pos + 1} de ${S.ovList.length} na visão geral` : ""}</span>${lbTools()}</div>
     <div class="lb-split ${S.infoOff ? "info-off" : ""}">
-      <div class="lb-stage">${media(o, "big")}
+      <div class="lb-stage">
         ${many ? `<button class="lb-nav prev" data-act="lb-step" data-v="-1" aria-label="Anterior">‹</button><button class="lb-nav next" data-act="lb-step" data-v="1" aria-label="Próxima">›</button>` : ""}
+        <div class="lb-frame">${media(o, "big")}${lbHud(it, o, { del: true })}</div>
       </div>
-      <aside class="lb-panel" data-keep="lbp">
-        <p class="eyebrow"><span class="num">${two(it.scene)}</span> ${esc(sceneName(it.scene))} · ${KINDS[it.kind] || ""}</p>
-        ${sceneLine(it.scene) ? `<p class="lb-line">“${esc(sceneLine(it.scene))}”</p>` : ""}
-        <div class="lb-sec"><p class="side-label">Legenda (${A_CL} vê)${o.created_by ? ` · por ${esc(o.created_by)}` : ""}</p><input class="field lb-capin" data-cap="${o.id}" value="${esc(o.caption)}" placeholder="Uma linha sobre esta opção" maxlength="140" aria-label="Legenda"></div>
-        <div class="lb-sec">
-          <p class="side-label">Avaliação do time</p>
-          <div class="seg">${Object.entries(REVIEW).map(([v, n]) => `<button data-act="review" data-id="${o.id}" data-v="${v}" class="${rv.verdict === v ? "on" : ""}" aria-pressed="${rv.verdict === v}">${n}</button>`).join("")}</div>
-          <input class="rv-note" data-rv="${o.id}" value="${esc(rv.note || "")}" placeholder="Por quê? O que melhorar?" maxlength="2000" aria-label="Nota do time">
-          ${rv.author && (rv.note || rv.verdict) ? `<small class="dim">${esc(rv.author)} · ${fmtTime(rv.updated_at)}</small>` : ""}
-        </div>
-        ${it.brief ? `<div class="lb-sec"><p class="side-label">A cena</p><p class="lb-text">${esc(it.brief)}</p></div>` : ""}
-        <div class="lb-sec"><p class="side-label">Por que esta opção</p><textarea class="field lb-reason" data-reason="${o.id}" rows="3" maxlength="1000" placeholder="O raciocínio desta imagem: por que ela funciona para a cena">${esc(o.reasoning || "")}</textarea></div>
-        ${o.prompt ? `<div class="lb-sec"><p class="side-label">Prompt · ${esc(o.model || "")}</p><p class="lb-text lb-ptext">${esc(o.prompt)}</p><button class="btn small" data-act="copy-prompt" data-id="${o.id}">Copiar prompt</button></div>` : `<div class="lb-sec"><p class="side-label">Prompt</p><p class="lb-text dim">Sem prompt registrado.</p></div>`}
-        <div class="lb-acts">
-          <button class="btn small" data-act="download" data-id="${o.id}">${ICO.down}Baixar original</button>
-          ${refsOf(it).length ? `<button class="btn small" data-act="lb-compare" data-id="${it.id}">${CMP}Comparar com o material</button>` : ""}
-          <a class="btn small" href="${sceneHref(it.round_id, it.scene, it.id)}" data-act="lb-close">Abrir na cena</a>
-          <button class="btn small danger" data-act="opt-del" data-id="${o.id}">${ICO.trash}Excluir</button>
-        </div>
-        <p class="lb-keys">← → navegar · M manter · R refazer · D descartar · I informações · Esc fechar</p>
-      </aside>
+      ${infoPanel(it, o)}
     </div>
   </div>`;
+}
+// the info button and Fechar, top right of every team lightbox; the panel starts closed and only a click (or I) opens it
+const lbTools = () => `<span class="lb-tools"><button class="lb-info ${S.infoOff ? "" : "on"}" data-act="lb-info" aria-pressed="${!S.infoOff}" title="${S.infoOff ? "Mostrar" : "Esconder"} as informações (I)" aria-label="Informações">${ICON.info}</button><button class="link" data-act="lb-close">Fechar ✕</button></span>`;
+// the verdict and the actions as a row of icons over the image, shown on hover
+function lbHud(it, o, { del = false } = {}) {
+  const rv = reviewOf(o.id) || {};
+  return `<div class="lb-hud" role="toolbar" aria-label="Ações desta opção">
+    <span class="lb-hud-g">${Object.entries(REVIEW).map(([v, n]) => `<button class="hud ${v} ${rv.verdict === v ? "on" : ""}" data-act="review" data-id="${o.id}" data-v="${v}" title="${n} (${{ keep: "M", redo: "R", drop: "D" }[v]})" aria-label="${n}" aria-pressed="${rv.verdict === v}">${ICO[v]}</button>`).join("")}</span>
+    <span class="lb-hud-g">
+      ${o.prompt ? `<button class="hud" data-act="copy-prompt" data-id="${o.id}" title="Copiar prompt" aria-label="Copiar prompt">${ICO.copy}</button>` : ""}
+      <button class="hud" data-act="download" data-id="${o.id}" title="Baixar original" aria-label="Baixar original">${ICO.down}</button>
+      ${refsOf(it).length ? `<button class="hud" data-act="lb-compare" data-id="${it.id}" title="Comparar com o material" aria-label="Comparar com o material">${CMP}</button>` : ""}
+      <a class="hud" href="${sceneHref(it.round_id, it.scene, it.id)}" data-act="lb-close" title="Abrir na cena" aria-label="Abrir na cena">${ICO.open}</a>
+      ${del ? `<button class="hud danger" data-act="opt-del" data-id="${o.id}" title="Excluir" aria-label="Excluir">${ICO.trash}</button>` : ""}
+    </span>
+  </div>`;
+}
+// the reference images that went into this option (store photos, logo, products, cast, blocking, an earlier
+// generation) as small thumbnails; hovering one shows it larger with its name
+function refsBlock(o) {
+  const refs = Array.isArray(o.refs) ? o.refs : [];
+  if (!refs.length) return "";
+  return `<div class="lb-sec"><p class="side-label">Referências usadas · ${refs.length}</p>
+    <div class="lb-refs">${refs.map((r) => `<span class="lb-ref" tabindex="0" aria-label="${esc(r.label)}"><img data-path="${esc(r.thumb || r.path)}" alt="" decoding="async"${srcAttr(r.thumb || r.path)}><span class="lb-ref-peek"><img data-path="${esc(r.path)}" alt="" decoding="async"${srcAttr(r.path)}><small>${esc(r.label)}</small></span></span>`).join("")}</div>
+  </div>`;
+}
+function infoPanel(it, o, { note = "" } = {}) {
+  const rv = reviewOf(o.id) || {};
+  return `<aside class="lb-panel" data-keep="lbp">
+    <p class="eyebrow"><span class="num">${two(it.scene)}</span> ${esc(sceneName(it.scene))} · ${KINDS[it.kind] || ""}</p>
+    ${sceneLine(it.scene) ? `<p class="lb-line">“${esc(sceneLine(it.scene))}”</p>` : ""}
+    ${note}
+    <p class="lb-meta">${esc(o.model || "Modelo não registrado")}${o.created_at ? ` · ${fmtTime(o.created_at)}` : ""}${o.created_by ? ` · ${esc(o.created_by)}` : ""}</p>
+    ${it.brief ? `<div class="lb-sec"><p class="side-label">A cena</p><p class="lb-text">${esc(it.brief)}</p></div>` : ""}
+    <div class="lb-sec"><p class="side-label">Legenda (${A_CL} vê)</p><input class="field lb-capin" data-cap="${o.id}" value="${esc(o.caption)}" placeholder="Uma linha sobre esta opção" maxlength="140" aria-label="Legenda"></div>
+    <div class="lb-sec">
+      <p class="side-label rv-head">Avaliação do time${rv.verdict ? `<b class="rv-tag" data-v="${rv.verdict}">${ICO[rv.verdict]}${REVIEW[rv.verdict]}</b>` : ""}</p>
+      <input class="rv-note" data-rv="${o.id}" value="${esc(rv.note || "")}" placeholder="Por quê? O que melhorar?" maxlength="2000" aria-label="Nota do time">
+      ${rv.author && (rv.note || rv.verdict) ? `<small class="dim">${esc(rv.author)} · ${fmtTime(rv.updated_at)}</small>` : ""}
+    </div>
+    ${refsBlock(o)}
+    <div class="lb-sec"><p class="side-label">Por que esta opção</p><textarea class="field lb-reason" data-reason="${o.id}" rows="3" maxlength="1000" placeholder="O raciocínio desta imagem: por que ela funciona para a cena">${esc(o.reasoning || "")}</textarea></div>
+    ${o.prompt ? `<div class="lb-sec"><p class="side-label">Prompt</p><p class="lb-text lb-ptext">${esc(o.prompt)}</p></div>` : `<div class="lb-sec"><p class="side-label">Prompt</p><p class="lb-text dim">Sem prompt registrado.</p></div>`}
+    <p class="lb-keys">← → navegar · M manter · R refazer · D descartar · I informações · Esc fechar</p>
+  </aside>`;
 }
 function modal() {
   if (S.modal === "name" && TEAM) {
@@ -1087,8 +1307,26 @@ const ACTS = {
   me(el) { S.me = el.dataset.v; store.set(`sala-name-${SIDE}`, S.me); S.modal = null; render(true); },
   nav() { S.navOpen = !S.navOpen; render(true); },
   fold() { S.scenesOff = !S.scenesOff; store.set("sala-scenes-off", S.scenesOff ? "1" : "0"); render(true); },
+  "fold-page"(el) {
+    const n = +el.dataset.v;
+    S.navPages[n] = !pageOpen(n, S.page.kind === "scene" && S.page.scene === n);
+    store.set("sala-nav-pages", JSON.stringify(S.navPages));
+    render(true);
+  },
+  "wipe-open"(el) { S.lightbox = { wipe: el.dataset.id }; render(true); },
+  "wipe-step"(el) {
+    const id = el.dataset.id, n = pairsOf(shownOpts(id)).length;
+    S.wipe[id] = ((S.wipe[id] || 0) + +el.dataset.v + n) % n;
+    render(true);
+  },
   "item-sheet"(el) { S.sheet[el.dataset.id] = !S.sheet[el.dataset.id]; render(true); },
   more(el) { S.more = S.more === el.dataset.id ? null : el.dataset.id; render(true); },
+  dl() { S.dl = !S.dl; render(true); },
+  "dl-zip"(el) {
+    const s = dlScope(), ok = el.dataset.v === "ok";
+    S.dl = false; render(true);
+    zipDownload(dlFiles(s, ok), `${s.zip}${ok ? (TEAM ? " - aprovadas" : " - aprovado") : ""}`);
+  },
   side() { S.sideOff = !S.sideOff; store.set("sala-side-off", S.sideOff ? "1" : "0"); render(true); },
   "lb-info"() { toggleInfo(); },
   "ov-view"(el) { S.ov.view = el.dataset.v; store.set("sala-ov-view2", S.ov.view); render(); },
@@ -1107,7 +1345,7 @@ const ACTS = {
   undo(el) { const it = itemOf(el.dataset.id); decide(it.id, it.chosen_option, "pending"); },
   reopen(el) { decide(el.dataset.id, null, "pending", `Reaberto para ${A_CL}`); },
   zoom(el) { S.lightbox = { id: el.dataset.id, i: +el.dataset.i }; render(true); },
-  "lb-close"() { S.lightbox = S.lightbox?.back || null; render(true); },
+  "lb-close"() { S.lightbox = S.lightbox?.back || null; if (!S.lightbox) S.infoOff = true; render(true); },
   compare(el) { S.lightbox = { cmp: el.dataset.id, r: 0, i: 0 }; render(true); },
   "cmp-ref"(el) { S.lightbox.r = +el.dataset.v; render(true); },
   "cmp-opt"(el) { S.lightbox.i = +el.dataset.v; render(true); },
@@ -1157,7 +1395,7 @@ const ACTS = {
   "ov-dropped"() { S.ov.dropped = !S.ov.dropped; render(); },
   "ov-open"(el) { S.lightbox = { id: el.dataset.id, i: +el.dataset.i, ov: true }; render(true); },
   "ov-cycle"(el) {
-    const opts = optsOf(el.dataset.id).filter((o) => S.ov.dropped || !dropped(o));
+    const opts = shownOpts(el.dataset.id);
     const k = Math.max(0, opts.findIndex((o) => o.id === S.ovSel[el.dataset.id]));
     S.ovSel[el.dataset.id] = opts[(k + +el.dataset.v + opts.length) % opts.length].id;
     render(true);
@@ -1229,6 +1467,7 @@ const ACTS = {
 };
 function step(d) {
   if (!S.lightbox) return;
+  if (S.lightbox.wipe) return ACTS["wipe-step"]({ dataset: { id: S.lightbox.wipe, v: d } });
   if (S.lightbox.cmp) {  // arrows walk through the original photos
     const n = refsOf(itemOf(S.lightbox.cmp)).length;
     S.lightbox.r = (S.lightbox.r + d + n) % n;
@@ -1247,7 +1486,7 @@ function step(d) {
 }
 function toggleInfo() {
   S.infoOff = !S.infoOff;
-  store.set("sala-info-off", S.infoOff ? "1" : "0");
+
   $app.querySelector(".lb-split")?.classList.toggle("info-off", S.infoOff);
   const b = $app.querySelector(".lb-info");
   if (b) { b.classList.toggle("on", !S.infoOff); b.setAttribute("aria-pressed", String(!S.infoOff)); b.title = `${S.infoOff ? "Mostrar" : "Esconder"} as informações (I)`; }
@@ -1259,13 +1498,18 @@ function focusCompose() {
 }
 function stepScene(d) {
   const a = $app.querySelector(`[data-step="${d}"]`);
-  if (a) location.hash = a.getAttribute("href");
+  if (a) { location.hash = a.getAttribute("href"); return; }
+  const r = roundOf(S.page.round);
+  if (!r || $app.querySelector(".focus-one")) return;
+  const n = sceneSteps(r, S.page.scene)[d < 0 ? 0 : 1];
+  if (n !== undefined) location.hash = sceneHref(r.id, n);
 }
 
 // ---------- events ----------
 document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-act]");
   if (S.more && !e.target.closest?.(".more-pop, [data-act=more]")) { S.more = null; if (!el) render(true); }
+  if (S.dl && !e.target.closest?.(".dl-pop, [data-act=dl]")) { S.dl = false; if (!el) render(true); }
   if (!el || !$app.contains(el)) return;
   const fn = ACTS[el.dataset.act];
   if (fn) { if (el.tagName === "A") e.preventDefault(); fn(el, e); }
@@ -1275,6 +1519,7 @@ window.addEventListener("hashchange", onRoute);
 document.addEventListener("input", (e) => {
   if (e.target.matches?.("input, textarea")) e.target.dataset.dirty = "1";
   if (e.target.matches?.("textarea.brief")) fit(e.target);
+  if (e.target.matches?.(".tfit > input")) fitTitle(e.target);
 });
 document.addEventListener("change", (e) => {
   const t = e.target;
@@ -1292,7 +1537,7 @@ document.addEventListener("change", (e) => {
   } else if (t.dataset.field) {
     const it = itemOf(t.dataset.id);
     const v = t.value.trim();
-    if (t.dataset.field === "title" && !v) { t.value = it.title; return; }
+    if (t.dataset.field === "title" && !v) { t.value = it.title; fitTitle(t); return; }
     patchItem(it.id, { [t.dataset.field]: t.dataset.field === "assignee" ? v || null : v });
   }
 });
@@ -1307,16 +1552,16 @@ document.addEventListener("keydown", (e) => {
     if (typing) return;  // arrows and letters belong to the field being edited
     if (e.key === "ArrowRight") step(1);
     if (e.key === "ArrowLeft") step(-1);
-    if (TEAM && e.key.toLowerCase() === "i" && !e.metaKey && !e.ctrlKey && S.lightbox.id) toggleInfo();
+    if (TEAM && e.key.toLowerCase() === "i" && !e.metaKey && !e.ctrlKey && (S.lightbox.id || S.lightbox.wipe)) toggleInfo();
     const v = { m: "keep", r: "redo", d: "drop" }[e.key.toLowerCase()];
-    if (TEAM && v && !typing && !e.metaKey && !e.ctrlKey && S.lightbox.id) {
-      const o = optsOf(S.lightbox.id)[S.lightbox.i];
+    if (TEAM && v && !typing && !e.metaKey && !e.ctrlKey) {
+      const o = lbOption();
       if (o) saveReview(o.id, { verdict: reviewOf(o.id)?.verdict === v ? null : v });
     }
     return;
   }
   if (e.key === "Escape") {
-    if (S.more) { S.more = null; render(true); }
+    if (S.more || S.dl) { S.more = null; S.dl = false; render(true); }
     else if (S.modal && S.modal !== "name") ACTS["modal-close"]();
     else if (S.drawer) ACTS["drawer-close"]();
     return;
@@ -1452,6 +1697,13 @@ document.addEventListener("drop", (e) => {
 let hovered = null;
 document.addEventListener("mouseover", (e) => { hovered = e.target.closest?.(TEAM ? "[data-drop], [data-drop-req]" : "[data-drop-req]") || hovered; });
 document.addEventListener("mouseleave", () => (hovered = null));
+// the before/after wipe follows the mouse
+document.addEventListener("pointermove", (e) => {
+  const w = e.target.closest?.("[data-wipe]");
+  if (!w) return;
+  const r = w.getBoundingClientRect();
+  w.style.setProperty("--x", `${Math.max(0, Math.min(100, ((e.clientX - r.left) / r.width) * 100))}%`);
+});
 document.addEventListener("paste", (e) => {
   if (e.target.matches?.("input, textarea")) return;
   const files = [...(e.clipboardData?.files || [])].filter((f) => /^(image|video)\//.test(f.type));

@@ -19,9 +19,13 @@ Uma sala online para aprovar imagens e vídeos com o cliente: casting, locaçõe
 
 - **Rodadas** (A1, A2, A3, Entrega) com prazo, **cenas** e **itens** (casting, locação, look…), cada item com suas opções A, B, C.
 - **Quem faz o quê:** um quadro por pessoa do time; arraste os cards para trocar o dono.
-- **Visão geral, imagem primeiro:** uma imagem grande por item (setas para ver as outras) ou a **grade**, com todas as opções lado a lado. Filtros por tipo, "A curar" e "Descartadas".
+- **Visão geral, imagem primeiro:** uma imagem grande por item (setas para ver as outras) ou a **grade**, com todas as opções lado a lado. Filtros por tipo, "A curar" e "Descartadas" (as descartadas aparecem por último, apagadas, para o time decidir com elas na tela; o filtro as esconde).
+- **Nada embaixo da imagem:** os sinais do item ficam no canto dela (o tipo, a letra, a avaliação, o "→ 3" e os comentários); o título e as ferramentas aparecem ao passar o mouse, e o briefing fica no `⋯`. Um ícone diz o que o item é: comparação, renders do 3D, variações de ângulo (tipo "plano") ou gerações de IA.
+- **Um item por vez:** no menu, cada cena abre a lista dos seus itens; um clique mostra o item sozinho, com todas as versões embaixo, e `←` `→` passam para o anterior e o próximo.
 - **Curadoria do time:** em cada opção, ✓ Manter, ↻ Refazer ou ✕ Descartar, com nota e autor. Atalhos `M`, `R`, `D` no detalhe.
-- **Detalhe da opção:** imagem grande com um painel que recolhe (`I`): legenda (o cliente vê), "por que esta opção", prompt e modelo.
+- **Detalhe da opção:** imagem grande com os botões sobre ela, ao passar o mouse (avaliar, copiar o prompt, baixar o original, abrir na cena, excluir). As informações abrem no ⓘ ou na tecla `I`: modelo, data e autor, legenda (o cliente vê), avaliação, as **referências usadas** na geração, "por que esta opção" e o prompt.
+- **Antes e depois:** duas opções com o mesmo nome e os finais `__blocking` e `__ia` (ou `__sem` e `__com`) viram uma imagem só, com um traço que segue o mouse: a primeira à esquerda, a segunda à direita. Veja [Campos extras](#campos-extras).
+- **Baixar em `.zip`** (⤓ no alto): a rodada, a cena ou o item que está na tela, tudo ou só as aprovadas, com os arquivos já nomeados (`01_Cozinha_A.jpg`) e uma pasta por cena. O cliente baixa o que ele vê.
 - **Upload** por clique, arrastando ou colando (`⌘V`). A sala gera no navegador uma prévia (1920 px) e uma miniatura (480 px); o original fica para baixar.
 - **Comentários** por item, e o pedido de ajuste do cliente vira um comentário.
 - **Materiais:** o que o time pede ao cliente (fotos, vozes, logos), com envio dos dois lados e download em `.zip`.
@@ -29,13 +33,13 @@ Uma sala online para aprovar imagens e vídeos com o cliente: casting, locaçõe
 
 ## Como anda uma rodada
 
-1. **Time:** em cada cena, **Novo item**, depois sobe as opções (arraste para o card).
+1. **Time:** em cada cena, o **+** (Novo item) no alto, depois sobe as opções (arraste para o card).
 2. **Cura:** ✓ nas que valem, ✕ nas que não valem. A regra:
    - se um item tem alguma opção com ✓, o cliente vê **só as com ✓**;
    - se não tem nenhuma, vê **todas menos as descartadas**;
    - "A curar" mostra os itens que ainda têm mais de 3 opções.
 3. **Pronto:** no `⋯` do item, Status → Pronto.
-4. **Enviar:** o botão mostra ao cliente os itens prontos e abre a mensagem pronta para mandar no grupo.
+4. **Enviar:** o aviãozinho no alto (com o número de itens prontos) mostra ao cliente esses itens e abre a mensagem pronta para mandar no grupo.
 5. **Cliente:** clica na imagem para escolher (A, B ou C), aprova ou pede ajuste com um comentário e, no **Resumo**, confirma a rodada.
 6. **Time:** vê "aprovou B", "pediu ajuste" e "confirmou" em cada item e na visão geral.
 
@@ -117,15 +121,27 @@ O visual (cores neutras, fontes, espaçamentos) está em [`sala/style.css`](sala
 
 Algumas colunas não têm tela de edição e são preenchidas pelo **Table Editor** do Supabase ou por um script seu:
 
-- `options.prompt` e `options.model`: aparecem no detalhe da opção, com o botão "Copiar prompt".
+- `options.prompt` e `options.model`: aparecem no detalhe da opção, com o botão "Copiar prompt". Um `model` que começa com "Blender" marca o item como renders do 3D.
+- `options.refs`: as imagens que entraram na geração (fotos, logo, produto, o blocking, uma geração anterior), como `[{"label": "Foto da loja", "path": "refs/loja.jpg", "thumb": "refs/loja_thumb.jpg"}]`. Os caminhos são do bucket `media` (o `thumb` é opcional). Aparecem como miniaturas no detalhe da opção; passar o mouse mostra maior. A sala só mostra ao time.
+- **Pares de antes e depois:** o nome do arquivo decide. `cozinha__blocking.jpg` + `cozinha__ia.jpg` mostram o blocking 3D à esquerda e o resultado da IA à direita; `cozinha__sem.jpg` + `cozinha__com.jpg` comparam duas versões da mesma imagem (sem e com sol, por exemplo), com as legendas das opções como rótulos. A avaliação e o download valem para a da direita.
 - `items.variants`: as direções de um item (`{"A": "uma mulher de 40 anos, cabelo cacheado", "B": "..."}`). Viram os botões 1, 2… em `⋯ → Prompts`, montados com os modelos de `PROMPTS`.
 - `items.refs`: ids de arquivos de **Materiais**. Fotos ativam o **Comparar** (gerado lado a lado com a foto original); áudios tocam ao lado das opções.
+
+## Atualizar uma sala que já está no ar
+
+Troque `sala/app.js` e `sala/style.css` pelos novos e publique de novo. O seu `sala/config.js` continua o mesmo.
+
+Se a sala foi instalada antes de 31/10/2026, rode uma vez no **SQL Editor** a coluna das referências (sem ela a sala funciona, só não mostra as referências):
+
+```sql
+alter table public.options add column if not exists refs jsonb not null default '[]';
+```
 
 ## Segurança
 
 - Cada lado tem **um login compartilhado**: as pessoas digitam só a senha. Quem é quem fica no nome que cada um escolhe ao entrar (assina comentários, escolhas e envios).
 - O acesso é decidido no banco (RLS) pelo `app_metadata.side` do login, que o usuário não consegue alterar. O cliente nunca recebe itens não enviados, opções descartadas (ou sem ✓ quando o item tem alguma com ✓) nem as avaliações e notas do time.
-- Os campos de uma opção que o cliente pode ver (legenda, prompt, "por que esta opção") a sala só mostra ao time, mas chegam ao navegador do cliente. Não escreva ali o que o cliente não pode ler.
+- Os campos de uma opção que o cliente pode ver (legenda, prompt, "por que esta opção", referências) a sala só mostra ao time, mas chegam ao navegador do cliente. Não escreva ali o que o cliente não pode ler.
 - Os arquivos ficam num bucket privado e abrem por links assinados que valem 12 horas.
 - **Sair** desconecta só aquele navegador. Como todo mundo de um lado usa o mesmo login, sair de todos os lugares derrubaria os colegas.
 - Para trocar uma senha, rode no **SQL Editor**:
