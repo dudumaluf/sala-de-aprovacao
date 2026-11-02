@@ -17,33 +17,60 @@ Uma sala online para aprovar imagens e vídeos com o cliente: casting, locaçõe
 
 ## O que ela faz
 
-- **Rodadas** (A1, A2, A3, Entrega) com prazo, **cenas** e **itens** (casting, locação, look…), cada item com suas opções A, B, C.
-- **Quem faz o quê:** um quadro por pessoa do time; arraste os cards para trocar o dono.
-- **Visão geral, imagem primeiro:** uma imagem grande por item (setas para ver as outras) ou a **grade**, com todas as opções lado a lado. Filtros por tipo, "A curar" e "Descartadas" (as descartadas aparecem por último, apagadas, para o time decidir com elas na tela; o filtro as esconde).
-- **Nada embaixo da imagem:** os sinais do item ficam no canto dela (o tipo, a letra, a avaliação, o "→ 3" e os comentários); o título e as ferramentas aparecem ao passar o mouse, e o briefing fica no `⋯`. Um ícone diz o que o item é: comparação, renders do 3D, variações de ângulo (tipo "plano") ou gerações de IA.
-- **Um item por vez:** no menu, cada cena abre a lista dos seus itens; um clique mostra o item sozinho, com todas as versões embaixo, e `←` `→` passam para o anterior e o próximo.
-- **Curadoria do time:** em cada opção, ✓ Manter, ↻ Refazer ou ✕ Descartar, com nota e autor. Atalhos `M`, `R`, `D` no detalhe.
-- **Detalhe da opção:** imagem grande com os botões sobre ela, ao passar o mouse (avaliar, copiar o prompt, baixar o original, abrir na cena, excluir). As informações abrem no ⓘ ou na tecla `I`: modelo, data e autor, legenda (o cliente vê), avaliação, as **referências usadas** na geração, "por que esta opção" e o prompt.
-- **Antes e depois:** duas opções com o mesmo nome e os finais `__blocking` e `__ia` (ou `__sem` e `__com`) viram uma imagem só, com um traço que segue o mouse: a primeira à esquerda, a segunda à direita. Veja [Campos extras](#campos-extras).
-- **Baixar em `.zip`** (⤓ no alto): a rodada, a cena ou o item que está na tela, tudo ou só as aprovadas, com os arquivos já nomeados (`01_Cozinha_A.jpg`) e uma pasta por cena. O cliente baixa o que ele vê.
-- **Upload** por clique, arrastando ou colando (`⌘V`). A sala gera no navegador uma prévia (1920 px) e uma miniatura (480 px); o original fica para baixar.
-- **Comentários** por item, e o pedido de ajuste do cliente vira um comentário.
-- **Materiais:** o que o time pede ao cliente (fotos, vozes, logos), com envio dos dois lados e download em `.zip`.
-- **Sem surpresas:** a sala se atualiza sozinha a cada 15 s, avisa quando há versão nova publicada e, se a sessão cair, pede a senha de novo.
+Toda rodada roda o mesmo ciclo, nas duas salas:
+
+**gerar → curar (✓ ✕) → enviar → o cliente escolhe (★) → retorno → aprovado → vira o kit da próxima rodada**
+
+O menu do time segue essa ordem:
+
+- **Apresentação:** os decks do job (o seu e o do cliente) e os slides do cliente que viraram referência.
+- **1 · Produção**
+  - **A fazer:** uma coluna por pessoa, com os itens e as tarefas. Arrastar um card ou uma tarefa troca quem faz.
+  - **Visão geral** e uma página por **cena**: o mesmo grid de cards em todo lugar. Cada cena abre no menu a lista dos seus itens, e um clique mostra o item sozinho.
+- **2 · Aprovação**
+  - **Envio:** a versão atual da rodada exatamente como o cliente vai ver. O olho de cada imagem tira ou põe ela no envio, e o que fica de fora espera recolhido no fim.
+  - **Escolhas:** o que o cliente escolheu em cada cena, e se ele confirmou a rodada.
+  - **Retorno:** o que o cliente pediu sobre a versão, virado trabalho. Cada item tem um status (aprovado, ajustar, refazer, caminho novo, esperando), o que fazer, as tarefas, as referências que ele deu (slide do deck, minuto de um vídeo, foto) e o que ficou em aberto (perguntar, receber, decidir). Os combinados da rodada ficam no cabeçalho.
+- **Aprovado:** tudo o que o cliente aprovou até agora, na versão atual, pra baixar de uma vez.
+- **Materiais:** o que o time pede ao cliente (fotos, vozes, logos), com envio dos dois lados.
+
+**O card.** É o mesmo em todas as páginas:
+- Imagem cheia. O título e a bolinha de estado ficam no canto.
+- No hover aparecem ✓ ↻ ✕, os comentários, as versões, o comparar, o ✦ do Estúdio, o 3D, o download e o `⋯`.
+- Arrastar pela bolinha muda a ordem dos cards na cena. A ordem vale pra sala, pro menu e pro animatic.
+- O sistema de design está em [`DESIGN.md`](DESIGN.md).
+
+**Versões.** Cada retorno do cliente abre uma versão nova da rodada (v1 é a entrega, v2 a resposta ao primeiro retorno…).
+- As opções novas entram na versão aberta.
+- Os cards mostram a mais nova de cada item (**Atual**), uma versão ou **Todas**.
+- Cada opção nova se compara com a que veio antes.
+- O cliente recebe, em cada versão, o ✓ do time nessa versão mais o que ele escolheu na anterior. O que o time decide no **Envio** vale mais que essa regra.
+
+**Detalhe da opção.** Imagem grande com os botões sobre ela.
+- As informações abrem no ⓘ ou na tecla `I`: modelo, data e autor, legenda, avaliação, as referências usadas na geração, "por que esta opção" e o prompt.
+- **Desenhar:** o time e o cliente riscam e escrevem na imagem o que mudar.
+
+**Mais:**
+- **Antes e depois:** pares de opções (`__blocking`/`__ia`, `__sem`/`__com`) viram uma imagem só, com um traço que segue o mouse.
+- **Baixar em `.zip`:** a rodada, a cena ou o item, tudo ou só o aprovado, com os arquivos nomeados na ordem do filme. O **Animatic** baixa todos os planos em ordem, prontos pra montagem.
+- **Filtros:** um botão só, com versão, tipo e autor. O que está ligado aparece como etiqueta, e zera ao recarregar.
+- **Curadoria dentro da sala do cliente:** quem está logado como time no mesmo navegador vê, na sala do cliente, "Tirar da aprovação" em cada imagem e item, com Desfazer. O cliente nunca tem esse botão.
+- A sala se atualiza sozinha, avisa quando há versão nova publicada e pede a senha de novo se a sessão cair.
+
+**Opcionais** (desligados no exemplo; veja [Estúdio e Cena 3D](#estúdio-de-ia-e-cena-3d-opcionais)):
+- **Estúdio de IA (✦):** editar uma imagem com IA, criar uma nova a partir do kit da cena (o elenco, a locação e o produto aprovados), renderizar um ângulo do 3D e gerar vídeo. O Claude escreve o prompt a partir do pedido, dos desenhos e das referências.
+- **Cena 3D:** o blocking em low poly de cada locação aprovada. O time põe o elenco (bonecos com poses), os objetos e o produto, enquadra com lentes reais e salva ângulos, que o Estúdio transforma em imagem.
 
 ## Como anda uma rodada
 
-1. **Time:** em cada cena, o **+** (Novo item) no alto, depois sobe as opções (arraste para o card).
-2. **Cura:** ✓ nas que valem, ✕ nas que não valem. A regra:
-   - se um item tem alguma opção com ✓, o cliente vê **só as com ✓**;
-   - se não tem nenhuma, vê **todas menos as descartadas**;
-   - "A curar" mostra os itens que ainda têm mais de 3 opções.
-3. **Pronto:** no `⋯` do item, Status → Pronto.
-4. **Enviar:** o aviãozinho no alto (com o número de itens prontos) mostra ao cliente esses itens e abre a mensagem pronta para mandar no grupo.
-5. **Cliente:** clica na imagem para escolher (A, B ou C), aprova ou pede ajuste com um comentário e, no **Resumo**, confirma a rodada.
-6. **Time:** vê "aprovou B", "pediu ajuste" e "confirmou" em cada item e na visão geral.
+1. **Time:** em cada cena, o **+** (Novo item) no alto, depois sobe as opções (arraste para o card, ou cole com `⌘V`).
+2. **Cura:** ✓ nas que vão, ✕ nas que não vão. Na v1, se um item tem alguma opção com ✓, o cliente vê só as com ✓; se não tem nenhuma, vê todas menos as descartadas.
+3. **Envio:** confira o que vai, marque os itens como Pronto e envie. A sala abre a mensagem pronta para mandar no grupo.
+4. **Cliente:** escolhe (A, B ou C), aprova ou pede ajuste num comentário, desenha na imagem se precisar, e confirma a rodada no **Resumo**.
+5. **Retorno:** o time lê o que o cliente disse, na sala e fora dela, e marca o status, as tarefas e as referências de cada item. Depois abre a **v2** e começa a responder.
+6. **Aprovado:** o que foi aprovado vira o kit da próxima rodada (os planos da A2 nascem do elenco e das locações aprovados na A1).
 
-No `⋯` de cada item também dá para trocar entre **Escolhe uma** e **Aprova o conjunto** (o cliente aprova todas as opções como uma coisa só), mostrar ou esconder só aquele item e reabrir uma decisão.
+No `⋯` de cada item também dá para trocar entre **Escolhe uma** e **Aprova o conjunto**, mostrar ou esconder só aquele item, reabrir uma decisão e baixar o pacote do item.
 
 ## Instalação
 
@@ -112,6 +139,9 @@ Tudo em [`sala/config.js`](sala/config.js), com comentários:
 | Cenas, falas e looks (paleta e prompt) | `SCENES` | `{ name: "Cozinha", line: "Já passou o café?" }` |
 | Base de prompt e modelos por direção | `STYLE_BASE`, `PROMPTS` | |
 | Mensagem de envio para o cliente | `SEND_MESSAGE` | `{rodada}`, `{link}`, `{itens}` |
+| Estúdio de IA ligado e o visual do filme | `ESTUDIO.on`, `ESTUDIO.look` | `false`, "photoreal film still, …" |
+| O produto que aparece em toda cena | `PRODUCT` | `{ title: "Produto" }` ou `null` |
+| Decks da página Apresentação | `DECKS` | `{ from, title, note, url }` |
 
 As chaves de `PEOPLE` e `KINDS` são o que fica salvo no banco. Se você mudar uma chave com o projeto andando, os itens antigos ficam com a chave velha.
 
@@ -127,15 +157,39 @@ Algumas colunas não têm tela de edição e são preenchidas pelo **Table Edito
 - `items.variants`: as direções de um item (`{"A": "uma mulher de 40 anos, cabelo cacheado", "B": "..."}`). Viram os botões 1, 2… em `⋯ → Prompts`, montados com os modelos de `PROMPTS`.
 - `items.refs`: ids de arquivos de **Materiais**. Fotos ativam o **Comparar** (gerado lado a lado com a foto original); áudios tocam ao lado das opções.
 
+## Estúdio de IA e Cena 3D (opcionais)
+
+### Estúdio de IA
+
+O ✦ chama uma edge function do Supabase, que guarda as chaves dos geradores no servidor e só atende o login do time.
+
+1. Instale a [CLI do Supabase](https://supabase.com/docs/guides/cli) e, na pasta do projeto, rode `supabase link --project-ref SEU-PROJETO`.
+2. Publique a função: `supabase functions deploy estudio`.
+3. Guarde as chaves como segredos da função (só as dos geradores que você vai usar):
+
+   ```bash
+   supabase secrets set MAGNIFIC_KEY=... HF_KEY=... ANTHROPIC_KEY=...
+   ```
+
+   Os geradores e as chaves de cada um:
+   - `MAGNIFIC_KEY`: Nano Banana, pelo Magnific.
+   - `HF_KEY`: GPT Image, Grok, Qwen e Seedance, pela Higgsfield.
+   - `ANTHROPIC_KEY`: o Claude, que escreve os prompts.
+
+   Opcional: `ALLOWED_ORIGINS=https://sua-sala.com` limita os sites que podem chamar a função.
+4. No `config.js`, ligue `ESTUDIO.on` e escreva em `ESTUDIO.look` uma frase em inglês sobre o visual do filme.
+
+Sem a função, deixe `ESTUDIO.on: false`: a sala funciona igual, só sem o ✦.
+
+### Cena 3D
+
+O motor (`sala/cena3d/cena3d.js`, `rig.js`, `kit.js`) é igual para todo projeto. Os cenários são de cada filme e ficam em [`sala/cena3d/sets.js`](sala/cena3d/sets.js), um por cena, com as câmeras, o elenco e os objetos. O exemplo traz uma cozinha para a cena 1. O comentário no topo do arquivo explica o formato. A aba **Cena 3D** aparece nos itens de locação do time.
+
 ## Atualizar uma sala que já está no ar
 
-Troque `sala/app.js` e `sala/style.css` pelos novos e publique de novo. O seu `sala/config.js` continua o mesmo.
-
-Se a sala foi instalada antes de 31/10/2026, rode uma vez no **SQL Editor** a coluna das referências (sem ela a sala funciona, só não mostra as referências):
-
-```sql
-alter table public.options add column if not exists refs jsonb not null default '[]';
-```
+1. Troque os arquivos de `sala/` pelos novos, menos o seu `sala/config.js`, e acrescente nele as seções novas do config de exemplo (`ESTUDIO`, `PRODUCT`, `DECKS`).
+2. No **SQL Editor**, rode uma vez [`supabase/atualizar-2026-11.sql`](supabase/atualizar-2026-11.sql). Ele cria as tabelas e colunas novas sem apagar nada, e pode rodar mais de uma vez.
+3. Publique de novo.
 
 ## Segurança
 
@@ -143,6 +197,8 @@ alter table public.options add column if not exists refs jsonb not null default 
 - O acesso é decidido no banco (RLS) pelo `app_metadata.side` do login, que o usuário não consegue alterar. O cliente nunca recebe itens não enviados, opções descartadas (ou sem ✓ quando o item tem alguma com ✓) nem as avaliações e notas do time.
 - Os campos de uma opção que o cliente pode ver (legenda, prompt, "por que esta opção", referências) a sala só mostra ao time, mas chegam ao navegador do cliente. Não escreva ali o que o cliente não pode ler.
 - Os arquivos ficam num bucket privado e abrem por links assinados que valem 12 horas.
+- O retorno, as tarefas, as pendências, o envio, o Estúdio e a Cena 3D são só do time: o cliente não recebe nenhuma dessas tabelas.
+- As chaves dos geradores de IA ficam só no servidor (segredos da edge function). A função recusa quem não está logado como time.
 - **Sair** desconecta só aquele navegador. Como todo mundo de um lado usa o mesmo login, sair de todos os lugares derrubaria os colegas.
 - Para trocar uma senha, rode no **SQL Editor**:
 
@@ -159,10 +215,15 @@ aprovacao/index.html   sala do cliente (data-side="cliente")
 sala/config.js         tudo do seu projeto
 sala/app.js            o app, igual para todo projeto
 sala/style.css         o visual
+sala/estudio.js        o Estúdio de IA (opcional)
+sala/cena3d/           a Cena 3D: o motor e os cenários do filme (sets.js)
 supabase/schema.sql    banco, regras de acesso, funções e bucket
+supabase/atualizar-2026-11.sql   leva uma sala instalada antes de nov/2026 ao banco novo
+supabase/functions/estudio/      a edge function do Estúdio
+DESIGN.md              o sistema de design: princípios, card, sinais, cores
 ```
 
-O app usa o `supabase-js` 2.45.4 direto do jsDelivr e o JSZip do cdnjs (só quando alguém baixa um `.zip`). Não tem `npm install`.
+O app usa o `supabase-js` 2.45.4 direto do jsDelivr, o JSZip do cdnjs (só quando alguém baixa um `.zip`) e o three.js 0.170 do jsDelivr (só na Cena 3D). Não tem `npm install`.
 
 ## Licença
 

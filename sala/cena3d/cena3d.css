@@ -1,0 +1,149 @@
+/* Cena 3D: the blocking editor in a location item's tab (team only). Same palette as the room (style.css tokens).
+   The 3D takes the whole tab (or the whole window, ⤢) with the frame of the shot (16:9) drawn on it. Each thing has one
+   place: on top, the camera (tools, lens, compare with the approved photo, guides, undo; ⤢ and Salvar ângulo, with a
+   saved angle's ↺ ✦); at the bottom, the angles (dots) and the camera line; on the right, a card with what is in the
+   scene (cast, product) that folds into one round button. --side / --low: what the card covers (right / bottom). */
+.c3d-slot { position: relative; min-height: 420px; }
+.c3d { position: relative; height: 100%; outline: none; --side: 0px; --low: 0px; }
+.c3d.full { position: fixed; inset: 0; z-index: 45; height: auto; background: #050606; } /* under the room's lightbox, modals, studio and toasts */
+.c3d-main { position: absolute; inset: 0; }
+.c3d-frame { position: absolute; inset: 0; overflow: hidden; border-radius: 10px; background: #050606; box-shadow: 0 0 0 1px var(--line2); container-type: inline-size; }
+.c3d.full .c3d-frame { border-radius: 0; box-shadow: none; }
+.c3d-frame canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.c3d-frame canvas:active { cursor: grabbing; }
+.c3d-ref { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; object-fit: cover; pointer-events: none; }
+.c3d-ref[hidden] { display: none; } /* the room's img { display: block } would beat the hidden attribute */
+.c3d-msg { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; color: var(--muted); text-align: center; line-height: 1.5; background: #050606; }
+.c3d-msg[hidden] { display: none; }
+.c3d-flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity 0.25s; }
+/* the frame of the shot: what a saved angle keeps; the set around it stays visible, dimmed */
+.c3d-shot { position: absolute; overflow: hidden; pointer-events: none; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.26), 0 0 0 9999px rgba(5, 7, 6, 0.34); }
+
+/* guides: thirds and the 9:16 crop of the vertical version */
+.c3d-guides { position: absolute; inset: 0; pointer-events: none; }
+.c3d-guides.thirds { background:
+  linear-gradient(to right, transparent calc(33.33% - 0.5px), rgba(255,255,255,.38) calc(33.33% - 0.5px), rgba(255,255,255,.38) calc(33.33% + 0.5px), transparent calc(33.33% + 0.5px), transparent calc(66.66% - 0.5px), rgba(255,255,255,.38) calc(66.66% - 0.5px), rgba(255,255,255,.38) calc(66.66% + 0.5px), transparent calc(66.66% + 0.5px)),
+  linear-gradient(to bottom, transparent calc(33.33% - 0.5px), rgba(255,255,255,.38) calc(33.33% - 0.5px), rgba(255,255,255,.38) calc(33.33% + 0.5px), transparent calc(33.33% + 0.5px), transparent calc(66.66% - 0.5px), rgba(255,255,255,.38) calc(66.66% - 0.5px), rgba(255,255,255,.38) calc(66.66% + 0.5px), transparent calc(66.66% + 0.5px)); }
+.c3d-guides .v916 { position: absolute; top: 0; bottom: 0; left: 50%; width: calc(100% * 81 / 256); transform: translateX(-50%); box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45); outline: 1px dashed rgba(52, 245, 142, 0.8); }
+
+/* name tags over the figures */
+.c3d-tags { position: absolute; inset: 0; pointer-events: none; }
+.c3d-tags span { position: absolute; transform: translate(-50%, -100%); padding: 1px 7px; border-radius: 999px; background: rgba(5, 7, 6, 0.72); color: #fff; font-size: 11px; font-weight: 600; white-space: nowrap; box-shadow: inset 0 0 0 1.5px var(--c); }
+
+/* toolbar pills (top left), save (top right), camera line (bottom left) */
+.c3d-tl { position: absolute; left: 10px; top: 10px; right: calc(var(--side) + 210px); display: flex; flex-wrap: wrap; gap: 5px; }
+.c3d-tr { position: absolute; right: calc(var(--side) + 10px); top: 10px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.c3d-trrow { display: flex; align-items: center; gap: 6px; }
+.c3d-round { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 999px; background: rgba(8, 10, 9, 0.74); color: rgba(255, 255, 255, 0.86); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.c3d-round:hover { background: rgba(8, 10, 9, 0.92); color: #fff; }
+.c3d-round svg { width: 15px; height: 15px; }
+/* the way back to a render waiting in the studio for a new angle */
+.c3d-back { display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 12px 0 8px; border: 0; border-radius: 999px; background: rgba(8, 10, 9, 0.74); color: rgba(255, 255, 255, 0.86); font-size: 12.5px; white-space: nowrap; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); cursor: pointer; }
+.c3d-back:hover { background: rgba(8, 10, 9, 0.92); color: #fff; }
+.c3d-back svg { width: 14px; height: 14px; }
+.c3d-g { display: flex; align-items: center; gap: 1px; padding: 2px; border-radius: 8px; background: rgba(8, 10, 9, 0.74); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.c3d-g > button, .c3d-g > select { display: inline-flex; align-items: center; justify-content: center; height: 24px; min-width: 24px; padding: 0 5px; border: 0; border-radius: 6px; background: transparent; color: rgba(255, 255, 255, 0.84); font-size: 11.5px; font-weight: 500; }
+.c3d-g > button:hover:not([disabled]), .c3d-g > select:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.c3d-g > button.on { background: var(--accent-soft); color: var(--accent); }
+.c3d-g > button[disabled] { opacity: 0.32; cursor: default; }
+.c3d-g svg { width: 15px; height: 15px; }
+.c3d-g > select { appearance: none; -webkit-appearance: none; padding: 0 16px 0 6px; font-variant-numeric: tabular-nums; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1.5 3 4 5.5 6.5 3' fill='none' stroke='%23fff' stroke-opacity='.6' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 5px center / 8px; cursor: pointer; }
+.c3d-g option { color: var(--text); background: var(--raise); }
+.c3d-g input[type=range] { width: 70px; margin: 0 6px; accent-color: var(--accent); }
+.c3d-save { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px 0 10px; border: 0; border-radius: 999px; background: var(--accent); color: var(--ink); font-size: 12.5px; font-weight: 600; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35); }
+.c3d-save svg { width: 16px; height: 16px; }
+.c3d-save.busy { opacity: 0.6; pointer-events: none; }
+@container (max-width: 1000px) { .c3d-save span { display: none; } .c3d-save { padding: 0 8px; } .c3d-tl { right: calc(var(--side) + 90px); } }
+.c3d-savebox { display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 10px; background: rgba(8, 10, 9, 0.9); box-shadow: inset 0 0 0 1px var(--line2), 0 10px 30px rgba(0, 0, 0, 0.45); }
+.c3d-savebox input { width: 250px; height: 28px; padding: 0 9px; border: 1px solid var(--line2); border-radius: 7px; background: var(--bg); color: var(--text); font-size: 12.5px; }
+.c3d-savebox input:focus { outline: none; border-color: var(--accent-edge); }
+.c3d-savebox .go { height: 28px; padding: 0 12px; border: 0; border-radius: 7px; background: var(--accent); color: var(--ink); font-size: 12.5px; font-weight: 600; }
+.c3d-hud { position: absolute; left: 10px; bottom: calc(var(--low) + 10px); max-width: calc((100% - var(--side)) / 2 - var(--dotsw, 0px) / 2 - 22px); padding: 3px 9px; border-radius: 999px; background: rgba(5, 7, 6, 0.6); color: rgba(255, 255, 255, 0.86); font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.c3d-hud:empty { display: none; }
+.c3d-tl, .c3d-tr .c3d-save, .c3d-tr .c3d-round { transition: opacity 0.15s; }
+.c3d-frame:not(:hover) .c3d-tl { opacity: 0; }
+.c3d-frame:not(:hover) .c3d-save:not(:focus-visible), .c3d-frame:not(:hover) .c3d-round:not(:focus-visible) { opacity: 0.55; }
+.c3d:focus-within .c3d-tl { opacity: 1; }
+@media (hover: none) { .c3d-frame .c3d-tl, .c3d-frame .c3d-save, .c3d-frame .c3d-round { opacity: 1; } }
+
+/* the camera stops: dots over the bottom of the view, shown while the pointer is on the 3D (like the room's card
+   dots). The planned shots, then the saved angles, hollow and a little apart; the bright one is where the camera is. */
+.c3d-dots { position: absolute; left: calc((100% - var(--side)) / 2); bottom: calc(var(--low) + 10px); display: flex; align-items: center; translate: -50% 0; pointer-events: none; transition: opacity 0.15s; }
+.c3d-dots button { display: grid; place-items: center; width: 17px; height: 22px; padding: 0; border: 0; background: none; pointer-events: auto; cursor: pointer; }
+.c3d-dots button::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: rgba(255, 255, 255, 0.42); box-shadow: 0 0 0 1.5px rgba(5, 7, 6, 0.45); transition: background 0.12s, scale 0.12s; }
+.c3d-dots button:hover::after, .c3d-dots button:focus-visible::after { background: rgba(255, 255, 255, 0.85); scale: 1.25; }
+.c3d-dots button.sv::after { background: none; box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.6), 0 0 0 1.5px rgba(5, 7, 6, 0.45); }
+.c3d-dots button.sv:hover::after, .c3d-dots button.sv:focus-visible::after { box-shadow: inset 0 0 0 1.5px #fff, 0 0 0 1.5px rgba(5, 7, 6, 0.45); }
+.c3d-dots button.on::after, .c3d-dots button.sv.on::after { background: var(--text); box-shadow: 0 0 0 2px rgba(5, 7, 6, 0.6); scale: 1.2; }
+.c3d-dots button:focus-visible { outline: none; }
+.c3d-dots button:not(.sv) + .sv { margin-left: 9px; }
+.c3d-dots button:not(.alt):not(.sv) + .alt { margin-left: 7px; } /* the deck's shots, then the options */
+.c3d-frame:not(:hover) .c3d-dots:not(:focus-within) { opacity: 0; }
+@media (hover: none) { .c3d-frame .c3d-dots { opacity: 1; } }
+/* a dot's name over it (a saved angle's also shows its frame) */
+.c3d-peek { position: absolute; z-index: 5; padding: 3px 9px; border-radius: 999px; background: rgba(8, 10, 9, 0.86); color: #fff; font-size: 11.5px; white-space: nowrap; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); pointer-events: none; }
+.c3d-peek[hidden] { display: none; }
+.c3d-peek b { font-weight: 500; }
+.c3d-peek.wide { width: 210px; padding: 5px; border-radius: 9px; white-space: normal; }
+.c3d-peek.card { max-width: 270px; padding: 5px 10px 6px; border-radius: 9px; white-space: normal; }
+.c3d-peek small { display: block; margin-top: 1px; color: rgba(255, 255, 255, 0.66); font-size: 11px; line-height: 1.35; }
+.c3d-peek.wide b { display: block; margin: 5px 3px 1px; line-height: 1.3; }
+.c3d-peek img, .c3d-peek-none { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 5px; object-fit: cover; background: rgba(255, 255, 255, 0.06); }
+
+/* the panel: only what is in the scene (cast, product), a card as tall as what it holds, floating top right over the
+   3D; it folds into its one round button */
+.c3d-side { position: absolute; top: 10px; right: 10px; z-index: 6; display: flex; flex-direction: column; width: 280px; max-height: calc(100% - 20px); border-radius: 12px; background: rgba(12, 14, 13, 0.84); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.07), 0 14px 40px rgba(0, 0, 0, 0.45); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); overflow: hidden; }
+.c3d-side-x { position: absolute; top: 7px; right: 7px; z-index: 1; width: 28px; height: 28px; }
+.c3d.side-closed .c3d-side { width: auto; background: none; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; overflow: visible; }
+.c3d.side-closed .c3d-side-x { position: static; width: 30px; height: 30px; }
+.c3d.side-closed .c3d-body { display: none; }
+.c3d-body { min-height: 0; padding: 11px 12px 12px; overflow: auto; overscroll-behavior: contain; }
+.c3d-sec { padding: 9px 0; border-bottom: 1px solid var(--line); }
+.c3d-sec:first-child { padding-top: 0; }
+.c3d-sec:last-child { padding-bottom: 0; border-bottom: 0; }
+.c3d-sec header { display: flex; align-items: center; gap: 4px; min-height: 28px; margin-bottom: 4px; padding-right: 32px; }
+.c3d-sec h4 { color: var(--dim); font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+.c3d-sec header .c3d-ico { width: 24px; height: 24px; }
+/* a row: color, picture, name, its pose right there, the eye (on hover) */
+.c3d-row { display: flex; align-items: center; gap: 7px; padding: 4px 6px; margin: 0 -6px; border-radius: 8px; cursor: pointer; }
+.c3d-row:hover { background: rgba(255, 255, 255, 0.05); }
+.c3d-row.on { background: rgba(255, 255, 255, 0.08); box-shadow: inset 0 0 0 1px var(--line2); }
+.c3d-row.off { opacity: 0.45; }
+.c3d-row img, .c3d-noimg { flex: none; width: 28px; height: 28px; border-radius: 6px; object-fit: cover; object-position: 0% 30%; background: var(--raise2); }
+.c3d-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.4); }
+.c3d-sw { flex: none; width: 10px; height: 10px; margin: 0 4px 0 1px; border-radius: 3px; background: var(--c); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18); } /* a prop's color */
+.c3d-obj { cursor: default; }
+.c3d-name { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c3d-name small { margin-left: 3px; color: var(--muted); font-size: 11.5px; font-weight: 500; }
+.c3d-row select, .c3d-two select { height: 24px; padding: 0 17px 0 7px; border: 1px solid var(--line2); border-radius: 6px; background: rgba(255, 255, 255, 0.04) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpath d='M1.5 3 4 5.5 6.5 3' fill='none' stroke='%23fff' stroke-opacity='.6' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 6px center / 8px; color: var(--text); font-size: 11.5px; appearance: none; -webkit-appearance: none; cursor: pointer; text-overflow: ellipsis; }
+.c3d-row select { flex: none; width: 90px; }
+.c3d-row select:hover, .c3d-two select:hover { border-color: var(--muted); }
+.c3d-row select option, .c3d-two select option { color: var(--text); background: var(--raise); }
+.c3d-ico { display: inline-grid; place-items: center; flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--muted); }
+.c3d-ico:hover { background: rgba(255, 255, 255, 0.08); color: var(--text); }
+.c3d-ico svg { width: 15px; height: 15px; }
+.c3d-row .c3d-ico { opacity: 0; }
+.c3d-row:hover .c3d-ico, .c3d-row.off .c3d-ico, .c3d-row .c3d-ico:focus-visible { opacity: 1; }
+/* under the selected figure only: how to pose it, and its two actions */
+.c3d-more { display: flex; flex-direction: column; gap: 7px; padding: 5px 0 6px 15px; }
+.c3d-hint { color: var(--dim); font-size: 11.5px; line-height: 1.45; }
+.c3d-acts { display: flex; gap: 6px; flex-wrap: wrap; }
+.c3d-acts button, .c3d-add button { height: 26px; padding: 0 10px; border: 1px solid var(--line2); border-radius: 999px; background: none; color: var(--muted); font-size: 12px; }
+.c3d-acts button:hover, .c3d-add button:hover { color: var(--text); border-color: var(--muted); }
+.c3d-add { display: flex; flex-wrap: wrap; gap: 5px; padding: 6px 0 2px; }
+/* the product's state and where it is, side by side (where it is alone takes the row) */
+.c3d-two { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 6px; }
+.c3d-two select { width: 100%; min-width: 0; }
+.c3d-two select:only-child { grid-column: 1 / -1; }
+/* by Salvar ângulo, while on a saved angle: its ↺ and ✦ */
+.c3d-sacts { display: flex; gap: 6px; }
+.c3d-sacts:empty { display: none; }
+/* when the set was last saved, at the end of the camera line */
+.c3d-hud .c3d-saved { color: rgba(255, 255, 255, 0.48); font-size: 10.5px; }
+
+/* a narrow screen: the card is a sheet at the bottom; folded, its button bottom right */
+@media (max-width: 860px) {
+  .c3d-side { top: auto; left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 46%; }
+  .c3d.side-closed .c3d-side { left: auto; }
+  .c3d-side-x svg { rotate: 90deg; }
+}

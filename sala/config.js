@@ -107,6 +107,28 @@ export const PROMPTS = {
   default: "Wide establishing shot of {v}, empty, no people. {light}Wide framing, deep focus, off-center composition, layered foreground and background, realistic textures, subtle film grain, soft contrast, no text, 16:9.",
 };
 
+// ---------- Estúdio de IA (opcional, só o time vê) ----------
+// O ✦ nos cards: editar uma imagem com IA, criar uma nova a partir do kit da cena (elenco, locação e produto aprovados),
+// renderizar um ângulo da Cena 3D e gerar vídeo. Precisa da edge function supabase/functions/estudio publicada e das
+// chaves dos geradores no servidor (veja o README). Desligado, a sala funciona igual, só sem o ✦.
+export const ESTUDIO = {
+  on: false,
+  // uma frase em inglês sobre o visual do filme: entra em todo prompt que o estúdio escreve
+  look: "photoreal film still, soft natural morning light, true-to-life color, real textures and real skin",
+};
+
+// ---------- Produto (opcional) ----------
+// O item (pelo título, em qualquer cena) cuja imagem aprovada entra em toda cena como "o produto": no kit do Estúdio e
+// como peça na Cena 3D. null quando o filme não tem um produto em cena.
+export const PRODUCT = { title: "Produto" };
+
+// ---------- Decks (opcional, só o time vê) ----------
+// Aparecem na página Apresentação, junto com os slides do cliente que viraram referência. Só entram os que têm link.
+export const DECKS = [
+  { from: "Estúdio Exemplo", title: "Nosso deck", note: "A proposta: roteiro, estrutura e decupagem.", url: "" },
+  { from: "Agência Exemplo", title: "Deck da agência", note: "Roteiro, storyboard, mood e referências por cena.", url: "" },
+];
+
 // ---------- Mensagem de envio ----------
 // Aparece pronta para copiar quando o time envia uma rodada. {rodada}, {link} e {itens} são preenchidos.
 export const SEND_MESSAGE = `Oi! A {rodada} está no ar:
