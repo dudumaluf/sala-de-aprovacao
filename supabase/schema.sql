@@ -110,6 +110,9 @@ create table public.comments (
   author text not null check (length(author) between 1 and 60),
   side text not null check (side in ('time', 'cliente')),
   body text not null check (length(body) between 1 and 4000),
+  -- a comment written on a video at a moment of it (the animatic): the video (an option of the item) and the second
+  option_id uuid references public.options (id) on delete set null,
+  t_sec double precision,
   created_at timestamptz not null default now()
 );
 
@@ -365,6 +368,7 @@ create index options_item_idx on public.options (item_id);
 create index options_based_on on public.options (based_on);
 create index options_stack_idx on public.options (stack);
 create index comments_item_idx on public.comments (item_id, created_at);
+create index comments_option_idx on public.comments (option_id);
 create index request_files_req_idx on public.request_files (request_id);
 create index item_feedback_item on public.item_feedback (item_id);
 create index feedback_refs_item on public.feedback_refs (item_id);

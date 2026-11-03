@@ -52,6 +52,7 @@ O menu do time segue essa ordem:
 **Detalhe da opção.** Imagem grande com os botões sobre ela.
 - As informações abrem no ⓘ ou na tecla `I`: modelo, data e autor, legenda, avaliação, as referências usadas na geração, "por que esta opção" e o prompt.
 - **Desenhar:** o time e o cliente riscam e escrevem na imagem o que mudar.
+- **Comentário no tempo do vídeo** (o animatic): os dois lados pausam o vídeo onde quiserem e escrevem; o comentário guarda o segundo, marca a barra e aparece com o tempo nos comentários do card.
 - **Histórico:** as versões da imagem numa fileira embaixo dela (↑ ↓); "Tornar atual" põe no card a que está aberta.
 - **Ajustar (sem IA):** espelhar, girar e mudar a escala no próprio quadro, e salvar como versão nova do card.
 
@@ -218,7 +219,7 @@ Para atualizar o banco de um job, passe o script de atualização como quarto ar
 ## Atualizar uma sala que já está no ar
 
 1. Troque os arquivos de `sala/` pelos novos, menos o seu `sala/config.js` (e `sala/job/`), e acrescente nele as seções novas do config de exemplo (`ESTUDIO` com `souls`, `PRODUCT`, `CENA3D`, `MOTION`, `DECKS`).
-2. No **SQL Editor**, rode uma vez, nesta ordem, os scripts que a sua sala ainda não rodou: [`supabase/atualizar-2026-11.sql`](supabase/atualizar-2026-11.sql) (para uma sala instalada antes de nov/2026) e [`supabase/atualizar-2026-11b.sql`](supabase/atualizar-2026-11b.sql) (Galeria, Soul ID e receitas). Eles criam o que falta sem apagar nada, e podem rodar mais de uma vez.
+2. No **SQL Editor**, rode uma vez, nesta ordem, os scripts que a sua sala ainda não rodou: [`supabase/atualizar-2026-11.sql`](supabase/atualizar-2026-11.sql) (para uma sala instalada antes de nov/2026) e [`supabase/atualizar-2026-11b.sql`](supabase/atualizar-2026-11b.sql) (Galeria, Soul ID e receitas), [`supabase/atualizar-2026-11c.sql`](supabase/atualizar-2026-11c.sql) (o filtro Vídeo da Galeria) e [`supabase/atualizar-2026-11d.sql`](supabase/atualizar-2026-11d.sql) (comentários com tempo nos vídeos). Eles criam o que falta sem apagar nada, e podem rodar mais de uma vez.
 3. Com o Estúdio ligado, publique de novo as funções (`estudio` e `souls`).
    Uma sala que rodava uma cópia própria, com outro prefixo no navegador, põe esse prefixo em `STORE` no config: ninguém precisa entrar de novo.
 4. Publique a sala de novo.
@@ -254,6 +255,8 @@ sala/job/              os arquivos só do seu job (cenários, produto, motion), 
 supabase/schema.sql    banco, regras de acesso, funções e bucket
 supabase/atualizar-2026-11.sql   leva uma sala instalada antes de nov/2026 ao banco novo
 supabase/atualizar-2026-11b.sql  traz a Galeria, o Soul ID e as receitas
+supabase/atualizar-2026-11c.sql  traz o filtro Vídeo da Galeria (options.role)
+supabase/atualizar-2026-11d.sql  traz os comentários com tempo nos vídeos
 supabase/job.py                  escreve o banco (ou a atualização) de um job num projeto com vários
 supabase/functions/estudio/      a edge function do Estúdio
 supabase/functions/souls/        a edge function do Soul ID (Galeria)

@@ -2019,3 +2019,26 @@ body.est-open .update-bar { bottom: auto; top: 6px; height: 40px; }
   .look .sw { display: inline-flex; margin-right: 6px; vertical-align: middle; }
   .trio-head { flex-wrap: wrap; row-gap: 6px; }
 }
+
+/* timecoded comments under a video in Ver grande (the animatic): the bar with marks, the field and the list */
+.tc { width: min(1100px, calc(100% - 48px)); margin: 12px auto 0; display: grid; gap: 10px; }
+.lb-left > .tc { width: calc(100% - 48px); margin: 10px 24px 14px; }
+.tc-bar { position: relative; height: 18px; border-radius: 9px; background: var(--raise2); border: 1px solid var(--line2); cursor: pointer; }
+.tc-head { position: absolute; top: 2px; bottom: 2px; left: 0; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--text); pointer-events: none; }
+.tc-mark { position: absolute; top: 2px; width: 12px; height: 12px; margin-left: -6px; padding: 0; border: 0; border-radius: 50%; background: var(--amber); box-shadow: 0 0 0 2px var(--bg); cursor: pointer; }
+.tc-mark.time { background: var(--accent); }
+.tc-mark:hover { transform: scale(1.25); }
+.tc-form { display: flex; align-items: center; gap: 10px; }
+.tc-now { flex: none; min-width: 52px; padding: 6px 8px; border-radius: 6px; background: var(--raise2); color: var(--text); font-family: var(--num); font-size: 14px; text-align: center; }
+.tc-in { flex: 1; min-width: 0; height: 36px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line2); background: var(--raise); color: var(--text); font: inherit; font-size: 14px; }
+.tc-in:focus { outline: none; border-color: var(--accent-edge); }
+.tc-list { list-style: none; margin: 0; padding: 0; max-height: 24vh; overflow: auto; display: grid; gap: 6px; }
+.tc-list li { display: flex; align-items: flex-start; gap: 10px; font-size: 13px; color: var(--muted); }
+.tc-list li.none { color: var(--dim); }
+.tc-list p { margin: 0; line-height: 1.45; }
+.tc-list p b { color: var(--text); font-weight: 600; }
+.tc-list p span { display: block; color: var(--text); }
+.tc-t { flex: none; min-width: 48px; padding: 3px 6px; border-radius: 5px; border: 1px solid var(--amber-edge); background: var(--amber-soft); color: var(--amber); font-family: var(--num); font-size: 13px; cursor: pointer; }
+.tc-list li.time .tc-t { border-color: var(--accent-edge); background: var(--accent-soft); color: var(--accent); }
+.tc-chip { display: inline-block; padding: 0 6px; margin-right: 2px; border-radius: 5px; background: var(--amber-soft); color: var(--amber); font-family: var(--num); font-size: 12px; }
+@media (max-width: 720px) { .tc { width: calc(100% - 24px); } .tc-form { flex-wrap: wrap; } .tc-in { flex-basis: 100%; order: 3; } }

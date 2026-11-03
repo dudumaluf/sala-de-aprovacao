@@ -712,6 +712,10 @@ function galeriaPage() {
 const galCtx = () => ({ ...estCtx(), studioCtx: estCtx, Estudio, render, head, run, dlName, zipDownload, openFile, approvedOpts, isPick, reviewOf, offWK, stackRoot,
   sceneHref, fmtTime, KINDS, STAR, ICO, CL, DA_CL, TZ, motionLabel: MOTION ? motionLabel() : "", isMotion: motionOpt });
 const drawsOf = (o) => S.annotations.filter((a) => a.option_id === o.id && !a.resolved).length;
+// timecoded comments on a video (the animatic): each keeps its video (option_id) and the second it was written at (t_sec)
+const tcOf = (o) => S.comments.filter((c) => c.option_id === o.id && c.t_sec != null).sort((a, b) => a.t_sec - b.t_sec);
+const tcFmt = (t) => mmss(Math.floor(t || 0));
+const cBody = (c) => `${c.t_sec != null ? `<span class="tc-chip">${tcFmt(c.t_sec)}</span> ` : ""}${esc(c.body)}`;
 async function signed(path, name, download) {
   const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(path, 3600, download ? { download: name || true } : undefined);
   if (error) throw error;
@@ -2147,7 +2151,7 @@ function retPanel(r, it, f, o) {
       <button class="ret-toggle" data-act="ret-said" data-id="${it.id}" aria-expanded="${saidOpen}">O que ${esc(A_CL)} disse <small>${said.length + extra.length}</small>${CHEV}</button>
       <button class="ret-toggle" data-act="ret-call" data-id="${it.id}" aria-expanded="${callOpen}">Nossa conversa <small>${notes.length}</small>${CHEV}</button>
     </div>
-    ${saidOpen ? `<div class="ret-said">${said.map((c) => `<div class="msg cliente"><p class="meta"><b>${esc(c.author)}</b> · na sala · ${fmtTime(c.created_at)}</p><p class="body">${esc(c.body)}</p></div>`).join("")}${extra.map((l) => `<div class="msg cliente"><p class="meta"><b>Fora da sala</b></p><p class="body">${esc(l)}</p></div>`).join("")}${said.length || extra.length ? "" : '<p class="none">Nada escrito.</p>'}</div>` : ""}
+    ${saidOpen ? `<div class="ret-said">${said.map((c) => `<div class="msg cliente"><p class="meta"><b>${esc(c.author)}</b> · na sala · ${fmtTime(c.created_at)}</p><p class="body">${cBody(c)}</p></div>`).join("")}${extra.map((l) => `<div class="msg cliente"><p class="meta"><b>Fora da sala</b></p><p class="body">${esc(l)}</p></div>`).join("")}${said.length || extra.length ? "" : '<p class="none">Nada escrito.</p>'}</div>` : ""}
     ${callOpen ? `<ul class="ret-call">${notes.map((l) => `<li>${esc(l)}</li>`).join("") || '<li class="none">Nada anotado.</li>'}</ul>` : ""}
   </div>`;
 }
@@ -2274,7 +2278,7 @@ function itemPedido(r, it, f) {
   const sec = (t, body, extraHead = "") => `<section class="ped-sec"><header><h3>${t}</h3>${extraHead}</header>${body}</section>`;
   return `<div class="item-ped">
     ${f ? sec(`O pedido sobre a v${f.version}`, `<p class="ped-sum"><span class="fb ${f.status}">${FB[f.status]}</span> ${esc(f.summary)}</p>${f.base_note ? `<p class="dim">De onde partir: ${esc(f.base_note)}</p>` : ""}${f.next_round ? `<p class="dim">Próxima rodada: ${esc(f.next_round)}</p>` : ""}`, `<a class="link" href="#/r/${r.id}/retorno/${it.id}">Retorno ›</a>`) : ""}
-    ${sec(`Na sala <small>${comments.length}</small>`, comments.length ? `<div class="ret-said">${comments.map((c) => `<div class="msg ${c.side}"><p class="meta"><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)} · ${fmtTime(c.created_at)}</p><p class="body">${esc(c.body)}</p></div>`).join("")}</div>` : '<p class="none">Nenhum comentário na sala.</p>', `<button class="link" data-act="drawer" data-id="${it.id}">Comentar ›</button>`)}
+    ${sec(`Na sala <small>${comments.length}</small>`, comments.length ? `<div class="ret-said">${comments.map((c) => `<div class="msg ${c.side}"><p class="meta"><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)} · ${fmtTime(c.created_at)}</p><p class="body">${cBody(c)}</p></div>`).join("")}</div>` : '<p class="none">Nenhum comentário na sala.</p>', `<button class="link" data-act="drawer" data-id="${it.id}">Comentar ›</button>`)}
     ${extra.length ? sec("Fora da sala (WhatsApp)", `<div class="ret-said">${extra.map((l) => `<div class="msg cliente"><p class="body">${esc(l)}</p></div>`).join("")}</div>`) : ""}
     ${notes.length ? sec("Nossa conversa", `<ul class="ret-call">${notes.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>`) : ""}
     ${sec(`Tarefas <small>${ts.filter((t) => t.done).length} de ${ts.length}</small>`, `<div class="tasks">${ts.map(taskRowHtml).join("")}</div>
@@ -2379,7 +2383,7 @@ function drawer() {
   }
   return `<aside class="drawer" aria-label="Comentários">
     ${headHtml}${tabs}
-    <div class="msgs" data-keep="msgs">${comments.map((c) => `<div class="msg ${c.side}"><p class="meta"><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)} · ${fmtTime(c.created_at)}</p><p class="body">${esc(c.body)}</p></div>`).join("") || '<p class="none">Nenhum comentário ainda.</p>'}</div>
+    <div class="msgs" data-keep="msgs">${comments.map((c) => `<div class="msg ${c.side}"><p class="meta"><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)} · ${fmtTime(c.created_at)}</p><p class="body">${cBody(c)}</p></div>`).join("") || '<p class="none">Nenhum comentário ainda.</p>'}</div>
     <form class="compose" data-comment="${it.id}" data-mode="${changes ? "changes" : ""}">
       ${changes ? '<p class="hintline">Conte o que ajustar. O item fica marcado como “Ajuste pedido”.</p>' : ""}
       <textarea class="field" name="body" rows="3" placeholder="${changes ? "O que vocês querem ajustar?" : "Escreva um comentário"}" required maxlength="4000" aria-label="Comentário"></textarea>
@@ -2537,6 +2541,17 @@ function lbxOp(k, shift) {
   else if (k === "fy") lbxSet({ fy: !t.fy });
   else if (k === "reset") { S.lbx.t = { ...Estudio.XF0 }; lbxSet({}); }
 }
+// under a video in Ver grande (both sides): pause anywhere and write, and the comment keeps that second. Its marks sit on
+// the bar and its time in the list; either jumps the video there. They also show in the card's comments with the time.
+function tcBlock(it, o) {
+  if (!o.mime.startsWith("video/")) return "";
+  const cs = tcOf(o), d = (S.vdur || {})[o.id] || 0, at = (t) => (d ? `left:${Math.min(100, (t / d) * 100)}%` : "left:0");
+  return `<div class="tc" data-tc="${o.id}">
+    <div class="tc-bar" data-act="tc-bar" title="Clique pra ir até esse ponto do vídeo">${cs.map((c) => `<button class="tc-mark ${c.side}" data-act="tc-seek" data-t="${c.t_sec}" style="${at(c.t_sec)}" title="${tcFmt(c.t_sec)} · ${esc(c.author)}: ${esc(c.body.slice(0, 90))}" aria-label="Ir pra ${tcFmt(c.t_sec)}"></button>`).join("")}<i class="tc-head" aria-hidden="true"></i></div>
+    <form class="tc-form" data-tc-form="${it.id}" data-opt="${o.id}"><span class="tc-now" title="O comentário fica preso neste momento">0:00</span><input class="tc-in" name="body" autocomplete="off" placeholder="Pause onde quiser e escreva o comentário deste momento…" aria-label="Comentário neste momento do vídeo"><button class="btn primary small">Comentar</button></form>
+    <ol class="tc-list">${cs.map((c) => `<li class="${c.side}"><button class="tc-t" data-act="tc-seek" data-t="${c.t_sec}" title="Ir pra esse momento">${tcFmt(c.t_sec)}</button><p><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)}<span>${esc(c.body)}</span></p></li>`).join("") || '<li class="none">Nenhum comentário ainda. Pause o vídeo no momento que quiser comentar e escreva aqui.</li>'}</ol>
+  </div>`;
+}
 function lightbox() {
   if (S.lightbox.wipe) return wipeView();
   if (S.lightbox.cmp) return compareView();
@@ -2557,6 +2572,7 @@ function lightbox() {
       ${opts.length > 1 ? `<button class="lb-nav prev" data-act="lb-step" data-v="-1" aria-label="Anterior">‹</button><button class="lb-nav next" data-act="lb-step" data-v="1" aria-label="Próxima">›</button>` : ""}
     </div>
     ${TEAM && o.prompt ? `<div class="lb-prompt"><p><b>${esc(o.model || "Prompt")}</b> ${esc(o.prompt)}</p><button class="btn small" data-act="copy-prompt" data-id="${o.id}">Copiar prompt</button></div>` : ""}
+    ${tcBlock(it, o)}
     <div class="lb-bottom">
       ${canPick ? `<button class="btn ${chosen ? "" : "primary"}" data-act="choose" data-id="${it.id}" data-opt="${o.id}" ${chosen ? 'title="Clique para desfazer a escolha"' : ""}>${chosen ? "Escolhida ✓ · desfazer" : `Escolher a opção ${letter(i)}`}</button>` : ""}
       ${o.mime.startsWith("video/") ? "" : `<button class="btn lb-draw" data-act="desenhar" data-id="${o.id}" title="Desenhe e escreva na imagem o que mudar">${Estudio.ICONS.pen}Desenhar${S.annotations.some((a) => a.option_id === o.id) ? ` · ${S.annotations.filter((a) => a.option_id === o.id).length}` : ""}</button>`}
@@ -2678,7 +2694,7 @@ function pedidoSec(it, o, vs) {
     ${imgs.length ? `<div class="ped-refs">${imgs.map((x) => `<button class="vs-th ${vs?.key === `ref:${x.id}` ? "on" : ""}" data-act="vs-with" data-v="ref:${x.id}" title="Comparar com: ${esc(x.label)}">${refImg(x)}${x.cited ? '<i class="c">citada</i>' : ""}</button>`).join("")}</div>` : ""}
     ${other.length ? `<div class="ped-links">${other.map((x) => { const id = ytId(x.url); const href = id ? `https://www.youtube.com/watch?v=${id}${x.t_sec != null ? `&t=${x.t_sec}s` : ""}` : x.url; return `<a href="${esc(href)}" target="_blank" rel="noopener">${x.kind === "video" ? "▶" : "↗"} ${esc(x.label)}${x.t_sec != null ? ` · ${mmss(x.t_sec)}` : ""}</a>`; }).join("")}</div>` : ""}
     ${said.length || extra.length ? `<button class="ret-toggle" data-act="ret-said" data-id="${it.id}" aria-expanded="${open}">O que ${esc(A_CL)} disse <small>${said.length + extra.length}</small>${CHEV}</button>
-      ${open ? `<div class="ret-said">${said.map((c) => `<div class="msg cliente"><p class="meta"><b>${esc(c.author)}</b> · ${fmtTime(c.created_at)}</p><p class="body">${esc(c.body)}</p></div>`).join("")}${extra.map((l) => `<div class="msg cliente"><p class="meta"><b>Fora da sala</b></p><p class="body">${esc(l)}</p></div>`).join("")}</div>` : ""}` : ""}
+      ${open ? `<div class="ret-said">${said.map((c) => `<div class="msg cliente"><p class="meta"><b>${esc(c.author)}</b> · ${fmtTime(c.created_at)}</p><p class="body">${cBody(c)}</p></div>`).join("")}${extra.map((l) => `<div class="msg cliente"><p class="meta"><b>Fora da sala</b></p><p class="body">${esc(l)}</p></div>`).join("")}</div>` : ""}` : ""}
   </div>`;
 }
 function teamLightbox(it, opts, card, i) {
@@ -2718,6 +2734,7 @@ function teamLightbox(it, opts, card, i) {
           ${frame}
         </div>
         ${vs && !vs.duo ? vsPicker(it, o, vs) : !adj && hist.length > 1 ? verStrip(hist, o, face) : ""}
+        ${adj ? "" : tcBlock(it, o)}
       </div>
       ${infoPanel(it, o, { note: refsSec(it, o, vs) + pedidoSec(it, o, vs) })}
     </div>
@@ -2959,6 +2976,9 @@ const ACTS = {
   "cmp-ref"(el) { S.lightbox.r = +el.dataset.v; render(true); },
   "cmp-opt"(el) { S.lightbox.i = +el.dataset.v; render(true); },
   "lb-bg"(el, e) { if (e.target === el || e.target.classList.contains("lb-stage")) ACTS["lb-close"](); },
+  // timecoded comments: a time or a mark jumps the video there and pauses; a click on the bar goes to that point
+  "tc-seek"(el) { const v = el.closest(".lb")?.querySelector("video"); if (!v) return; v.pause(); v.currentTime = +el.dataset.t; tcSync(v); },
+  "tc-bar"(el, e) { const v = el.closest(".lb")?.querySelector("video"); if (!v || !v.duration || e.target !== el) return; const r = el.getBoundingClientRect(); v.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * v.duration; tcSync(v); },
   "lb-step"(el) { step(+el.dataset.v); },
   // the originals of an item (what the client sees on their side; the team gets everything but the dropped ones)
   "item-zip"(el) { const it = itemOf(el.dataset.id); if (it) zipDownload(optsOf(it.id).filter((o) => !dropped(o)).map((o) => [{ name: dlName(o), path: o.path }, ""]), it.title); },
@@ -3249,6 +3269,22 @@ function stepScene(d) {
 }
 
 // ---------- events ----------
+// the animatic's timecoded comments follow the video: the clock by the field, the playhead and the marks on the bar
+function tcSync(v) {
+  const box = v.closest(".lb")?.querySelector(".tc");
+  if (!box) return;
+  const d = v.duration || 0;
+  if (d && isFinite(d)) {
+    (S.vdur ||= {})[box.dataset.tc] = d;
+    box.querySelectorAll(".tc-mark").forEach((m) => (m.style.left = `${Math.min(100, (+m.dataset.t / d) * 100)}%`));
+    const head = box.querySelector(".tc-head");
+    if (head) head.style.left = `${(v.currentTime / d) * 100}%`;
+  }
+  const now = box.querySelector(".tc-now");
+  if (now) now.textContent = tcFmt(v.currentTime);
+}
+for (const ev of ["timeupdate", "loadedmetadata", "seeked", "pause"]) document.addEventListener(ev, (e) => { if (e.target.matches?.(".lb video")) tcSync(e.target); }, true);
+document.addEventListener("focusin", (e) => { if (e.target.matches?.(".tc-in")) e.target.closest(".lb")?.querySelector("video")?.pause(); });
 document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-act]");
   if (S.more && !e.target.closest?.(".more-pop, [data-act=more]")) { S.more = null; if (!el) render(true); }
@@ -3486,6 +3522,19 @@ document.addEventListener("submit", async (e) => {
       await refresh();
     }, "Pedido adicionado");
     return;
+  }
+  if (f.dataset.tcForm) {
+    const body = val(f, "body"), v = f.closest(".lb")?.querySelector("video");
+    if (!body) return;
+    const t = Math.round((v ? v.currentTime : 0) * 10) / 10;
+    btn.disabled = true;
+    return run(async () => {
+      const { error } = await sb.from("comments").insert({ item_id: f.dataset.tcForm, option_id: f.dataset.opt, t_sec: t, author: myName(), side: SIDE, body });
+      if (error) throw error;
+      clearForm(f);
+      document.activeElement?.blur();
+      await refresh();
+    }, `Comentário em ${tcFmt(t)}`);
   }
   if (f.dataset.comment) {
     const id = f.dataset.comment;
