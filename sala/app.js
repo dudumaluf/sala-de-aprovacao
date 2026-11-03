@@ -1384,10 +1384,12 @@ function wipeHero(it, pairs) {
         <div class="hero-dots">${pairs.map((x, j) => `<i class="${j === k ? "on" : ""} ${dropped(x.ia) ? "dropped" : ""}"></i>`).join("")}</div>` : ""}
     </div>`;
 }
-// a scene reads the same everywhere: casting on the left, location (and the rest) on the right
+// a scene reads the same everywhere: casting on the left, location (and the rest) on the right. A page where one side
+// would hold most of the cards (one casting card and four others) just flows, so one column is not left nearly empty
 function splitCols(items, fn) {
   const left = items.filter((x) => x.kind === MAIN_KINDS[0]), right = items.filter((x) => x.kind !== MAIN_KINDS[0]);
-  if (!left.length || !right.length) return `<div class="scols flow">${items.map(fn).join("")}</div>`;
+  const lopsided = Math.max(left.length, right.length) > 2 * Math.min(left.length, right.length) + 1;
+  if (!left.length || !right.length || lopsided) return `<div class="scols flow">${items.map(fn).join("")}</div>`;
   return `<div class="scols"><div class="scol">${left.map(fn).join("")}</div><div class="scol">${right.map(fn).join("")}</div></div>`;
 }
 // "Atual" on the team's overview and scene pages, once a round has a second version: each item in three groups side by
