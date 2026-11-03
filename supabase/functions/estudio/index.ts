@@ -3,8 +3,10 @@
 // - Higgsfield (GPT Image 2.5, Grok, Qwen, Seedance), key in HF_KEY or the Vault secret read by estudio_hf_key();
 // and Claude, which looks at the images, the drawing and the notes and writes the prompt (ANTHROPIC_KEY).
 // The keys stay on the server and are never returned; only a caller signed in with the team login
-// (app_metadata.side = "time") gets through. Inputs are files of the room's `media` bucket, passed as storage paths and
-// signed here with the caller's own login, so storage rules still apply.
+// (app_metadata.side = "time", or app_metadata.room = "time" in a job that shares the project) gets through. Inputs are
+// files of the room's bucket, passed as storage paths and signed here with the caller's own login, so storage rules still
+// apply. The room sends its schema and bucket (config.js SCHEMA, BUCKET; "public" and "media" when it does not): only
+// names, since the caller's login still decides what it may read and write there.
 // ALLOWED_ORIGINS (optional, comma-separated: "https://sala.example.com,https://outra.example.com") limits which sites
 // may call it; unset, any site may, since the team login is the real gate.
 // Actions (POST JSON): check, write, submit, status, file.
@@ -84,12 +86,17 @@ Deno.serve(async (req) => {
   try {
     const url = Deno.env.get("SUPABASE_URL")!;
     const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+    const body = await req.json().catch(() => ({}));
+    const ident = (v: unknown, ok: RegExp, d: string) => (typeof v === "string" && ok.test(v) ? v : d);
+    const schema = ident(body.schema, /^[a-z_][a-z0-9_]{0,62}$/, "public"), bucket = ident(body.bucket, /^[a-z0-9_-]{1,63}$/, "media");
     const db = createClient(url, Deno.env.get("SUPABASE_ANON_KEY")!, {
+      db: { schema },
       global: { headers: { Authorization: `Bearer ${token}` } },
       auth: { persistSession: false, autoRefreshToken: false },
     });
     const { data: who } = await db.auth.getUser(token);
-    if (who?.user?.app_metadata?.side !== "time") return json({ error: "Só a equipe usa o estúdio." }, 403);
+    const meta = who?.user?.app_metadata || {};
+    if ((meta.job ? meta.room : meta.side) !== "time") return json({ error: "Só a equipe usa o estúdio." }, 403);
 
     // trimmed: a key pasted in the dashboard often brings a space or a line break along
     const keyOf = async (via: Via) => {
@@ -106,10 +113,9 @@ Deno.serve(async (req) => {
         headers: { ...(via === "mg" ? { "x-magnific-api-key": key } : { Authorization: `Key ${key}` }), "Content-Type": "application/json", ...(init.headers || {}) },
       });
 
-    const body = await req.json().catch(() => ({}));
     const sign = async (path: unknown) => {
       if (typeof path !== "string" || !path || path.includes("..") || /^[a-z]+:/i.test(path)) throw new Error("Arquivo inválido.");
-      const { data, error } = await db.storage.from("media").createSignedUrl(path, 2 * 3600);
+      const { data, error } = await db.storage.from(bucket).createSignedUrl(path, 2 * 3600);
       if (error || !data) throw new Error(`Não consegui abrir ${path}`);
       return data.signedUrl;
     };

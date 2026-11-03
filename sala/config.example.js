@@ -1,4 +1,5 @@
 // Tudo o que muda de um job para outro mora aqui. O resto (app.js, style.css) é igual para todo projeto.
+// Este é o exemplo: copie para sala/config.js (que fica fora do git, para o config de um job nunca subir) e preencha.
 // O exemplo abaixo é fictício ("Primeiro Gole", um filme para uma marca de café inventada): troque pelo seu.
 
 // ---------- Supabase ----------
@@ -13,6 +14,14 @@ export const LOGINS = {
   time: "time@exemplo.com",
   cliente: "cliente@exemplo.com",
 };
+
+// ---------- Vários jobs num projeto (opcional) ----------
+// Um projeto Supabase pode guardar vários jobs, cada um no seu schema e no seu bucket: supabase/job.py escreve o banco
+// de um job. Com JOB, os dois logins levam app_metadata.job (este nome) e app_metadata.room ("time" | "cliente") em vez
+// de app_metadata.side, e o login de um job não abre nada na sala de outro. Sem estas linhas: schema public, bucket media.
+export const SCHEMA = "public";
+export const BUCKET = "media";
+export const JOB = "";
 
 // Endereço da sala do cliente, usado na mensagem de envio. Vazio = o mesmo site, em /aprovacao/.
 export const CLIENT_URL = "";
@@ -113,6 +122,7 @@ export const PROMPTS = {
 // chaves dos geradores no servidor (veja o README). Desligado, a sala funciona igual, só sem o ✦.
 export const ESTUDIO = {
   on: false,
+  fn: "estudio", // o nome da edge function publicada (outro, se o projeto já tem uma "estudio" de outra sala)
   // uma frase em inglês sobre o visual do filme: entra em todo prompt que o estúdio escreve
   look: "photoreal film still, soft natural morning light, true-to-life color, real textures and real skin",
 };

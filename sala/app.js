@@ -4,14 +4,21 @@
 // Everything that changes from one job to the next (names, scenes, rounds, logins) lives in config.js.
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
 import { SUPABASE_URL, SUPABASE_KEY, CLIENT_URL, PROJECT, LOGINS, PEOPLE, KINDS, MAIN_KINDS, ROUNDS, SCENES, STYLE_BASE, PROMPTS, SEND_MESSAGE, ESTUDIO, DECKS } from "./config.js";
+import * as CFG from "./config.js"; // the optional keys (SCHEMA, BUCKET, JOB), with defaults below
 import * as Estudio from "./estudio.js";
 
 const SIDE = document.body.dataset.side; // "time" | "cliente", set by the entry page
 const TEAM = SIDE === "time";
 // one shared login per side: people only type the password, the e-mail comes from the room they opened
 const EMAIL = LOGINS[SIDE];
-// a storage key per side, so the team can keep both rooms open in the same browser
-const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { storageKey: `sala-${SIDE}` } });
+// Several jobs can share one Supabase project, each in its own schema and bucket (config.js SCHEMA, BUCKET). Without JOB
+// the two logins carry app_metadata.side; with JOB they carry app_metadata.job and .room, so a login of one job opens
+// nothing in another job's room.
+const SCHEMA = CFG.SCHEMA || "public", BUCKET = CFG.BUCKET || "media", JOB = CFG.JOB || "";
+const roomOf = (user) => { const m = user?.app_metadata || {}; return JOB ? (m.job === JOB ? m.room : "") : m.side; };
+// a storage key per side (and per job), so the team can keep both rooms, and other jobs' rooms, open in the same browser
+const AUTH_KEY = (side) => `${JOB || "sala"}-${side}`;
+const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { db: { schema: SCHEMA }, auth: { storageKey: AUTH_KEY(SIDE) } });
 document.title = `${PROJECT.name} · ${TEAM ? "Produção" : "Aprovação"}`;
 if (PROJECT.accent) document.documentElement.style.setProperty("--accent", PROJECT.accent);
 
@@ -142,7 +149,7 @@ async function run(fn, ok) {
 async function sessionLost(e) {
   if (!/jwt|token|401|42501|permission denied|row-level security/i.test(`${e?.message} ${e?.code}`)) return false;
   const { data } = await sb.auth.getSession();
-  if (data.session && data.session.user.app_metadata?.side === SIDE) return false;
+  if (data.session && roomOf(data.session.user) === SIDE) return false;
   S.session = null;
   loginPage("Sua sessão caiu. Entre de novo com a senha.");
   return true;
@@ -422,7 +429,7 @@ async function sign(paths) {
   if (Date.now() - urlsAt > (URL_TTL * 1000) / 2) { urls.clear(); urlsAt = Date.now(); }
   const missing = [...new Set(paths.filter((p) => p && !urls.has(p)))];
   for (let i = 0; i < missing.length; i += 100) {
-    const { data } = await sb.storage.from("media").createSignedUrls(missing.slice(i, i + 100), URL_TTL);
+    const { data } = await sb.storage.from(BUCKET).createSignedUrls(missing.slice(i, i + 100), URL_TTL);
     (data || []).forEach((d) => d.signedUrl && urls.set(d.path, d.signedUrl));
   }
 }
@@ -479,14 +486,14 @@ async function putFile(prefix, file) {
   const id = crypto.randomUUID();
   const ext = (file.name.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5) || "bin";
   const path = `${prefix}/${id}.${ext}`;
-  const up = await sb.storage.from("media").upload(path, file, { contentType: file.type || "application/octet-stream" });
+  const up = await sb.storage.from(BUCKET).upload(path, file, { contentType: file.type || "application/octet-stream" });
   if (up.error) throw up.error;
   let preview_path = null, thumb_path = null;
   const small = await resized(file).catch(() => null);
   if (small) {
     const put = async (blob, suffix) => {
       const pp = `${prefix}/${id}.${suffix}.jpg`;
-      const r = blob && (await sb.storage.from("media").upload(pp, blob, { contentType: "image/jpeg" }));
+      const r = blob && (await sb.storage.from(BUCKET).upload(pp, blob, { contentType: "image/jpeg" }));
       return r && !r.error ? pp : null;
     };
     preview_path = await put(small.preview, "preview");
@@ -536,13 +543,13 @@ function openOption(id) {
 // the AI studio (estudio.js) is optional: ESTUDIO.on in config.js turns on its ✦ buttons; drawing on an image works either way
 const AI = !!ESTUDIO?.on;
 const estCtx = () => ({ sb, SIDE, TEAM, S, esc, itemOf, optsOf, letterOf, roundOf, putFile, refresh, toast, myName, sign, urls, sceneName, openOption, sceneLook: (n) => lookOf(n)?.label || "",
-  fnUrl: `${SUPABASE_URL}/functions/v1/estudio`, anonKey: SUPABASE_KEY,
+  fnUrl: `${SUPABASE_URL}/functions/v1/${ESTUDIO.fn || "estudio"}`, anonKey: SUPABASE_KEY, schema: SCHEMA, bucket: BUCKET,
   // a render's blocking opens in its location's Cena 3D on that angle; the 3D's save hands the new angle back to the render
   openCena3d: (o) => { const it = itemOf(o.item_id); if (it) location.hash = `${sceneHref(it.round_id, it.scene, it.id)}/cena3d/${o.id}`; },
   heldRender: () => Estudio.heldRender(), takeAngle: (id) => Estudio.takeAngle(estCtx(), id), dropHeld: () => Estudio.dropHeld(estCtx()) });
 const drawsOf = (o) => S.annotations.filter((a) => a.option_id === o.id && !a.resolved).length;
 async function signed(path, name, download) {
-  const { data, error } = await sb.storage.from("media").createSignedUrl(path, 3600, download ? { download: name || true } : undefined);
+  const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(path, 3600, download ? { download: name || true } : undefined);
   if (error) throw error;
   return data.signedUrl;
 }
@@ -2648,7 +2655,7 @@ const ACTS = {
     await run(async () => {
       const { error } = await sb.from("request_files").delete().eq("id", f.id);
       if (error) throw error;
-      await sb.storage.from("media").remove([f.path, f.preview_path, f.thumb_path].filter(Boolean));
+      await sb.storage.from(BUCKET).remove([f.path, f.preview_path, f.thumb_path].filter(Boolean));
       await refresh();
     }, "Arquivo removido");
   },
@@ -2663,7 +2670,7 @@ const ACTS = {
       const paths = filesOf(r.id).flatMap((f) => [f.path, f.preview_path, f.thumb_path]).filter(Boolean);
       const { error } = await sb.from("requests").delete().eq("id", r.id);
       if (error) throw error;
-      if (paths.length) await sb.storage.from("media").remove(paths);
+      if (paths.length) await sb.storage.from(BUCKET).remove(paths);
       await refresh();
     }, "Pedido excluído");
   },
@@ -2730,7 +2737,7 @@ const ACTS = {
       const paths = optsOf(it.id).flatMap((o) => [o.path, o.preview_path, o.thumb_path]).filter(Boolean);
       const { error } = await sb.from("items").delete().eq("id", it.id);
       if (error) throw error;
-      if (paths.length) await sb.storage.from("media").remove(paths);
+      if (paths.length) await sb.storage.from(BUCKET).remove(paths);
       if (S.drawer === it.id) S.drawer = null;
       await refresh();
     }, "Item excluído");
@@ -2742,7 +2749,7 @@ const ACTS = {
     await run(async () => {
       const { error } = await sb.from("options").delete().eq("id", o.id);
       if (error) throw error;
-      await sb.storage.from("media").remove([o.path, o.preview_path, o.thumb_path].filter(Boolean));
+      await sb.storage.from(BUCKET).remove([o.path, o.preview_path, o.thumb_path].filter(Boolean));
       if (S.lightbox?.id === o.item_id) S.lightbox = null;
       await refresh();
     }, "Opção removida");
@@ -3265,10 +3272,10 @@ sb.auth.onAuthStateChange((event) => {
 let teamSb = null, ADMIN = false, NOVAS = new Set();
 async function adminCheck() {
   try {
-    if (TEAM || !store.get("sala-time")) return;
-    teamSb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { storageKey: "sala-time", autoRefreshToken: false, detectSessionInUrl: false } });
+    if (TEAM || !store.get(AUTH_KEY("time"))) return;
+    teamSb = createClient(SUPABASE_URL, SUPABASE_KEY, { db: { schema: SCHEMA }, auth: { storageKey: AUTH_KEY("time"), autoRefreshToken: false, detectSessionInUrl: false } });
     const { data } = await teamSb.auth.getSession();
-    ADMIN = data.session?.user.app_metadata?.side === "time";
+    ADMIN = roomOf(data.session?.user) === "time";
     await loadNovas();
   } catch { ADMIN = false; }
   document.body.classList.toggle("wk-admin", ADMIN);
@@ -3300,7 +3307,7 @@ async function boot() {
   await adminCheck();
   const { data } = await sb.auth.getSession();
   const session = data.session;
-  if (!session || session.user.app_metadata?.side !== SIDE) {
+  if (!session || roomOf(session.user) !== SIDE) {
     if (session) await sb.auth.signOut({ scope: "local" }); // a login from the other side: drop it here only
     return loginPage();
   }

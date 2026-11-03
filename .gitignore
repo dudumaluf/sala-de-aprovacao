@@ -1,4 +1,7 @@
 .DS_Store
+._*
+# o config de cada job (o exemplo é sala/config.example.js)
+sala/config.js
 .vercel/
 .netlify/
 node_modules/

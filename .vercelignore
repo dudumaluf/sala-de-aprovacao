@@ -1,0 +1,10 @@
+supabase/
+docs/
+README.md
+DESIGN.md
+LICENSE
+._*
+.DS_Store
+.claude/
+deploy.sh
+.git

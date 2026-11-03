@@ -93,7 +93,7 @@ Leva uns 15 minutos. Você precisa de uma conta no Supabase (o plano grátis ser
 
 ### 2. Config
 
-Abra [`sala/config.js`](sala/config.js) e preencha:
+Copie [`sala/config.example.js`](sala/config.example.js) para `sala/config.js` e preencha (o `config.js` fica fora do git, então o config de um job nunca sobe junto com a base):
 
 - `SUPABASE_URL` e `SUPABASE_KEY`: o que você copiou no passo 6;
 - `LOGINS`: os mesmos dois e-mails do passo 3;
@@ -164,7 +164,7 @@ Algumas colunas não têm tela de edição e são preenchidas pelo **Table Edito
 O ✦ chama uma edge function do Supabase, que guarda as chaves dos geradores no servidor e só atende o login do time.
 
 1. Instale a [CLI do Supabase](https://supabase.com/docs/guides/cli) e, na pasta do projeto, rode `supabase link --project-ref SEU-PROJETO`.
-2. Publique a função: `supabase functions deploy estudio`.
+2. Publique a função: `supabase functions deploy estudio` (com outro nome, `supabase functions deploy outro-nome`, se o projeto já tiver uma; aí ponha o nome em `ESTUDIO.fn`).
 3. Guarde as chaves como segredos da função (só as dos geradores que você vai usar):
 
    ```bash
@@ -184,6 +184,16 @@ Sem a função, deixe `ESTUDIO.on: false`: a sala funciona igual, só sem o ✦.
 ### Cena 3D
 
 O motor (`sala/cena3d/cena3d.js`, `rig.js`, `kit.js`) é igual para todo projeto. Os cenários são de cada filme e ficam em [`sala/cena3d/sets.js`](sala/cena3d/sets.js), um por cena, com as câmeras, o elenco e os objetos. O exemplo traz uma cozinha para a cena 1. O comentário no topo do arquivo explica o formato. A aba **Cena 3D** aparece nos itens de locação do time.
+
+## Vários jobs num projeto Supabase
+
+Um projeto do Supabase pode guardar as salas de vários jobs, cada uma no seu schema e no seu bucket, com os mesmos arquivos da sala e um `config.js` por job:
+
+1. Escreva o banco do job: `python3 supabase/job.py <schema> <job> <bucket> > job.sql` (por exemplo `python3 supabase/job.py meujob meujob meujob`) e rode o `job.sql` no **SQL Editor**. Ele cria o schema, as regras, as funções e o bucket, e abre o schema para a API.
+2. Os dois logins do job levam `{"job": "<job>", "room": "time"}` e `{"job": "<job>", "room": "cliente"}` em `app_metadata`, em vez de `side`. O login de um job não vê nada de outro.
+3. No `config.js` do job: `SCHEMA`, `BUCKET` e `JOB` com os mesmos nomes.
+
+A edge function do Estúdio serve todos os jobs do projeto: a sala manda o schema e o bucket dela, e o login de quem chama decide o que pode ler e escrever.
 
 ## Atualizar uma sala que já está no ar
 

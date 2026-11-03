@@ -104,7 +104,7 @@ async function call(action, payload = {}, raw = false) {
   const r = await fetch(E.ctx.fnUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${data.session?.access_token}`, apikey: E.ctx.anonKey },
-    body: JSON.stringify({ action, ...payload }),
+    body: JSON.stringify({ action, ...payload, schema: E.ctx.schema, bucket: E.ctx.bucket }), // the room's schema and bucket
   });
   if (raw && r.ok) return r.blob();
   const out = await r.json().catch(() => ({}));
@@ -450,7 +450,7 @@ async function marksPath(max = 0) {
   paint(g, c.width, c.height, E.strokes, E.notes);
   const out = await new Promise((ok) => c.toBlob(ok, "image/jpeg", 0.9));
   const path = `estudio/marcas/${crypto.randomUUID()}.jpg`;
-  const up = await E.ctx.sb.storage.from("media").upload(path, out, { contentType: "image/jpeg" });
+  const up = await E.ctx.sb.storage.from(E.ctx.bucket || "media").upload(path, out, { contentType: "image/jpeg" });
   if (up.error) throw up.error;
   return path;
 }
