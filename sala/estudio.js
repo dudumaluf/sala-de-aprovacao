@@ -6,7 +6,9 @@
 //   the item as a new option of the round's version, based_on the image edited, so it shows under "Mudanças que fizemos"
 //   and never reaches the client until someone checks it.
 // - Vídeo (team): the same bar switched to Seedance 2.5 through Higgsfield, either from a first (and last) frame or from
-//   references (images, videos and the casting's voice takes, so the lips follow the voice). Videos land like images do.
+//   references (images, videos and the casting's voice takes, so the lips follow the voice), or to Genjutsu on a guide
+//   video (a previz, a blocking, a take): its motion with the scene rebuilt from images, or the video itself with someone
+//   or something swapped in. Videos land like images do.
 // It lives in its own overlay outside #app: the app's re-renders and shortcuts never touch the canvas or the prompt.
 // From config.js: the client's name (PROJECT.client), the film's look for Claude (ESTUDIO.look) and the product that
 // joins every scene (PRODUCT, or null for a film without one).
@@ -32,7 +34,14 @@ const MODELS = [
 const VIDEO_MODELS = [
   { id: "bytedance/seedance-2.5/reference-to-video", via: "higgsfield", name: "Seedance 2.5 · Referências", label: "Seedance 2.5", way: "refs", ar: ["16:9", "9:16", "4:3", "3:4", "1:1", "21:9"] },
   { id: "bytedance/seedance-2.5/image-to-video", via: "higgsfield", name: "Seedance 2.5 · Primeiro e último quadro", label: "Seedance 2.5", way: "frames", ar: [] },
+  // Genjutsu on a guide video (the first video attached, 4 to 30 s) and up to 8 images, Image 1, Image 2… in order (the
+  // base first): motion transfer takes only the video's motion and camera and rebuilds the scene from the images (Image 1
+  // leads, as the first frame); object swap keeps the video and puts the images' people, things or places in it. The
+  // result is as long as the video
+  { id: "higgsfield/genjutsu/motion-transfer/v1.0", via: "higgsfield", name: "Genjutsu · Transferir movimento", label: "Genjutsu · movimento", way: "guide", ar: [] },
+  { id: "higgsfield/genjutsu/object-swap/v1.0", via: "higgsfield", name: "Genjutsu · Trocar objeto", label: "Genjutsu · troca", way: "guide", ar: [] },
 ];
+const GUIDE_MAX = 8; // Genjutsu: images with the guide video
 const TEXT_TO_VIDEO = "bytedance/seedance-2.5/text-to-video";
 const DURS = [4, 5, 6, 8, 10, 12, 15, 20, 30];
 const VRES = ["480p", "720p", "1080p"];
@@ -1699,17 +1708,17 @@ const tokHTML = (x) => `<span class="est-tok" contenteditable="false" data-path=
 // inline reference: "image 3" by its place among the files generate() sends (the drawing, which has no thumb, keeps
 // its number), @image2/@video1/@audio1 by Seedance's lists, and @Label by a reference's name
 function promptHTML(text) {
-  const video = isVideo();
+  const video = isVideo(), tags = video && vmodel().way !== "guide"; // Genjutsu says "Image 3", as the image models
   const base = E.base && { path: E.base.path, kind: "image", label: E.blocking ? "Blocking" : "Base", thumb: thumbUrl(E.base) };
   const imgs = E.refs.filter((r) => (r.kind || "image") === "image").map((r) => ({ ...r, kind: "image" }));
-  const files = [...(base ? [base] : []), ...(base && !E.blocking && drawingGoes() ? [null] : []), ...imgs];
+  const files = [...(base ? [base] : []), ...(base && !E.blocking && !video && drawingGoes() ? [null] : []), ...imgs];
   const pool = { image: [...(base ? [base] : []), ...imgs], video: E.refs.filter((r) => r.kind === "video"), audio: E.refs.filter((r) => r.kind === "audio") };
   const named = [...(base ? [base] : []), ...E.refs.map((r) => ({ ...r, kind: r.kind || "image" }))].sort((a, b) => b.label.length - a.label.length);
   const alt = named.map((x) => x.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
-  const re = new RegExp(`${video ? "@(image|video|audio)(\\d+)\\b" : "\\b[Ii]mage (\\d+)\\b(?!\\.\\d)"}${alt ? `|@(${alt})` : ""}`, "g");
+  const re = new RegExp(`${tags ? "@(image|video|audio)(\\d+)\\b" : "\\b[Ii]mage (\\d+)\\b(?!\\.\\d)"}${alt ? `|@(${alt})` : ""}`, "g");
   let out = "", at = 0;
   for (const m of text.matchAll(re)) {
-    const x = m[video ? 3 : 2] ? named.find((n) => n.label === m[video ? 3 : 2]) : video ? pool[m[1]][m[2] - 1] : files[m[1] - 1];
+    const x = m[tags ? 3 : 2] ? named.find((n) => n.label === m[tags ? 3 : 2]) : tags ? pool[m[1]][m[2] - 1] : files[m[1] - 1];
     if (!x) continue;
     out += esc(text.slice(at, m.index)) + tokHTML(x);
     at = m.index + m[0].length;
@@ -1953,7 +1962,9 @@ async function generateVideo() {
   for (const r of E.refs) { const k = r.kind || "image"; pool[k].push(r.path); refs.push({ path: r.path, label: r.label, kind: k }); }
   // each reference named in the text becomes its Seedance tag (@image2, @audio1…), counted in its own list; the camera's
   // line (in Seedance's terms) goes last, once, and the recipes made for video go through Claude first (see below)
-  const said = promptFor((d) => { const i = (pool[d.kind] || []).indexOf(d.path); return i < 0 ? null : `@${d.kind}${i + 1}`; }).trim();
+  // Genjutsu knows its images as Image 1, Image 2… and has one video, the guide
+  const guide = m.way === "guide";
+  const said = promptFor((d) => { const i = (pool[d.kind] || []).indexOf(d.path); return i < 0 ? null : !guide ? `@${d.kind}${i + 1}` : d.kind === "image" ? `Image ${i + 1}` : d.kind === "video" && !i ? "the video" : null; }).trim();
   const cam = camNow(), rec = recNow();
   const input = { prompt: said || prompt, duration: E.dur, resolution: E.vres, generate_audio: E.sound };
   let id = m.id;
@@ -1961,6 +1972,15 @@ async function generateVideo() {
     if (!pool.image.length) return ctx.toast("Junte com + a imagem do primeiro quadro.", true);
     input.image_url = pool.image[0];
     if (pool.image[1]) input.end_image_url = pool.image[1];
+  } else if (guide) {
+    if (pool.video.length !== 1) return ctx.toast(pool.video.length ? "O Genjutsu usa um vídeo-guia só: deixe um vídeo." : "Junte com + o vídeo-guia (aba Vídeos), de 4 a 30 segundos.", true);
+    if (!pool.image.length) return ctx.toast("Junte com + as imagens do que entra no vídeo.", true);
+    if (pool.image.length > GUIDE_MAX) return ctx.toast(`O Genjutsu aceita até ${GUIDE_MAX} imagens.`, true);
+    // the video sets the length and the sound
+    delete input.duration;
+    delete input.generate_audio;
+    input.video_url = pool.video[0];
+    input.image_urls = pool.image;
   } else {
     const seen = pool.image.length + pool.video.length;
     if (pool.audio.length && !seen) return ctx.toast("A voz precisa de pelo menos uma imagem ou um vídeo junto.", true);
@@ -1975,14 +1995,15 @@ async function generateVideo() {
   const wrote = rec.list.length && !rec.woven && canWrite() ? await writeFirst() : null;
   if (rec.list.length && !rec.woven && canWrite() && !wrote) return;
   if (wrote) input.prompt = wrote.prompt;
-  if (cam.line && !cam.woven && !wrote) input.prompt += `\n\n${cam.line}`;
+  // Genjutsu's camera is the guide video's
+  if (cam.line && !cam.woven && !wrote && !guide) input.prompt += `\n\n${cam.line}`;
   if (rec.list.length && !rec.woven && !wrote) input.prompt += `\n\n${recText(rec.list)}`;
-  const camGone = camData({ ...cam, woven: cam.woven || (!!wrote && !!cam.line) });
+  const camGone = guide ? null : camData({ ...cam, woven: cam.woven || (!!wrote && !!cam.line) });
   if (camGone) input.camera = camGone;
   if (rec.list.length) input.recipes = rec.list.map(({ id, name }) => ({ id, name }));
   E.busy = true; syncBar();
   try {
-    const label = [m.label, E.vres, `${E.dur}s`, "estúdio"].join(" · ");
+    const label = [m.label, E.vres, guide ? "" : `${E.dur}s`, "estúdio"].filter(Boolean).join(" · ");
     for (let k = 0; k < E.count; k++) {
       const { job } = await call("submit", { item_id: E.item.id, base_option: E.base?.id || null, mode: "video", model: id, label, prompt, input, refs, created_by: ctx.myName() });
       track(job);
@@ -2021,7 +2042,7 @@ async function writeFirst() {
 // the camera and the recipes, and what the base and the drawing are for (a new angle: the scene to photograph again and where
 // the camera goes; a recipe whose drawing only points: what the request is about)
 async function writeRequest() {
-  const { ctx } = E, video = isVideo(), frames = video && vmodel().way === "frames";
+  const { ctx } = E, video = isVideo(), frames = video && vmodel().way === "frames", guide = video && vmodel().way === "guide";
   let notes = E.base && !video ? E.notes.map((n) => n.text).filter(Boolean) : [];
   // smaller copies; the base as the generator will get it (adjusted with Ajustar, or itself)
   const baseSmall = E.base && !video ? await basePath("small") : E.base ? E.base.preview_path || E.base.path : null;
@@ -2045,7 +2066,12 @@ async function writeRequest() {
     if (E.base) images.push({ path: small(E.base), label: frames ? "the first frame" : "the base image" });
     images.push(...imgRefs.map((r, i) => (frames && !E.base && i === 0 ? { ...r, label: `the first frame (${r.label})` } : r)));
     if (frames) images.splice(2);
-    else {
+    else if (guide) {
+      // Genjutsu: up to 8 images in order, and the guide video, which Claude does not see
+      images.splice(GUIDE_MAX);
+      const v = E.refs.find((r) => r.kind === "video");
+      if (v) tags.push({ tag: "the video", label: `the guide video "${v.label}"` });
+    } else {
       const n = { video: 0, audio: 0 };
       for (const r of E.refs) if (r.kind === "video" || r.kind === "audio") tags.push({ tag: `@${r.kind}${++n[r.kind]}`, label: r.kind === "audio" ? `voice take "${r.label}"` : `video "${r.label}"` });
     }
@@ -2061,14 +2087,14 @@ async function writeRequest() {
   // the camera goes as the same line Gerar would add, and the recipes as the team wrote them: Claude weaves both into the
   // text once (then Gerar does not add them again)
   const { prompt } = await call("write", {
-    kind: video ? (frames ? "frames" : "video") : E.blocking ? "blocking" : E.base ? (reshoot ? "angle" : "edit") : "create",
+    kind: video ? (guide ? (vmodel().id.includes("motion") ? "motion" : "swap") : frames ? "frames" : "video") : E.blocking ? "blocking" : E.base ? (reshoot ? "angle" : "edit") : "create",
     images, tags, notes, prompt: E.prompt.trim(), item: it?.title || "", scene: ctx.sceneName(it?.scene ?? E.scene) || "",
     // the film's look, which Claude keeps in every prompt (the function has a neutral one when this is empty)
     look: String(ESTUDIO?.look || "").slice(0, 400),
     // the words the film never wants in a prompt (config.js ESTUDIO.avoid), not even negated
     ...(Array.isArray(ESTUDIO?.avoid) && ESTUDIO.avoid.length && { avoid: ESTUDIO.avoid.slice(0, 8) }),
-    ...(video && { duration: E.dur, aspect: frames ? "" : E.vaspect }),
-    ...((cam.line || cam.novo) && { camera: { line: cam.line, novo: cam.novo, how: video ? "video" : reshoot ? "new" : cam.how } }),
+    ...(video && !guide && { duration: E.dur, aspect: frames ? "" : E.vaspect }),
+    ...((cam.line || cam.novo) && !guide && { camera: { line: cam.line, novo: cam.novo, how: video ? "video" : reshoot ? "new" : cam.how } }),
     ...(rec.list.length && { recipes: rec.list.map((r) => ({ name: r.name, instruction: r.instruction, base: r.base, drawing: r.drawing })) }),
   });
   return { prompt, cam, rec };
@@ -2547,18 +2573,19 @@ function syncTools() {
 }
 // what goes with the prompt, as a stack of circles: the base first (ringed), the drawing, then the references. Hovering
 // spreads the stack and names each one as the prompt calls it: 1, 2… (image 1, image 2) for the image models; @image1,
-// @video1, @audio1… for Seedance with references; Início and Fim for Seedance with frames (one without a name stays out,
-// dimmed). A reference shows its ✕ on its own hover, and a click on a room image edits it over this generation (openRef):
+// @video1, @audio1… for Seedance with references; Início and Fim for Seedance with frames; Imagem 1, Imagem 2… and the
+// Vídeo-guia for Genjutsu (one without a name stays out, dimmed). A reference shows its ✕ on its own hover, and a click on a room image edits it over this generation (openRef):
 // its new version comes back into the same place
 function syncChips() {
   const box = $(".est-refs");
   if (!box) return;
-  const video = isVideo(), frames = video && vmodel().way === "frames", soul = soulOn(), n = { image: 0, video: 0, audio: 0 };
+  const video = isVideo(), frames = video && vmodel().way === "frames", guide = video && vmodel().way === "guide", soul = soulOn(), n = { image: 0, video: 0, audio: 0 };
   const tag = (kind) => {
     // Soul 2 takes only the base: the drawing and the references stay out
     if (soul) return kind === "image" && E.base && n.image++ === 0 ? "1" : "";
     if (!video) return kind === "image" ? String(++n.image) : "";
     if (frames) return kind === "image" ? ["Início", "Fim"][n.image++] || "" : "";
+    if (guide) return kind === "image" ? (n.image < GUIDE_MAX ? `Imagem ${++n.image}` : "") : kind === "video" && !n.video++ ? "Vídeo-guia" : "";
     return `@${kind}${++n[kind]}`;
   };
   const chip = (thumb, label, kind, { cls = "", attrs = "", rm = false, rmKey = "ref-rm", hint = "" } = {}) => {
@@ -2632,7 +2659,7 @@ function syncBar() {
     sel("aspect", m.ar, E.vaspect);
     sel("res", VRES, E.vres);
     sel("quality", [], "");
-    sel("dur", DURS, E.dur, (x) => `${x} s`);
+    sel("dur", m.way === "guide" ? [] : DURS, E.dur, (x) => `${x} s`);
   } else {
     // only an area: the crop sets the aspect, and it is enlarged to 2K or 4K
     const area = areaOn() && !!m.sizes, res = area ? m.res.filter((x) => x !== "1k") : m.res;
@@ -2649,7 +2676,7 @@ function syncBar() {
   if (ap) ap.title = !video && E.aspect === "auto" ? `Proporção: Auto ${E.base ? "mantém a da imagem base" : "deixa o modelo escolher"}` : "Proporção";
   const snd = $('[data-k="sound"]');
   if (snd) {
-    snd.hidden = !video;
+    snd.hidden = !video || m.way === "guide";
     snd.classList.toggle("on", !!E.sound);
     snd.setAttribute("aria-pressed", String(!!E.sound));
     snd.innerHTML = E.sound ? ICONS.sound : ICONS.mute;
@@ -2659,10 +2686,11 @@ function syncBar() {
   if (pr && E.mode !== "draw") {
     pr.dataset.placeholder = !video ? (areaOn() ? (E.areas.length > 1 ? `O que muda na área ${E.ai + 1}? Cada área tem o seu texto e as suas referências. Use @ para citar uma imagem da sala.` : "O que muda dentro da área? Use @ para citar uma imagem da sala, como um rosto.") : soulOn() ? "Descreva a imagem: a base é a cena de partida e o rosto vem do Soul ID escolhido ao lado." : E.base ? "Descreva a mudança. Use @ para citar uma imagem da sala, ou desenhe na imagem para apontar onde." : "Descreva a imagem que quer criar. Use @ para citar castings, locações e outras imagens da sala.")
       : m.way === "frames" ? "Descreva o que acontece entre o primeiro e o último quadro e como a câmera se move."
+      : m.way === "guide" ? (m.id.includes("motion") ? "Diga quem e o que está na cena, e de qual imagem: o movimento e a câmera vêm do vídeo-guia." : "Diga o que troca no vídeo-guia e por qual imagem: o resto do vídeo fica igual.")
       : "Descreva o plano: o que acontece, a câmera e a luz. Use @ para citar imagens, vídeos e vozes (a voz faz a sincronia labial).";
   }
   const em = $(".est-empty span");
-  if (em) em.textContent = video ? "Escreva o plano embaixo e junte com + imagens, vídeos e vozes da sala."
+  if (em) em.textContent = video ? (m.way === "guide" ? "Junte com + o vídeo-guia (aba Vídeos) e as imagens do que entra nele, e escreva embaixo o que acontece." : "Escreva o plano embaixo e junte com + imagens, vídeos e vozes da sala.")
     : E.refs.length ? `Já entraram ${PRODUCT ? "o elenco, a locação e o produto" : "o elenco e a locação"} aprovados desta cena. Escreva o que acontece no plano embaixo; tire ou junte referências à vontade.`
     : "Escreva o que quer embaixo e, se quiser, junte castings, locações e outras imagens da sala com +.";
   const cnt = $('select[data-k="count"]');

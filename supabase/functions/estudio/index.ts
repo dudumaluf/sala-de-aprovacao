@@ -1,6 +1,6 @@
 // Estúdio da sala: asks image and video models for the team, through two providers:
 // - Magnific (Nano Banana 2.1), key in the Edge Function secret MAGNIFIC_KEY;
-// - Higgsfield (GPT Image 2.5, Grok, Qwen, Soul 2, Seedance), key in HF_KEY or the Vault secret read by estudio_hf_key();
+// - Higgsfield (GPT Image 2.5, Grok, Qwen, Soul 2, Seedance, Genjutsu), key in HF_KEY or the Vault secret read by estudio_hf_key();
 // and Claude, which looks at the images, the drawing and the notes and writes the prompt (ANTHROPIC_KEY).
 // The keys stay on the server and are never returned; only a caller signed in with the team login
 // (app_metadata.side = "time", or app_metadata.room = "time" in a job that shares the project) gets through. Inputs are
@@ -38,8 +38,13 @@ const MODELS: Record<string, { via: Via; path: string; fields: string[] }> = {
   "bytedance/seedance-2.5/text-to-video": { via: "hf", path: "/bytedance/seedance-2.5/text-to-video", fields: ["prompt", "duration", "resolution", "aspect_ratio", "generate_audio"] },
   "bytedance/seedance-2.5/image-to-video": { via: "hf", path: "/bytedance/seedance-2.5/image-to-video", fields: ["prompt", "image_url", "end_image_url", "duration", "resolution", "generate_audio"] },
   "bytedance/seedance-2.5/reference-to-video": { via: "hf", path: "/bytedance/seedance-2.5/reference-to-video", fields: ["prompt", "image_urls", "video_urls", "audio_urls", "duration", "resolution", "aspect_ratio", "generate_audio"] },
+  // Genjutsu on a guide video (4 to 30 s) and up to 8 images: motion transfer rebuilds the scene from the images with the
+  // video's motion and camera; object swap keeps the video and swaps in the images' people, things or places. The result
+  // is as long as the video; resolution 480p, 720p or 1080p
+  "higgsfield/genjutsu/motion-transfer/v1.0": { via: "hf", path: "/higgsfield/genjutsu/motion-transfer/v1.0", fields: ["prompt", "video_url", "image_urls", "resolution"] },
+  "higgsfield/genjutsu/object-swap/v1.0": { via: "hf", path: "/higgsfield/genjutsu/object-swap/v1.0", fields: ["prompt", "video_url", "image_urls", "resolution"] },
 };
-const FILE_FIELDS = new Set(["image_urls", "video_urls", "audio_urls", "image_url", "end_image_url"]);
+const FILE_FIELDS = new Set(["image_urls", "video_urls", "audio_urls", "image_url", "end_image_url", "video_url"]);
 const OPEN = new Set(["queued", "in_progress"]);
 // Magnific task states, in the studio's words
 const MG_STATUS: Record<string, string> = { CREATED: "queued", IN_PROGRESS: "in_progress", COMPLETED: "completed", FAILED: "failed" };
@@ -63,6 +68,8 @@ const unwash = (s: string, avoid: string[] = []) => {
   return s.replace(new RegExp(`,?\\s*(?:and\\s+)?(?:never|not|no|nothing)\\s+(?:${w})(?:\\s+(?:or|and|nor)\\s+(?:${w}))*`, "gi"), "")
     .replace(/\(\s*\)/g, "").replace(/[ \t]+([.,;])/g, "$1");
 };
+// people in set places (around a table, in a row) are said place by place, so a model does not swap them
+const PLACES = "When people sit or stand in set places (around a table, in a row), give each one's place in order, from the camera's left to right, and keep everyone in that place for the whole shot.";
 const WRITER: Record<string, string> = {
   edit: `You write prompts for an image model (Nano Banana) in the AI studio of a film production. The images you see are the ones the model will see, with the same numbers. Image 1 is the picture to edit. If one image is the same picture with the director's marks and numbered notes drawn on top, it only shows where and what to change. Any other image is a reference the director attached.
 Read the director's request and notes (often in Portuguese), look at the pictures, and write one edit instruction in English: what to change and exactly where (describe the spot by what is there and its position in the frame), how the result should look so it belongs in the scene (materials, light direction, perspective, scale), and that everything else stays exactly as in image 1. Name reference images by number when they matter. The model must never draw the marks, the numbers or the note text. ${LOOK}
@@ -77,8 +84,15 @@ Answer with the prompt only, in plain prose, in at most 150 words.`,
 Answer with the prompt only, in plain prose, in at most 180 words.`,
   video: `You write prompts for Seedance 2.5, a video model, in the AI studio of a film production. References are tagged in load order: @image1, @image2… for images, @video1… for videos, @audio1… for voice takes the model lip-syncs to. You see the images; videos and audio are only named.
 Write one prompt in English for a single shot of the given duration, in these blocks, using only the ones the shot needs: SCENE CONTEXT, ACTIVE REFERENCES (each tag with a minimal anchor and "100% matches the reference"), LOCATION MAP, FIRST FRAME / BLOCKING, FORMAT MODE ("One continuous shot, the camera does not cut on its own." unless cuts are asked for), CAMERA (field of view in degrees, one of 107°, 84°, 63°, 47°, 29°, 18°, 12°, 8°, or 180° for a fisheye; height; movement), ACTION, PERFORMANCE, LIGHTING (source, direction, white balance in Kelvin), AUDIO, POSITIVE LOCKS.
-Write what can be seen and measured, in positive phrasing only; left and right are from the camera; speeds in km/h; no director, film or equipment names. When a voice is attached, say who speaks the line from which @audio tag, lips in sync. ${LOOK}
+Write what can be seen and measured, in positive phrasing only; left and right are from the camera; speeds in km/h; no director, film or equipment names. When a voice is attached, say who speaks the line from which @audio tag, lips in sync. ${PLACES} ${LOOK}
 Answer with the prompt only.`,
+  // Genjutsu on a guide video: the images come numbered as the model gets them; the video is only named
+  motion: `You write prompts for Genjutsu motion transfer, a video model, in the AI studio of a film production. It takes only the motion and the camera of a guide video (a previz, a 3D blocking, a take) and rebuilds the whole scene from up to 8 reference images, Image 1, Image 2… in the order the model gets them: nothing of the video's own people or place stays. Image 1 leads, as the first frame: the whole clip keeps its look. You see the images; the video is only named.
+Read the director's request (often in Portuguese) and write one prompt in English: who and what is in the scene and from which Image, one sentence each, and that the moves, the framing and the camera follow the video. Two people can blend into each other, so describe each one apart and plainly, by how they look and where they are. ${PLACES} Let the images carry the likeness: a few anchoring words at most. ${LOOK}
+Answer with the prompt only, in plain prose, in at most 150 words.`,
+  swap: `You write prompts for Genjutsu object swap, a video model, in the AI studio of a film production. It gets a video clip and up to 8 reference images, Image 1, Image 2… in the order the model gets them, and replaces people, objects or places in the video with the subjects of the images, keeping everything else: the camera, the motion, the framing, the light and the timing. You see the images; the video is only named.
+Read the director's request (often in Portuguese) and write one prompt in English: name each original subject of the video by how it looks and where it is ("the driver in the red shirt"), then say which Image it becomes, one sentence each, and ask to keep the place, the camera, the motion and the light. It reliably changes the most prominent person; when two change, say plainly that both do. ${PLACES} Let the images carry the likeness: a few anchoring words at most. ${LOOK}
+Answer with the prompt only, in plain prose, in at most 120 words.`,
   frames: `You write prompts for Seedance 2.5 image-to-video in the AI studio of a film production. The first image is the first frame of the shot and, when there is a second one, it is the last frame. Write one prompt in English for a single continuous shot of the given duration that takes the first frame to the last: what moves and how (speeds in km/h), what the camera does (field of view in degrees, movement), the performance, light consistent with the frames, and the sound. Write what can be seen, in positive phrasing only; left and right are from the camera; no director, film or equipment names. ${LOOK}
 Answer with the prompt only.`,
 };

@@ -64,6 +64,7 @@ O menu do time segue essa ordem:
 
 **Opcionais** (desligados no exemplo; veja [Estúdio e Cena 3D](#estúdio-de-ia-e-cena-3d-opcionais)):
 - **Estúdio de IA (✦):** editar uma imagem com IA, criar uma nova a partir do kit da cena (o elenco, a locação e o produto aprovados), renderizar um ângulo do 3D e gerar vídeo. O Claude escreve o prompt a partir do pedido, dos desenhos e das referências.
+  - **Vídeo:** Seedance 2.5 (por referências, ou do primeiro ao último quadro) e Genjutsu sobre um vídeo-guia de 4 a 30 s (um previz, um blocking, um take): **Transferir movimento** refaz a cena com as imagens (a Imagem 1 vale como primeiro quadro) e leva só o movimento e a câmera do vídeo; **Trocar objeto** mantém o vídeo e troca nele pessoas, coisas ou lugares pelas imagens (até 8).
   - **Só uma área:** retângulos numerados na imagem; cada um vai como um pedido próprio e volta encaixado, e o resto fica igual, pixel por pixel.
   - **Ajustar** a base no quadro antes de gerar, e a **câmera** (tipo, corpo, lente, focal, diafragma, plano, ângulo, filme), que vai como uma linha no prompt. **Novo ângulo** fotografa a cena de outro ponto.
   - **Receitas:** o time guarda como pedir cada tipo de mudança (ângulos, hora do dia, expressão, limpeza, cor…) e arrasta pro prompt. A sala já vem com 30.
@@ -188,7 +189,7 @@ O ✦ chama uma edge function do Supabase, que guarda as chaves dos geradores no
 
    Os geradores e as chaves de cada um:
    - `MAGNIFIC_KEY`: Nano Banana, pelo Magnific.
-   - `HF_KEY`: GPT Image, Grok, Qwen, Soul 2 e Seedance, pela Higgsfield, e o treino dos Soul IDs.
+   - `HF_KEY`: GPT Image, Grok, Qwen, Soul 2, Seedance e Genjutsu, pela Higgsfield, e o treino dos Soul IDs.
    - `ANTHROPIC_KEY`: o Claude, que escreve os prompts.
 
    Opcional: `ALLOWED_ORIGINS=https://sua-sala.com` limita os sites que podem chamar a função.
