@@ -1609,6 +1609,11 @@ const replyLine = (r) => r.confirmed_at ? `Confirmada por ${esc(r.confirmed_by)}
 function summaryPage(r) {
   const items = itemsOf(r.id);
   const done = items.filter((i) => i.decision !== "pending").length;
+  if (items.length && items.every((it) => it.kind === "video")) {
+    const one = items.length === 1 ? items[0] : null;
+    return head(esc(r.title), replyLine(r), progress(done, items.length, `${done} de ${items.length} decididos`) + (one ? videoHeadActions(one) : "") + dlButton(), roundLabel(r)) +
+      `<div class="main-body" data-keep="main"><div class="items">${items.map((it) => clientRow(it, !!one)).join("")}</div></div>`;
+  }
   const scenes = scenesOf(r.id);
   const next = scenes.find(([, list]) => list.some((i) => i.decision === "pending"));
   const started = items.some((i) => i.decision !== "pending" || i.chosen_option);
@@ -1823,11 +1828,31 @@ function voicesLine(it) {
 function compareButton(it) {
   return refsOf(it).length && optsOf(it.id).length ? `<button class="chat" data-act="compare" data-id="${it.id}" title="Ver lado a lado com as fotos originais">${CMP}Comparar</button>` : "";
 }
+// the video-only round's header: ask for a change as an icon, approve as the one word; the timecoded comments under the
+// video replace the comments button
+const tcSideOn = () => (S.tcSide ??= store.get("sala-tcside") === "1");
+const tcSideButton = (o) => { const n = tcOf(o).length; return `<button class="btn hico ${tcSideOn() ? "on" : ""}" data-act="tc-side" aria-pressed="${tcSideOn()}" title="${tcSideOn() ? "Fechar" : "Abrir"} os comentários do vídeo" aria-label="Comentários do vídeo">${CHAT}${n ? `<span class="badge">${n}</span>` : ""}</button>`; };
+const videoHeadActions = (it) => (optsOf(it.id)[0] ? tcSideButton(optsOf(it.id)[0]) : "") + (it.decision !== "pending"
+  ? `<button class="btn" data-act="undo" data-id="${it.id}">Mudar decisão</button>`
+  : `<button class="btn hico" data-act="ask-change" data-id="${it.id}" title="Pedir ajuste: escreva o que mudar" aria-label="Pedir ajuste">${ICO.redo}</button><button class="btn primary" data-act="approve" data-id="${it.id}">Aprovar</button>`)
+  + (ADMIN ? `<button class="btn hico wk-rm-item" data-act="wk-item-off" data-id="${it.id}" title="Tirar o item: ${esc(A_CL)} deixa de ver o item inteiro. Só você vê este botão." aria-label="Tirar o item">${ICO.drop}</button>` : "");
+// the team's admin only, in the client's room: the client stops seeing the whole item
+const itemOffButton = (it) => (ADMIN ? `<button class="chat wk-rm-item" data-act="wk-item-off" data-id="${it.id}" title="${esc(cap(A_CL))} deixa de ver o item inteiro. Só você vê este botão.">${ICO.drop}Tirar o item</button>` : "");
 function chatButton(it) {
   const n = commentsOf(it.id).length;
   return `<button class="chat ${S.drawer === it.id ? "on" : ""}" data-act="drawer" data-id="${it.id}" title="Comentários">${CHAT}${n || "Comentar"}</button>`;
 }
-function clientRow(it) {
+// approve, ask for a change, or undo: under the client's card, or in the page header for the video-only round
+function clientActions(it) {
+  const opts = optsOf(it.id);
+  const single = opts.length === 1 || it.mode === "set";
+  const ci = opts.findIndex((o) => o.id === it.chosen_option);
+  const L = ci >= 0 ? letter(ci) : "";
+  return it.decision !== "pending"
+    ? `<button class="btn" data-act="undo" data-id="${it.id}">Mudar decisão</button>`
+    : `<button class="btn primary" data-act="approve" data-id="${it.id}" ${single || L ? "" : "disabled"}>${single ? (opts.length > 1 ? "Aprovar o conjunto" : "Aprovar") : L ? `Aprovar a opção ${L}` : "Escolha uma opção"}</button><button class="btn" data-act="ask-change" data-id="${it.id}">Pedir ajuste</button>`;
+}
+function clientRow(it, bare = false) {
   const opts = optsOf(it.id);
   const single = opts.length === 1 || it.mode === "set";
   const ci = opts.findIndex((o) => o.id === it.chosen_option);
@@ -1835,13 +1860,13 @@ function clientRow(it) {
   const decided = it.decision !== "pending";
   const canPick = !decided && !single;
   const [cls, label] = clientState(it);
-  const actions = decided
-    ? `<button class="btn" data-act="undo" data-id="${it.id}">Mudar decisão</button>`
-    : `<button class="btn primary" data-act="approve" data-id="${it.id}" ${single || L ? "" : "disabled"}>${single ? (opts.length > 1 ? "Aprovar o conjunto" : "Aprovar") : L ? `Aprovar a opção ${L}` : "Escolha uma opção"}</button><button class="btn" data-act="ask-change" data-id="${it.id}">Pedir ajuste</button>`;
+  const vid = opts.length === 1 && opts[0].mime.startsWith("video/") ? opts[0] : null;
+  const actions = clientActions(it);
   return `<article class="citem ${S.flash === it.id ? "flash" : ""}" id="item-${it.id}">
-    <header class="citem-head"><span class="kind">${KINDS[it.kind] || ""}</span><h3>${esc(it.title)}</h3><span class="state ${cls}">${label}</span><span class="grow"></span>${compareButton(it)}${chatButton(it)}${ADMIN ? `<button class="chat wk-rm-item" data-act="wk-item-off" data-id="${it.id}" title="${esc(cap(A_CL))} deixa de ver o item inteiro. Só você vê este botão.">${ICO.drop}Tirar o item</button>` : ""}</header>
+    ${bare ? "" : `<header class="citem-head"><span class="kind">${KINDS[it.kind] || ""}</span><h3>${esc(it.title)}</h3><span class="state ${cls}">${label}</span><span class="grow"></span>${compareButton(it)}${chatButton(it)}${itemOffButton(it)}</header>`}
     ${voicesLine(it)}
-    <div class="ctiles n${Math.min(opts.length, 3)} ${canPick ? "pickable" : ""}">${opts.map((o, i) => `<figure class="ctile ${o.id === it.chosen_option ? "chosen" : ""}">
+    ${vid ? (() => { const side = !bare || tcSideOn(); return `<div class="cvideo cvsplit tcwrap ${side ? "side-on" : ""}"><div class="cv-left">${media(vid, "big").replace(" autoplay", "")}${tcBlock(it, vid, false)}</div>${side ? `<aside class="tc-side" aria-label="Comentários no vídeo"><p class="tc-side-head">Comentários no vídeo <small>${tcOf(vid).length || ""}</small></p>${tcList(vid)}</aside>` : ""}</div>`; })() : ""}
+    <div class="ctiles n${Math.min(opts.length, 3)} ${canPick ? "pickable" : ""}" ${vid ? "hidden" : ""}>${opts.map((o, i) => `<figure class="ctile ${o.id === it.chosen_option ? "chosen" : ""}">
       <button class="ctile-img" data-act="${canPick ? "choose" : "zoom"}" data-id="${it.id}" data-opt="${o.id}" data-i="${i}" aria-label="${canPick ? (o.id === it.chosen_option ? "Desfazer a escolha" : `Escolher a opção ${letter(i)}`) : "Ver em tela cheia"}" ${canPick && o.id === it.chosen_option ? 'title="Clique de novo para desfazer"' : ""}>${media(o)}${vplayBtn(o)}</button>
       ${single ? "" : `<span class="lab">${letter(i)}</span>`}
       ${isNova(it, o) ? '<span class="ctile-new" title="Nova: entrou como extra pra você comparar e tirar a pior. Só você vê esta marca.">Nova</span>' : ""}
@@ -1849,7 +1874,7 @@ function clientRow(it) {
       <button class="ctile-zoom" data-act="zoom" data-id="${it.id}" data-i="${i}" title="Ver em tela cheia" aria-label="Ver em tela cheia">${ICO.view}</button>
       ${ADMIN ? `<button class="ctile-rm" data-act="wk-off" data-id="${it.id}" data-opt="${o.id}" title="Tirar da aprovação: ${A_CL} deixa de ver esta imagem, que continua na produção. Só você vê este botão." aria-label="Tirar da aprovação">${ICO.drop}</button>` : ""}
     </figure>`).join("")}</div>
-    <div class="citem-acts">${actions}${it.mode === "set" && opts.length > 1 ? `<span class="grow"></span><button class="btn" data-act="item-zip" data-id="${it.id}">Baixar o pacote (.zip)</button>` : ""}</div>
+    ${bare ? "" : `<div class="citem-acts">${actions}${it.mode === "set" && opts.length > 1 ? `<span class="grow"></span><button class="btn" data-act="item-zip" data-id="${it.id}">Baixar o pacote (.zip)</button>` : ""}</div>`}
   </article>`;
 }
 // team item on a scene page: the overview card (one big image, arrows through the versions), the grid icon swaps it
@@ -2029,8 +2054,11 @@ function retornoPage(r) {
   const card = (it) => {
     const f = fOf.get(it.id), now = answerOpts(it, v);
     const base = S.options.find((x) => x.id === (f.base_option || it.chosen_option));
-    const list = now.length ? now : base ? [base] : [];
-    list.forEach((o) => S.ovList.push({ id: it.id, i: optsOf(it.id).indexOf(o) }));
+    // the base (or an answer) can be a version inside a card's stack, e.g. the one used in the animatic: the card that
+    // holds it is what shows and opens, since the ver grande only opens cards
+    const cards = optsOf(it.id), cardOf = (o) => (cards.includes(o) ? o : cards.find((x) => stackRoot(x).id === stackRoot(o).id) || null);
+    const list = [...new Set((now.length ? now : base ? [base] : []).map(cardOf).filter(Boolean))];
+    list.forEach((o) => S.ovList.push({ id: it.id, i: cards.indexOf(o) }));
     const h = list.length ? heroOf(it, list, { quiet: true }) : null;
     const ts = tasksOf(rid, it.id, v), td = ts.filter((t) => t.done).length;
     const antes = now.length && base ? `<button class="ret-antes" data-act="pair" data-id="${it.id}" data-i="0" title="Antes: o que o cliente viu na v${v}. Clique para comparar com o que fizemos" aria-label="Comparar antes e agora">${media(base, "thumb")}</button>` : "";
@@ -2543,13 +2571,14 @@ function lbxOp(k, shift) {
 }
 // under a video in Ver grande (both sides): pause anywhere and write, and the comment keeps that second. Its marks sit on
 // the bar and its time in the list; either jumps the video there. They also show in the card's comments with the time.
-function tcBlock(it, o) {
+const tcList = (o) => `<ol class="tc-list">${tcOf(o).map((c) => `<li class="${c.side}"><button class="tc-t" data-act="tc-seek" data-t="${c.t_sec}" title="Ir pra esse momento">${tcFmt(c.t_sec)}</button><p><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)}<span>${esc(c.body)}</span></p></li>`).join("") || '<li class="none">Nenhum comentário ainda. Pause o vídeo no momento que quiser comentar e escreva aqui.</li>'}</ol>`;
+function tcBlock(it, o, withList = true) {
   if (!o.mime.startsWith("video/")) return "";
-  const cs = tcOf(o), d = (S.vdur || {})[o.id] || 0, at = (t) => (d ? `left:${Math.min(100, (t / d) * 100)}%` : "left:0");
+  const cs = tcOf(o), d = (S.vdur || {})[o.id] || 0, now = (S.vtime || {})[o.id] || 0, at = (t) => (d ? `left:${Math.min(100, (t / d) * 100)}%` : "left:0");
   return `<div class="tc" data-tc="${o.id}">
-    <div class="tc-bar" data-act="tc-bar" title="Clique pra ir até esse ponto do vídeo">${cs.map((c) => `<button class="tc-mark ${c.side}" data-act="tc-seek" data-t="${c.t_sec}" style="${at(c.t_sec)}" title="${tcFmt(c.t_sec)} · ${esc(c.author)}: ${esc(c.body.slice(0, 90))}" aria-label="Ir pra ${tcFmt(c.t_sec)}"></button>`).join("")}<i class="tc-head" aria-hidden="true"></i></div>
-    <form class="tc-form" data-tc-form="${it.id}" data-opt="${o.id}"><span class="tc-now" title="O comentário fica preso neste momento">0:00</span><input class="tc-in" name="body" autocomplete="off" placeholder="Pause onde quiser e escreva o comentário deste momento…" aria-label="Comentário neste momento do vídeo"><button class="btn primary small">Comentar</button></form>
-    <ol class="tc-list">${cs.map((c) => `<li class="${c.side}"><button class="tc-t" data-act="tc-seek" data-t="${c.t_sec}" title="Ir pra esse momento">${tcFmt(c.t_sec)}</button><p><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)}<span>${esc(c.body)}</span></p></li>`).join("") || '<li class="none">Nenhum comentário ainda. Pause o vídeo no momento que quiser comentar e escreva aqui.</li>'}</ol>
+    <div class="tc-bar" data-act="tc-bar" title="Clique pra ir até esse ponto do vídeo">${cs.map((c) => `<button class="tc-mark ${c.side}" data-act="tc-seek" data-t="${c.t_sec}" style="${at(c.t_sec)}" title="${tcFmt(c.t_sec)} · ${esc(c.author)}: ${esc(c.body.slice(0, 90))}" aria-label="Ir pra ${tcFmt(c.t_sec)}"></button>`).join("")}<i class="tc-head" aria-hidden="true" style="${at(now)}"></i></div>
+    <form class="tc-form" data-tc-form="${it.id}" data-opt="${o.id}"><span class="tc-now" title="O comentário fica preso neste momento">${tcFmt(now)}</span><input class="tc-in" name="body" autocomplete="off" placeholder="Pause onde quiser e escreva o comentário deste momento…" aria-label="Comentário neste momento do vídeo"><button class="btn primary small">Comentar</button></form>
+    ${withList ? tcList(o) : ""}
   </div>`;
 }
 function lightbox() {
@@ -2562,7 +2591,8 @@ function lightbox() {
   const it = itemOf(id);
   const opts = it ? optsOf(id) : [];
   const o = opts[i];
-  if (!o) return "";
+  // nothing to show: let go of the lightbox, or every later render waits on a ver grande that never opens
+  if (!o) { S.lightbox = null; return ""; }
   const chosen = it.chosen_option === o.id;
   const canPick = !TEAM && it.decision === "pending" && opts.length > 1 && it.mode !== "set";
   if (TEAM) return teamLightbox(it, opts, o, i);
@@ -2976,9 +3006,10 @@ const ACTS = {
   "cmp-ref"(el) { S.lightbox.r = +el.dataset.v; render(true); },
   "cmp-opt"(el) { S.lightbox.i = +el.dataset.v; render(true); },
   "lb-bg"(el, e) { if (e.target === el || e.target.classList.contains("lb-stage")) ACTS["lb-close"](); },
+  "tc-side"() { S.tcSide = !tcSideOn(); store.set("sala-tcside", S.tcSide ? "1" : "0"); render(true); },
   // timecoded comments: a time or a mark jumps the video there and pauses; a click on the bar goes to that point
-  "tc-seek"(el) { const v = el.closest(".lb")?.querySelector("video"); if (!v) return; v.pause(); v.currentTime = +el.dataset.t; tcSync(v); },
-  "tc-bar"(el, e) { const v = el.closest(".lb")?.querySelector("video"); if (!v || !v.duration || e.target !== el) return; const r = el.getBoundingClientRect(); v.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * v.duration; tcSync(v); },
+  "tc-seek"(el) { const v = el.closest(".tcwrap, .lb")?.querySelector("video"); if (!v) return; v.pause(); v.currentTime = +el.dataset.t; tcSync(v); },
+  "tc-bar"(el, e) { const v = el.closest(".tcwrap, .lb")?.querySelector("video"); if (!v || !v.duration || e.target !== el) return; const r = el.getBoundingClientRect(); v.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * v.duration; tcSync(v); },
   "lb-step"(el) { step(+el.dataset.v); },
   // the originals of an item (what the client sees on their side; the team gets everything but the dropped ones)
   "item-zip"(el) { const it = itemOf(el.dataset.id); if (it) zipDownload(optsOf(it.id).filter((o) => !dropped(o)).map((o) => [{ name: dlName(o), path: o.path }, ""]), it.title); },
@@ -3271,7 +3302,7 @@ function stepScene(d) {
 // ---------- events ----------
 // the animatic's timecoded comments follow the video: the clock by the field, the playhead and the marks on the bar
 function tcSync(v) {
-  const box = v.closest(".lb")?.querySelector(".tc");
+  const box = v.closest(".tcwrap, .lb")?.querySelector(".tc");
   if (!box) return;
   const d = v.duration || 0;
   if (d && isFinite(d)) {
@@ -3280,11 +3311,12 @@ function tcSync(v) {
     const head = box.querySelector(".tc-head");
     if (head) head.style.left = `${(v.currentTime / d) * 100}%`;
   }
+  (S.vtime ||= {})[box.dataset.tc] = v.currentTime;
   const now = box.querySelector(".tc-now");
   if (now) now.textContent = tcFmt(v.currentTime);
 }
-for (const ev of ["timeupdate", "loadedmetadata", "seeked", "pause"]) document.addEventListener(ev, (e) => { if (e.target.matches?.(".lb video")) tcSync(e.target); }, true);
-document.addEventListener("focusin", (e) => { if (e.target.matches?.(".tc-in")) e.target.closest(".lb")?.querySelector("video")?.pause(); });
+for (const ev of ["timeupdate", "loadedmetadata", "seeked", "pause"]) document.addEventListener(ev, (e) => { if (e.target.matches?.(".lb video, .tcwrap video")) tcSync(e.target); }, true);
+document.addEventListener("focusin", (e) => { if (e.target.matches?.(".tc-in")) e.target.closest(".tcwrap, .lb")?.querySelector("video")?.pause(); });
 document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-act]");
   if (S.more && !e.target.closest?.(".more-pop, [data-act=more]")) { S.more = null; if (!el) render(true); }
@@ -3524,7 +3556,7 @@ document.addEventListener("submit", async (e) => {
     return;
   }
   if (f.dataset.tcForm) {
-    const body = val(f, "body"), v = f.closest(".lb")?.querySelector("video");
+    const body = val(f, "body"), v = f.closest(".tcwrap, .lb")?.querySelector("video");
     if (!body) return;
     const t = Math.round((v ? v.currentTime : 0) * 10) / 10;
     btn.disabled = true;

@@ -2042,3 +2042,20 @@ body.est-open .update-bar { bottom: auto; top: 6px; height: 40px; }
 .tc-list li.time .tc-t { border-color: var(--accent-edge); background: var(--accent-soft); color: var(--accent); }
 .tc-chip { display: inline-block; padding: 0 6px; margin-right: 2px; border-radius: 5px; background: var(--amber-soft); color: var(--amber); font-family: var(--num); font-size: 12px; }
 @media (max-width: 720px) { .tc { width: calc(100% - 24px); } .tc-form { flex-wrap: wrap; } .tc-in { flex-basis: 100%; order: 3; } }
+
+/* the client's card for a single video (the animatic): the player on the page, the timecoded comments under it */
+.cvideo { width: min(100%, calc((100vh - 290px) * 16 / 9)); margin: 0 auto; }
+.cvideo > video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: var(--r-sm); }
+.cvideo .tc { width: 100%; margin: 12px 0 0; }
+.ctiles[hidden] { display: none; }
+
+/* the client's animatic card in two columns: the video, the bar and the field on the left; every comment by time on the right */
+.cvideo.cvsplit { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
+.cvideo.cvsplit.side-on { grid-template-columns: minmax(0, 1fr) 320px; }
+.cv-left { width: min(100%, calc((100vh - 230px) * 16 / 9)); justify-self: center; }
+.cv-left > video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: var(--r-sm); }
+.tc-side { position: sticky; top: 0; display: flex; flex-direction: column; min-height: 0; max-height: calc(100vh - 200px); padding: 4px 0 0 18px; border-left: 1px solid var(--line); }
+.tc-side-head { margin: 0 0 10px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.tc-side-head small { margin-left: 4px; color: var(--dim); font-weight: 500; }
+.tc-side .tc-list { max-height: none; flex: 1; min-height: 0; gap: 12px; }
+@media (max-width: 1000px) { .cvideo.cvsplit, .cvideo.cvsplit.side-on { grid-template-columns: 1fr; } .tc-side { position: static; max-height: none; padding: 12px 0 0; border-left: 0; border-top: 1px solid var(--line); } }
