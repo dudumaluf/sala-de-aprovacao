@@ -1,7 +1,8 @@
 // Galeria: everything the room made or received, in one grid of thumbnails: every option (versions and variations, of
 // every round and scene) and every image or video the client sent.
 // - Filtros: one button, chips while on, cleared by a reload (DESIGN.md); a search over captions, titles and prompts;
-//   newest first, oldest first or by scene.
+//   newest first, oldest first or by scene. Vídeo tells takes and cuts, comparisons and the animatic apart (options.role,
+//   set from the menu, or the room's guess from name and model).
 // - Select with ⌘ or Shift clicks, or drag a box; while something is selected a plain click adds or takes out. The bar
 //   at the bottom and the right click act on the selection: open in its card, edit with AI (the first image is the base,
 //   the others come in as references), group, download, ✓ / ✕, train a Soul ID, delete for good what is already ✕.
@@ -17,7 +18,7 @@ const store = {
   get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
 };
-const blank = () => ({ sort: "new", state: new Set(), origin: new Set(), kind: new Set(), round: new Set(), scene: new Set(), author: new Set(), media: new Set() });
+const blank = () => ({ sort: "new", state: new Set(), origin: new Set(), kind: new Set(), round: new Set(), scene: new Set(), author: new Set(), media: new Set(), role: new Set() });
 const G = {
   f: blank(), q: "", group: null, soul: null, filt: false,
   size: Math.min(360, Math.max(120, +store.get("sala-gal-size") || 200)), // the thumbnails' width: a per-viewer convenience
@@ -31,6 +32,8 @@ const ORIGIN = { estudio: "Estúdio", hf: "Higgsfield", upload: "Subido", wk: "M
 const STATE = { pick: "★ Aprovadas", keep: "✓ Equipe", none: "Sem marca", drop: "✕ Descartadas" };
 const SORT = { new: "Mais novas", old: "Mais antigas", scene: "Por cena" };
 const MEDIA = { image: "Imagens", video: "Vídeos" };
+// what a video is (options.role, or the room's guess in roleOf): with ✓ it leaves only the takes worth showing
+const ROLE = { take: "Takes e cortes", compara: "Comparativos", animatic: "Animatic", outro: "Outros vídeos" };
 const SOUL_STATE = { not_ready: "Preparando", queued: "Na fila", in_progress: "Treinando", completed: "Pronto", failed: "Falhou" };
 const OPEN = new Set(["not_ready", "queued", "in_progress"]);
 const GEN = /nano banana|seedream|gpt image|ideogram|soul|seedance|kling|flux|grok|qwen|veo|hailuo|edição da foto|liquify/i;
@@ -64,6 +67,16 @@ function originOf(o) {
   if (/^blender/i.test(m)) return "blender";
   return GEN.test(m) ? "hf" : "upload";
 }
+// what a video is, when the team has not said it (options.role): a comparison (previz × take, strips) by its name; the
+// animatic by its name or origin (blocking, motion); a take by its model (what the studio or a generator made) or a cut
+function roleOf(o) {
+  if (ROLE[o.role]) return o.role;
+  const n = fold(o.name), m = (o.model || "").trim();
+  if (/_x_|compar|analise|lado a lado|side.?by.?side|^tira/.test(n)) return "compara";
+  if (m === "Blocking 3D" || C.isMotion?.(o) || /previz|previs|animatic|blocking|^guia/.test(n)) return "animatic";
+  if (GEN.test(m) || /estúdio/i.test(m) || /^corte|montagem|^take/.test(n)) return "take";
+  return "outro";
+}
 // one entry per thing, memoized on the room's arrays (a load replaces them): k is "o:<option>" or "f:<file>", the same
 // key gallery_group_items.ref keeps
 let memo = { k: null, list: [], map: new Map() };
@@ -85,7 +98,7 @@ function entries() {
     const pick = !!it && (C.isPick(it, o) || ok.has(o.id));
     return {
       k: `o:${o.id}`, o, it, round: it?.round_id || "", scene: it ? String(it.scene) : "", kind: it?.kind || "", author: o.created_by || "",
-      origin: originOf(o), at: o.created_at, video, angle: o.model === "Blocking 3D",
+      origin: originOf(o), role: video ? roleOf(o) : "", at: o.created_at, video, angle: o.model === "Blocking 3D",
       thumb: video ? o.preview_path : o.thumb_path || o.preview_path || o.path, big: video ? o.path : o.preview_path || o.path, poster: video ? o.preview_path : null,
       // the photo a Soul ID trains on: the 1920 px JPEG when there is one
       photo: video ? null : o.preview_path || o.path,
@@ -101,7 +114,7 @@ function entries() {
     const it = byFile.get(f.id) || null, r = S.requests.find((x) => x.id === f.request_id), still = f.thumb_path || f.preview_path;
     return {
       k: `f:${f.id}`, f, it, round: it?.round_id || "", scene: it ? String(it.scene) : "", kind: it?.kind || "", author: C.CL,
-      origin: "wk", at: f.created_at, video, angle: false,
+      origin: "wk", role: video ? "outro" : "", at: f.created_at, video, angle: false,
       thumb: still || (web ? f.path : null), big: video ? f.path : f.preview_path || (web ? f.path : null), poster: video ? still : null,
       photo: video ? null : f.preview_path || (web ? f.path : null),
       flags: { pick: false, keep: false, drop: false, none: true }, stack: null,
@@ -115,8 +128,8 @@ function entries() {
 const entryOf = (k) => (entries(), memo.map.get(k));
 
 // ---------- filters ----------
-const FACETS = ["state", "origin", "kind", "round", "scene", "author", "media"];
-const valOf = { origin: (e) => e.origin, kind: (e) => e.kind, round: (e) => e.round, scene: (e) => e.scene, author: (e) => e.author, media: (e) => (e.video ? "video" : "image") };
+const FACETS = ["state", "origin", "kind", "round", "scene", "author", "media", "role"];
+const valOf = { origin: (e) => e.origin, kind: (e) => e.kind, round: (e) => e.round, scene: (e) => e.scene, author: (e) => e.author, media: (e) => (e.video ? "video" : "image"), role: (e) => e.role };
 // every group of chips combines with the others; inside a group the chips add up (OR). skip: the group a count is for
 function pass(e, skip = null) {
   for (const g of FACETS) {
@@ -143,7 +156,7 @@ function shown() {
   return list.sort((a, b) => (G.f.sort === "old" ? a.at.localeCompare(b.at) : b.at.localeCompare(a.at)));
 }
 const chipLabel = { state: (v) => STATE[v], origin: (v) => ORIGIN[v], kind: (v) => C.KINDS[v] || v, round: (v) => C.roundOf(v)?.code || v,
-  scene: (v) => `${two(+v)} ${C.sceneName(+v)}`, author: (v) => v, media: (v) => MEDIA[v] };
+  scene: (v) => `${two(+v)} ${C.sceneName(+v)}`, author: (v) => v, media: (v) => MEDIA[v], role: (v) => ROLE[v] };
 function filtersOn() {
   const on = [];
   if (G.f.sort !== "new") on.push(["sort", "", SORT[G.f.sort]]);
@@ -175,6 +188,7 @@ function filterPop() {
     ${facet("scene", "Cena", scenes)}
     ${facet("author", "Autor", authors)}
     ${facet("media", "Mídia", Object.keys(MEDIA))}
+    ${facet("role", "Vídeo", Object.keys(ROLE))}
   </div>`;
 }
 
@@ -359,6 +373,19 @@ async function download(list) {
   const folder = (e) => (scenes.size < 2 ? "" : e.scene === "" ? `Material ${C.DA_CL}` : `${two(+e.scene)} ${C.sceneName(+e.scene)}`);
   await C.zipDownload(list.map((e) => [{ name: name(e), path: e.o?.path || e.f.path }, folder(e)]), `Galeria · ${list.length} ${list.length === 1 ? "arquivo" : "arquivos"}`);
 }
+// what the selected videos are, for the Vídeo filter: one write. The same mark again takes it off, back to the room's guess
+async function setRole(list, role) {
+  closeLayers();
+  const vids = optsIn(list).filter((e) => e.video);
+  if (!vids.length) return C.toast("Essa marca é só para os vídeos da sala.", true);
+  const off = vids.every((e) => e.o.role === role), val = off ? null : role;
+  const { error } = await C.sb.from("options").update({ role: val }).in("id", vids.map((e) => e.o.id));
+  if (error) return C.toast(/role/.test(error.message) ? "O banco ainda não tem options.role: rode supabase/atualizar-2026-11c.sql." : `Não deu certo: ${error.message}`, true);
+  for (const e of vids) e.o.role = val;
+  memo.k = null;
+  C.toast(off ? `${plural(vids.length, "vídeo volta", "vídeos voltam")} para a marca automática` : `${plural(vids.length, "vídeo", "vídeos")}: ${ROLE[role]}`);
+  render();
+}
 // ✓ / ✕ for many at once: one write, Desfazer puts back what each one had. The client's picks never get a ✕ from here,
 // and a ✕ on what the client sees right now asks first (it leaves the client's room)
 async function review(list, verdict) {
@@ -487,7 +514,7 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 // ---------- the context menu (right click, or ⋯ in the bar) ----------
 function menuItems(list) {
-  const one = list.length === 1 ? list[0] : null, pics = imgs(list), opts = optsIn(list);
+  const one = list.length === 1 ? list[0] : null, pics = imgs(list), opts = optsIn(list), vids = opts.filter((e) => e.video);
   const kept = opts.length && opts.every((e) => e.flags.keep), gone = opts.length && opts.every((e) => e.flags.drop);
   const del = deletable(list);
   const items = [
@@ -502,6 +529,8 @@ function menuItems(list) {
     ["keep", kept ? "Tirar o ✓" : "Manter", "keep", "M", !opts.length && "Só imagens da sala"],
     ["drop", gone ? "Tirar o ✕ (voltar)" : "Descartar", "drop", "D", !opts.length && "Só imagens da sala"],
     C.ai && ["soul", "Criar Soul ID…", "soul", pics.length >= 5 && pics.length <= 20 ? `${pics.length} fotos` : "", (pics.length < 5 || pics.length > 20) && `Escolha de 5 a 20 fotos (${pics.length})`],
+    vids.length && "-",
+    ...(vids.length ? ["take", "compara", "animatic"].map((r) => [`role-${r}`, `É vídeo: ${ROLE[r]}`, "play", vids.every((e) => e.o.role === r) ? "✓" : ""]) : []),
     del.ok.length && "-",
     del.ok.length && ["delete", `Apagar de vez${del.ok.length < list.length ? ` · ${del.ok.length} de ${list.length}` : ""}…`, "trash", "", "", "danger"],
   ];
@@ -628,6 +657,7 @@ function deleteDialog(list) {
 function act(v) {
   const list = selList();
   if (!list.length && v !== "view") return;
+  if (v.startsWith("role-")) return setRole(list, v.slice(5));
   const run = {
     open: () => openCard(list[0]),
     view: () => openView(list[0]?.k),

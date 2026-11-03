@@ -84,6 +84,8 @@ create table public.options (
   based_on uuid references public.options (id) on delete set null, -- the option of the previous version it answers
   stack uuid references public.options (id) on delete set null,    -- the original this one is an edit of
   face uuid references public.options (id) on delete set null,     -- on an original: the edit shown on its card
+  role text check (role in ('take', 'compara', 'animatic', 'outro')), -- a video, for the Galeria's Vídeo filter: take or cut,
+                                       -- comparison, animatic (previz, blocking, guide). Null: the room guesses from name and model
   created_by text,
   sort double precision not null default extract(epoch from clock_timestamp()), -- upload order
   created_at timestamptz not null default now()
