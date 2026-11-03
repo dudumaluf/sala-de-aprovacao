@@ -26,6 +26,10 @@ export const JOB = "";
 // Endereço da sala do cliente, usado na mensagem de envio. Vazio = o mesmo site, em /aprovacao/.
 export const CLIENT_URL = "";
 
+// O prefixo do que a sala guarda no navegador (o login e as preferências de cada pessoa). Deixe vazio: só serve a uma
+// sala que já estava no ar com outro prefixo e passa a rodar este código, para ninguém precisar entrar de novo.
+export const STORE = "";
+
 // ---------- Projeto ----------
 export const PROJECT = {
   name: "Primeiro Gole",            // título nas abas do navegador
@@ -37,6 +41,10 @@ export const PROJECT = {
   accent: "#C8F169",                // cor de destaque: botões, aprovados, seleção. Use uma cor clara.
   timeZone: "America/Sao_Paulo",    // fuso das datas e prazos
 };
+
+// Uma folha de estilo do job, carregada depois de sala/style.css (opcional): as cores e as fontes da marca, por cima
+// das variáveis do topo do style.css. Fica em sala/job/ (fora do git, como este config). Ex.: "job/estilo.css".
+export const STYLE = "";
 
 // Quem é o time. A chave (à esquerda) é o que fica salvo no banco; o nome aparece na tela.
 export const PEOPLE = { ana: "Ana", bruno: "Bruno", carla: "Carla" };
@@ -123,14 +131,34 @@ export const PROMPTS = {
 export const ESTUDIO = {
   on: false,
   fn: "estudio", // o nome da edge function publicada (outro, se o projeto já tem uma "estudio" de outra sala)
+  // souls: o nome publicado da função do Soul ID da Galeria (supabase/functions/souls). Sem esta linha, o mesmo de fn com
+  // "souls" no lugar de "estudio" (estudio → souls, sala-estudio → sala-souls)
   // uma frase em inglês sobre o visual do filme: entra em todo prompt que o estúdio escreve
   look: "photoreal film still, soft natural morning light, true-to-life color, real textures and real skin",
+  // palavras que o filme nunca quer num prompt, nem negadas (o Claude escreve sem elas), ex.: ["muted", "film grain"]
+  avoid: [],
 };
 
 // ---------- Produto (opcional) ----------
 // O item (pelo título, em qualquer cena) cuja imagem aprovada entra em toda cena como "o produto": no kit do Estúdio e
 // como peça na Cena 3D. null quando o filme não tem um produto em cena.
 export const PRODUCT = { title: "Produto" };
+
+// ---------- Cena 3D (opcional, só o time vê) ----------
+// Os arquivos do job para a Cena 3D, guardados em sala/job/ (fora do git, como este config), com o caminho a partir de
+// sala/: sets, os sets de blocking do filme (o modelo é sala/cena3d/sets.js, o exemplo usado quando não há um), e
+// device, o modelo 3D do produto (sem ele, um bloco neutro: sala/cena3d/device.js). Os dois importam de "../cena3d/".
+export const CENA3D = { sets: "", device: "" };
+
+// ---------- Motion (opcional, só o time vê) ----------
+// Uma peça de motion do job (uma assinatura animada, uma cartela…): uma página HTML em sala/job/ que ajusta e renderiza
+// um vídeo. Ela abre por cima da sala pelo botão de motion dos cards do tipo `kind` nas cenas `scene`, recebe as
+// configurações na URL (?embed&chave=valor…) e devolve cada render com parent.postMessage({ type: "motion:render",
+// settings, video, poster }): o MP4 entra no card. Opcionais: start (as configurações de um card ainda sem render),
+// name(settings) e read(nome do arquivo) (para reabrir um render com as configurações dele), describe(settings) (a
+// legenda) e model(settings). null quando o job não tem uma. Exemplo:
+// { src: "job/motion/assinatura.html", label: "Assinatura", kind: "plano", scene: "Cartela", start: { fundo: "preto" } }
+export const MOTION = null;
 
 // ---------- Decks (opcional, só o time vê) ----------
 // Aparecem na página Apresentação, junto com os slides do cliente que viraram referência. Só entram os que têm link.

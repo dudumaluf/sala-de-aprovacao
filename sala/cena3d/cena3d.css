@@ -1,7 +1,7 @@
 /* Cena 3D: the blocking editor in a location item's tab (team only). Same palette as the room (style.css tokens).
    The 3D takes the whole tab (or the whole window, ⤢) with the frame of the shot (16:9) drawn on it. Each thing has one
-   place: on top, the camera (tools, lens, compare with the approved photo, guides, undo; ⤢ and Salvar ângulo, with a
-   saved angle's ↺ ✦); at the bottom, the angles (dots) and the camera line; on the right, a card with what is in the
+   place: on top, the camera (tools, lens, compare with the approved photo, guides, undo; ⤢, Salvar ângulo with a saved
+   angle's ↺ ✦, Renderizar when a shot's card opened the 3D with its prompt box, and ✕ back to that page); at the bottom, the angles (dots) and the camera line; on the right, a card with what is in the
    scene (cast, product) that folds into one round button. --side / --low: what the card covers (right / bottom). */
 .c3d-slot { position: relative; min-height: 420px; }
 .c3d { position: relative; height: 100%; outline: none; --side: 0px; --low: 0px; }
@@ -24,14 +24,14 @@
 .c3d-guides.thirds { background:
   linear-gradient(to right, transparent calc(33.33% - 0.5px), rgba(255,255,255,.38) calc(33.33% - 0.5px), rgba(255,255,255,.38) calc(33.33% + 0.5px), transparent calc(33.33% + 0.5px), transparent calc(66.66% - 0.5px), rgba(255,255,255,.38) calc(66.66% - 0.5px), rgba(255,255,255,.38) calc(66.66% + 0.5px), transparent calc(66.66% + 0.5px)),
   linear-gradient(to bottom, transparent calc(33.33% - 0.5px), rgba(255,255,255,.38) calc(33.33% - 0.5px), rgba(255,255,255,.38) calc(33.33% + 0.5px), transparent calc(33.33% + 0.5px), transparent calc(66.66% - 0.5px), rgba(255,255,255,.38) calc(66.66% - 0.5px), rgba(255,255,255,.38) calc(66.66% + 0.5px), transparent calc(66.66% + 0.5px)); }
-.c3d-guides .v916 { position: absolute; top: 0; bottom: 0; left: 50%; width: calc(100% * 81 / 256); transform: translateX(-50%); box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45); outline: 1px dashed rgba(52, 245, 142, 0.8); }
+.c3d-guides .v916 { position: absolute; top: 0; bottom: 0; left: 50%; width: calc(100% * 81 / 256); transform: translateX(-50%); box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45); outline: 1px dashed color-mix(in srgb, var(--accent) 80%, transparent); }
 
 /* name tags over the figures */
 .c3d-tags { position: absolute; inset: 0; pointer-events: none; }
 .c3d-tags span { position: absolute; transform: translate(-50%, -100%); padding: 1px 7px; border-radius: 999px; background: rgba(5, 7, 6, 0.72); color: #fff; font-size: 11px; font-weight: 600; white-space: nowrap; box-shadow: inset 0 0 0 1.5px var(--c); }
 
 /* toolbar pills (top left), save (top right), camera line (bottom left) */
-.c3d-tl { position: absolute; left: 10px; top: 10px; right: calc(var(--side) + 210px); display: flex; flex-wrap: wrap; gap: 5px; }
+.c3d-tl { position: absolute; left: 10px; top: 10px; right: calc(var(--side) + var(--trw, 200px) + 20px); display: flex; flex-wrap: wrap; gap: 5px; }
 .c3d-tr { position: absolute; right: calc(var(--side) + 10px); top: 10px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .c3d-trrow { display: flex; align-items: center; gap: 6px; }
 .c3d-round { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 999px; background: rgba(8, 10, 9, 0.74); color: rgba(255, 255, 255, 0.86); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
@@ -53,7 +53,28 @@
 .c3d-save { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 12px 0 10px; border: 0; border-radius: 999px; background: var(--accent); color: var(--ink); font-size: 12.5px; font-weight: 600; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35); }
 .c3d-save svg { width: 16px; height: 16px; }
 .c3d-save.busy { opacity: 0.6; pointer-events: none; }
-@container (max-width: 1000px) { .c3d-save span { display: none; } .c3d-save { padding: 0 8px; } .c3d-tl { right: calc(var(--side) + 90px); } }
+/* next to Renderizar (opened from a shot's card), Salvar ângulo is the second choice */
+.c3d-save.alt { background: rgba(8, 10, 9, 0.74); color: rgba(255, 255, 255, 0.86); font-weight: 500; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.c3d-save.alt:hover { background: rgba(8, 10, 9, 0.92); color: #fff; }
+.c3d-render svg { width: 15px; height: 15px; }
+/* Renderizar's prompt box, under the row: what to change beyond the blocking, and Fiel / Solto (the studio's card look) */
+.c3d-ask { width: 340px; max-width: calc(100cqw - var(--side) - 20px); padding: 8px 10px; border: 1px solid var(--line2); border-radius: 14px; background: color-mix(in srgb, var(--raise) 88%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45); }
+.c3d-ask[hidden] { display: none; }
+.c3d-ask textarea { display: block; width: 100%; min-height: 44px; max-height: 150px; padding: 4px 2px; border: 0; outline: none; background: none; color: var(--text); font: 13.5px/1.45 var(--sans); resize: none; }
+.c3d-ask textarea::placeholder { color: var(--dim); }
+.c3d-ask-foot { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.c3d-ask-foot small { margin-left: auto; color: var(--dim); font-size: 11px; white-space: nowrap; }
+.c3d-seg { display: inline-flex; padding: 2px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line2); }
+.c3d-seg button { height: 24px; padding: 0 11px; border: 0; border-radius: 999px; background: none; color: var(--muted); font: 500 12px var(--sans); cursor: pointer; }
+.c3d-seg button:hover { color: var(--text); }
+.c3d-seg button.on { background: var(--accent-soft); color: var(--accent); }
+/* its button: lit while the box is open, a dot when a text is kept for this card */
+.c3d-round.on, .c3d-round.on:hover { background: var(--accent-soft); color: var(--accent); }
+.c3d-round.has { position: relative; }
+.c3d-round.has::after { content: ""; position: absolute; top: 5px; right: 5px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+/* short of room the buttons keep their icons only, Renderizar (the one to press) last */
+@container (max-width: 1000px) { .c3d-save:not(.c3d-render) span { display: none; } .c3d-save:not(.c3d-render) { padding: 0 8px; } }
+@container (max-width: 760px) { .c3d-render span { display: none; } .c3d-render { padding: 0 8px; } }
 .c3d-savebox { display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 10px; background: rgba(8, 10, 9, 0.9); box-shadow: inset 0 0 0 1px var(--line2), 0 10px 30px rgba(0, 0, 0, 0.45); }
 .c3d-savebox input { width: 250px; height: 28px; padding: 0 9px; border: 1px solid var(--line2); border-radius: 7px; background: var(--bg); color: var(--text); font-size: 12.5px; }
 .c3d-savebox input:focus { outline: none; border-color: var(--accent-edge); }

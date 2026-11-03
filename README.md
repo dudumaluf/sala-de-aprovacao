@@ -31,6 +31,7 @@ O menu do time segue essa ordem:
   - **Envio:** a versão atual da rodada exatamente como o cliente vai ver. O olho de cada imagem tira ou põe ela no envio, e o que fica de fora espera recolhido no fim.
   - **Escolhas:** o que o cliente escolheu em cada cena, e se ele confirmou a rodada.
   - **Retorno:** o que o cliente pediu sobre a versão, virado trabalho. Cada item tem um status (aprovado, ajustar, refazer, caminho novo, esperando), o que fazer, as tarefas, as referências que ele deu (slide do deck, minuto de um vídeo, foto) e o que ficou em aberto (perguntar, receber, decidir). Os combinados da rodada ficam no cabeçalho.
+- **Galeria:** tudo o que a sala gerou e recebeu, de todas as rodadas e cenas, numa grade só. Filtros e busca; selecionar com ⌘, Shift ou arrastando uma caixa; agir pela barra de baixo ou pelo botão direito: abrir no card, editar com IA, agrupar, baixar, ✓ ✕ e criar um Soul ID. Os grupos salvos viram filtros.
 - **Aprovado:** tudo o que o cliente aprovou até agora, na versão atual, pra baixar de uma vez.
 - **Materiais:** o que o time pede ao cliente (fotos, vozes, logos), com envio dos dois lados.
 
@@ -38,6 +39,8 @@ O menu do time segue essa ordem:
 - Imagem cheia. O título e a bolinha de estado ficam no canto.
 - No hover aparecem ✓ ↻ ✕, os comentários, as versões, o comparar, o ✦ do Estúdio, o 3D, o download e o `⋯`.
 - Arrastar pela bolinha muda a ordem dos cards na cena. A ordem vale pra sala, pro menu e pro animatic.
+- **Virar card novo:** o ícone de extrair tira a imagem da vez do card e faz com ela um card novo logo ao lado (com Desfazer).
+- Vídeo toca sozinho, sem som, enquanto o mouse está em cima.
 - O sistema de design está em [`DESIGN.md`](DESIGN.md).
 
 **Versões.** Cada retorno do cliente abre uma versão nova da rodada (v1 é a entrega, v2 a resposta ao primeiro retorno…).
@@ -49,6 +52,8 @@ O menu do time segue essa ordem:
 **Detalhe da opção.** Imagem grande com os botões sobre ela.
 - As informações abrem no ⓘ ou na tecla `I`: modelo, data e autor, legenda, avaliação, as referências usadas na geração, "por que esta opção" e o prompt.
 - **Desenhar:** o time e o cliente riscam e escrevem na imagem o que mudar.
+- **Histórico:** as versões da imagem numa fileira embaixo dela (↑ ↓); "Tornar atual" põe no card a que está aberta.
+- **Ajustar (sem IA):** espelhar, girar e mudar a escala no próprio quadro, e salvar como versão nova do card.
 
 **Mais:**
 - **Antes e depois:** pares de opções (`__blocking`/`__ia`, `__sem`/`__com`) viram uma imagem só, com um traço que segue o mouse.
@@ -59,7 +64,12 @@ O menu do time segue essa ordem:
 
 **Opcionais** (desligados no exemplo; veja [Estúdio e Cena 3D](#estúdio-de-ia-e-cena-3d-opcionais)):
 - **Estúdio de IA (✦):** editar uma imagem com IA, criar uma nova a partir do kit da cena (o elenco, a locação e o produto aprovados), renderizar um ângulo do 3D e gerar vídeo. O Claude escreve o prompt a partir do pedido, dos desenhos e das referências.
-- **Cena 3D:** o blocking em low poly de cada locação aprovada. O time põe o elenco (bonecos com poses), os objetos e o produto, enquadra com lentes reais e salva ângulos, que o Estúdio transforma em imagem.
+  - **Só uma área:** retângulos numerados na imagem; cada um vai como um pedido próprio e volta encaixado, e o resto fica igual, pixel por pixel.
+  - **Ajustar** a base no quadro antes de gerar, e a **câmera** (tipo, corpo, lente, focal, diafragma, plano, ângulo, filme), que vai como uma linha no prompt. **Novo ângulo** fotografa a cena de outro ponto.
+  - **Receitas:** o time guarda como pedir cada tipo de mudança (ângulos, hora do dia, expressão, limpeza, cor…) e arrasta pro prompt. A sala já vem com 30.
+  - **Soul 2 com um rosto treinado:** um Soul ID que a Galeria treina na Higgsfield com 5 a 20 fotos de uma pessoa.
+- **Cena 3D:** o blocking em low poly de cada locação aprovada. O time põe o elenco (bonecos com poses), os objetos e o produto, enquadra com lentes reais e salva ângulos, que o Estúdio transforma em imagem. Aberta do card de um plano, o **Renderizar** salva o ângulo e manda o render direto pro card.
+- **Motion:** uma peça de motion do job (uma página HTML, como uma assinatura animada) abre por cima da sala a partir de um card e devolve cada render como vídeo no card.
 
 ## Como anda uma rodada
 
@@ -140,6 +150,11 @@ Tudo em [`sala/config.js`](sala/config.js), com comentários:
 | Base de prompt e modelos por direção | `STYLE_BASE`, `PROMPTS` | |
 | Mensagem de envio para o cliente | `SEND_MESSAGE` | `{rodada}`, `{link}`, `{itens}` |
 | Estúdio de IA ligado e o visual do filme | `ESTUDIO.on`, `ESTUDIO.look` | `false`, "photoreal film still, …" |
+| Os nomes das edge functions publicadas | `ESTUDIO.fn` (e `ESTUDIO.souls`) | `"estudio"` (a do Soul ID: `"souls"`) |
+| Os cenários e o produto da Cena 3D | `CENA3D` | `{ sets: "job/sets.js", device: "job/device.js" }` |
+| A peça de motion do job | `MOTION` | `null` |
+| Cores e fontes da marca, por cima das da sala | `STYLE` | `"job/estilo.css"` |
+| Palavras que o filme nunca quer num prompt | `ESTUDIO.avoid` | `["muted", "film grain"]` |
 | O produto que aparece em toda cena | `PRODUCT` | `{ title: "Produto" }` ou `null` |
 | Decks da página Apresentação | `DECKS` | `{ from, title, note, url }` |
 
@@ -164,7 +179,7 @@ Algumas colunas não têm tela de edição e são preenchidas pelo **Table Edito
 O ✦ chama uma edge function do Supabase, que guarda as chaves dos geradores no servidor e só atende o login do time.
 
 1. Instale a [CLI do Supabase](https://supabase.com/docs/guides/cli) e, na pasta do projeto, rode `supabase link --project-ref SEU-PROJETO`.
-2. Publique a função: `supabase functions deploy estudio` (com outro nome, `supabase functions deploy outro-nome`, se o projeto já tiver uma; aí ponha o nome em `ESTUDIO.fn`).
+2. Publique as funções: `supabase functions deploy estudio` e `supabase functions deploy souls` (a do Soul ID da Galeria). Com outro nome, se o projeto já tiver uma, ponha o nome em `ESTUDIO.fn`; a do Soul ID segue o mesmo nome com `souls` no lugar de `estudio` (`sala-estudio` → `sala-souls`), ou o que estiver em `ESTUDIO.souls`.
 3. Guarde as chaves como segredos da função (só as dos geradores que você vai usar):
 
    ```bash
@@ -173,7 +188,7 @@ O ✦ chama uma edge function do Supabase, que guarda as chaves dos geradores no
 
    Os geradores e as chaves de cada um:
    - `MAGNIFIC_KEY`: Nano Banana, pelo Magnific.
-   - `HF_KEY`: GPT Image, Grok, Qwen e Seedance, pela Higgsfield.
+   - `HF_KEY`: GPT Image, Grok, Qwen, Soul 2 e Seedance, pela Higgsfield, e o treino dos Soul IDs.
    - `ANTHROPIC_KEY`: o Claude, que escreve os prompts.
 
    Opcional: `ALLOWED_ORIGINS=https://sua-sala.com` limita os sites que podem chamar a função.
@@ -183,7 +198,9 @@ Sem a função, deixe `ESTUDIO.on: false`: a sala funciona igual, só sem o ✦.
 
 ### Cena 3D
 
-O motor (`sala/cena3d/cena3d.js`, `rig.js`, `kit.js`) é igual para todo projeto. Os cenários são de cada filme e ficam em [`sala/cena3d/sets.js`](sala/cena3d/sets.js), um por cena, com as câmeras, o elenco e os objetos. O exemplo traz uma cozinha para a cena 1. O comentário no topo do arquivo explica o formato. A aba **Cena 3D** aparece nos itens de locação do time.
+O motor (`sala/cena3d/cena3d.js`, `rig.js`, `kit.js`) é igual para todo projeto. Os cenários são de cada filme, um por cena, com as câmeras, o elenco e os objetos. O exemplo, [`sala/cena3d/sets.js`](sala/cena3d/sets.js), traz uma cozinha para a cena 1, e o comentário no topo explica o formato. A aba **Cena 3D** aparece nos itens de locação do time.
+
+Os cenários do seu filme ficam num arquivo do job, fora do git como o `config.js`: copie o exemplo para `sala/job/sets.js` (trocando `./kit.js` por `../cena3d/kit.js` nos imports) e aponte `CENA3D.sets` para ele. Do mesmo jeito, `CENA3D.device` troca o bloco neutro do produto (`sala/cena3d/device.js`) pelo modelo do seu.
 
 ## Vários jobs num projeto Supabase
 
@@ -193,13 +210,17 @@ Um projeto do Supabase pode guardar as salas de vários jobs, cada uma no seu sc
 2. Os dois logins do job levam `{"job": "<job>", "room": "time"}` e `{"job": "<job>", "room": "cliente"}` em `app_metadata`, em vez de `side`. O login de um job não vê nada de outro.
 3. No `config.js` do job: `SCHEMA`, `BUCKET` e `JOB` com os mesmos nomes.
 
-A edge function do Estúdio serve todos os jobs do projeto: a sala manda o schema e o bucket dela, e o login de quem chama decide o que pode ler e escrever.
+As edge functions do Estúdio e do Soul ID servem todos os jobs do projeto: a sala manda o schema e o bucket dela, e o login de quem chama decide o que pode ler e escrever.
+
+Para atualizar o banco de um job, passe o script de atualização como quarto argumento: `python3 supabase/job.py <schema> <job> <bucket> supabase/atualizar-2026-11b.sql > job-update.sql`.
 
 ## Atualizar uma sala que já está no ar
 
-1. Troque os arquivos de `sala/` pelos novos, menos o seu `sala/config.js`, e acrescente nele as seções novas do config de exemplo (`ESTUDIO`, `PRODUCT`, `DECKS`).
-2. No **SQL Editor**, rode uma vez [`supabase/atualizar-2026-11.sql`](supabase/atualizar-2026-11.sql). Ele cria as tabelas e colunas novas sem apagar nada, e pode rodar mais de uma vez.
-3. Publique de novo.
+1. Troque os arquivos de `sala/` pelos novos, menos o seu `sala/config.js` (e `sala/job/`), e acrescente nele as seções novas do config de exemplo (`ESTUDIO` com `souls`, `PRODUCT`, `CENA3D`, `MOTION`, `DECKS`).
+2. No **SQL Editor**, rode uma vez, nesta ordem, os scripts que a sua sala ainda não rodou: [`supabase/atualizar-2026-11.sql`](supabase/atualizar-2026-11.sql) (para uma sala instalada antes de nov/2026) e [`supabase/atualizar-2026-11b.sql`](supabase/atualizar-2026-11b.sql) (Galeria, Soul ID e receitas). Eles criam o que falta sem apagar nada, e podem rodar mais de uma vez.
+3. Com o Estúdio ligado, publique de novo as funções (`estudio` e `souls`).
+   Uma sala que rodava uma cópia própria, com outro prefixo no navegador, põe esse prefixo em `STORE` no config: ninguém precisa entrar de novo.
+4. Publique a sala de novo.
 
 ## Segurança
 
@@ -207,7 +228,7 @@ A edge function do Estúdio serve todos os jobs do projeto: a sala manda o schem
 - O acesso é decidido no banco (RLS) pelo `app_metadata.side` do login, que o usuário não consegue alterar. O cliente nunca recebe itens não enviados, opções descartadas (ou sem ✓ quando o item tem alguma com ✓) nem as avaliações e notas do time.
 - Os campos de uma opção que o cliente pode ver (legenda, prompt, "por que esta opção", referências) a sala só mostra ao time, mas chegam ao navegador do cliente. Não escreva ali o que o cliente não pode ler.
 - Os arquivos ficam num bucket privado e abrem por links assinados que valem 12 horas.
-- O retorno, as tarefas, as pendências, o envio, o Estúdio e a Cena 3D são só do time: o cliente não recebe nenhuma dessas tabelas.
+- O retorno, as tarefas, as pendências, o envio, o Estúdio, a Cena 3D, a Galeria (grupos e Soul IDs) e as receitas são só do time: o cliente não recebe nenhuma dessas tabelas.
 - As chaves dos geradores de IA ficam só no servidor (segredos da edge function). A função recusa quem não está logado como time.
 - **Sair** desconecta só aquele navegador. Como todo mundo de um lado usa o mesmo login, sair de todos os lugares derrubaria os colegas.
 - Para trocar uma senha, rode no **SQL Editor**:
@@ -226,10 +247,15 @@ sala/config.js         tudo do seu projeto
 sala/app.js            o app, igual para todo projeto
 sala/style.css         o visual
 sala/estudio.js        o Estúdio de IA (opcional)
-sala/cena3d/           a Cena 3D: o motor e os cenários do filme (sets.js)
+sala/galeria.js        a Galeria (só do time)
+sala/cena3d/           a Cena 3D: o motor e um cenário de exemplo (sets.js)
+sala/job/              os arquivos só do seu job (cenários, produto, motion), fora do git
 supabase/schema.sql    banco, regras de acesso, funções e bucket
 supabase/atualizar-2026-11.sql   leva uma sala instalada antes de nov/2026 ao banco novo
+supabase/atualizar-2026-11b.sql  traz a Galeria, o Soul ID e as receitas
+supabase/job.py                  escreve o banco (ou a atualização) de um job num projeto com vários
 supabase/functions/estudio/      a edge function do Estúdio
+supabase/functions/souls/        a edge function do Soul ID (Galeria)
 DESIGN.md              o sistema de design: princípios, card, sinais, cores
 ```
 

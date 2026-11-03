@@ -2,30 +2,36 @@
 """Print schema.sql for one job inside a Supabase project shared by several jobs.
 
 Usage: python3 supabase/job.py <schema> <job> <bucket> > job.sql
+       python3 supabase/job.py <schema> <job> <bucket> supabase/atualizar-2026-11b.sql > job-update.sql
 
 Each job gets its own schema (tables, rules and functions) and its own bucket. Its two logins carry
 app_metadata.job = <job> and app_metadata.room = 'time' | 'cliente' instead of .side, so a login of one job opens
 nothing in another. Run the output once in the SQL Editor; it also opens the schema to the API. In config.js set
 SCHEMA, BUCKET and JOB to the same three names.
+With a fourth argument, an update script written for public (an atualizar-*.sql) comes out for the job's schema
+instead, for a job already made by this script: its new tables get the same grants, and the API reloads.
 """
 import re
 import sys
 from pathlib import Path
 
 schema, job, bucket = sys.argv[1:4]
+src = Path(sys.argv[4]) if len(sys.argv) > 4 else Path(__file__).parent / "schema.sql"
+update = src.name != "schema.sql"
 assert re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", schema) and schema != "public", "schema: a lowercase name other than public"
 assert re.fullmatch(r"[a-z_][a-z0-9_]{0,62}", job), "job: a lowercase name"
 assert re.fullmatch(r"[a-z0-9_-]{1,63}", bucket), "bucket: a lowercase name"
 
-sql = (Path(__file__).parent / "schema.sql").read_text()
+sql = src.read_text()
 # the studio's API key is read from public (one key for the whole project): it is not part of a job
-start = sql.index("-- ---------- the studio's API key")
-sql = sql[:start] + sql[sql.index("-- Supabase grants new functions"):]
+if "-- ---------- the studio's API key" in sql:
+    start = sql.index("-- ---------- the studio's API key")
+    sql = sql[:start] + sql[sql.index("-- Supabase grants new functions", start):]
 sql = "\n".join(l for l in sql.splitlines() if "estudio_hf_key" not in l) + "\n"
 
 # who is signed in: the job's own logins only
 old_side = "select coalesce(auth.jwt() -> 'app_metadata' ->> 'side', '')"
-assert sql.count(old_side) == 1
+assert sql.count(old_side) == (0 if update and old_side not in sql else 1)
 sql = sql.replace(old_side, f"select case when auth.jwt() -> 'app_metadata' ->> 'job' = '{job}'\n"
                             "              then coalesce(auth.jwt() -> 'app_metadata' ->> 'room', '') else '' end")
 # every object lives in the job's schema ("from public, anon" is the PUBLIC role, not the schema: no dot after it)
@@ -37,9 +43,8 @@ sql = sql.replace("values ('media', 'media', false", f"values ('{bucket}', '{buc
 sql = sql.replace("bucket_id = 'media'", f"bucket_id = '{bucket}'")
 sql = re.sub(r"create policy media_(select|insert|delete)", rf"create policy {schema}_files_\1", sql)
 
-head = f"""-- Job '{job}': schema {schema}, bucket {bucket}. Made by supabase/job.py from schema.sql.
-create schema if not exists {schema};
-"""
+head = f"""-- Job '{job}': schema {schema}, bucket {bucket}. Made by supabase/job.py from {src.name}.
+""" + ("" if update else f"create schema if not exists {schema};\n")
 tail = f"""
 -- ---------- the API ----------
 -- A schema other than public is closed to the API until it is granted and exposed. The rules above still decide which
@@ -56,5 +61,13 @@ begin
   end if;
 end $$;
 notify pgrst, 'reload config';
+"""
+if update:
+    # the schema is already open to the API: the new tables get the same grants, and the API reads them
+    tail = f"""
+-- ---------- the API ----------
+grant select, insert, update, delete on all tables in schema {schema} to authenticated;
+grant all on all tables in schema {schema} to service_role;
+notify pgrst, 'reload schema';
 """
 sys.stdout.write(head + sql + tail)

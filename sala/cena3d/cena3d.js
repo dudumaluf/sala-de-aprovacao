@@ -3,26 +3,32 @@
 // lenses and saves angles. A saved angle is a new option of the location item (PNG 1920×1080, model "Blocking 3D", no
 // ✓, so the client never sees it until someone checks it) plus a blocking_shots row with the camera, the cast and their
 // poses, the product (stored as `device`) and the approved location image the set copies: the studio reads it to render
-// the angle with AI. The set's editable state is saved in `cena3d` as the team works.
+// the angle with AI. The set's editable state is saved in `cena3d` as the team works. Opened from a shot's card (its 3D
+// button), Renderizar saves the angle and sends its render straight to that card, with what its prompt box says when
+// open; ✕ (or Esc) goes back to the page the 3D was opened from.
 // app.js draws a slot (<div data-c3d="itemId">) in the item's "Cena 3D" tab and calls mount(ctx) with the studio's
 // context; this module keeps ONE persistent editor (WebGL canvas, camera, selection) and moves it back into the slot
 // every time the room draws the page again, so the 3D is never rebuilt by a redraw.
 import { THREE, D2R } from "./kit.js";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js/+esm";
 import { TransformControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/TransformControls.js/+esm";
-import { SETS, COLORS } from "./sets.js";
 import { makeHuman, makeAnimal, applyPreset, poseOf, setPose, poseLabel, presetsOf, handlePoints, dragTo, rotateTo, handleQuat } from "./rig.js";
-import { makeDevice, setLed, LED_STATES } from "./device.js";
 // PRODUCT: the job's product ({ title }), or null when the film has none: then the stand-in stays hidden and out of the
 // panel. Its item in the room is the one titled like it (trimmed, any case, any kind), as in estudio.js.
 import { PROJECT, PRODUCT } from "../config.js";
+import * as CFG from "../config.js"; // the optional CENA3D
+// the job's own files, named in config.js CENA3D by their path from sala/ (kept out of git like config.js; they import
+// the pieces from ../cena3d/kit.js): sets, the job's blocking sets, else the example in sets.js; device, the product's
+// own model and states (the exports of device.js), else the neutral stand-in in device.js
+const jobFile = (k, d) => (CFG.CENA3D?.[k] ? new URL(`../${CFG.CENA3D[k]}`, import.meta.url).href : d);
+const [{ SETS, COLORS }, { makeDevice, setLed, LED_STATES }] = await Promise.all([import(jobFile("sets", "./sets.js")), import(jobFile("device", "./device.js"))]);
 
 // the client's name, as the room writes it
 const CL = PROJECT?.client;
 const ART = CL ? { a: ["a ", "da "], o: ["o ", "do "] }[PROJECT.clientArticle] || ["", "de "] : ["o ", "do "];
 const CLIENT = `${ART[0]}${CL || "cliente"}`, CLIENT_OF = `${ART[1]}${CL || "cliente"}`;
 const MODEL = "Blocking 3D";
-const CSS_V = 10; // bump when cena3d.css changes, so an open tab does not keep the old styles
+const CSS_V = 11; // bump when cena3d.css changes, so an open tab does not keep the old styles
 const LENSES = [14, 16, 18, 21, 24, 28, 32, 35, 40, 50, 65, 75, 85, 100, 135];
 // lens in mm on a full-frame (36 mm wide) sensor framed 16:9 ↔ vertical field of view
 const fovOf = (mm) => THREE.MathUtils.radToDeg(2 * Math.atan(36 / (16 / 9) / 2 / mm));
@@ -58,6 +64,7 @@ const I = {
   fold: SVG('<path d="M6 3.5 10.5 8 6 12.5"/>'),
   full: SVG('<path d="M9.5 2.5h4v4M13.5 2.5 9.3 6.7M6.5 13.5h-4v-4M2.5 13.5l4.2-4.2"/>'),
   unfull: SVG('<path d="M13.5 2.5 9.5 6.5M9.5 3v3.5H13M2.5 13.5l4-4M6.5 13V9.5H3"/>'),
+  text: SVG('<path d="M2.5 4h11M2.5 8h11M2.5 12h6.5"/>'),
 };
 
 const E = { ctx: null, el: null, itemId: null, ready: false, history: [], future: [], figs: [], shots: [], signed: new Set(), asked: new Set(), camShot: null, ui: { cmp: false, op: 0.4, thirds: false, vert: false, names: true } };
@@ -129,9 +136,44 @@ function attach() {
   // a render waiting in the studio for a new angle of this set: the 3D takes the window and its save goes back to it
   const h = held(), hk = h ? String(h.n) : "";
   if (E.ready && hk !== E.heldKey) { E.heldKey = hk; if (h) full(true); else toolbar(); }
+  // the shot's card that opened it gets its Renderizar in the top icons
+  const ok = origin()?.id || "";
+  if (E.ready && ok !== E.originKey) { E.originKey = ok; toolbar(); }
 }
 // the studio's render whose blocking came from this set, while it waits for a new angle (estudio.js openSource)
 const held = () => { const h = E.ctx?.heldRender?.(); return h && h.loc === E.itemId ? h : null; };
+// the shot's card (kind plano) whose 3D button opened this set: #/…/cena3d/<shot>/<card id>, "-" for a shot with no
+// planned camera. Renderizar saves the frame as an angle and sends its blocking render straight to that card
+const origin = () => {
+  const id = decodeURIComponent(location.hash.replace(/^#\/?/, "").split("/").filter(Boolean)[7] || "");
+  const it = id && !held() ? E.ctx?.itemOf?.(id) : null;
+  return it?.kind === "plano" ? it : null;
+};
+// Renderizar's prompt box (its button by Renderizar): what to change beyond the blocking, and Fiel / Solto, how closely
+// the render follows it. Open, Renderizar sends both; closed, the render is the plain recipe. Kept per card on this
+// computer, so the text is there again next time
+const ASK_KEY = "sala-c3d-ask";
+const asks = () => { try { return JSON.parse(localStorage.getItem(ASK_KEY) || "{}"); } catch { return {}; } };
+function askFor(card) {
+  if (E.ask?.id !== card.id) { const a = asks()[card.id] || {}; E.ask = { id: card.id, open: !!a.open, text: a.text || "", loose: !!a.loose }; }
+  return E.ask;
+}
+function keepAsk() {
+  const { id, open, text, loose } = E.ask || {};
+  if (!id) return;
+  try { const all = asks(); all[id] = { open, text, loose }; localStorage.setItem(ASK_KEY, JSON.stringify(all)); } catch {}
+}
+function syncAsk() {
+  const box = $(".c3d-ask"), to = origin(), a = to && askFor(to);
+  if (!box) return;
+  box.hidden = !a?.open;
+  if (!a?.open) return;
+  const ta = box.querySelector("textarea");
+  if (document.activeElement !== ta) ta.value = a.text;
+  box.querySelectorAll('[data-k="ask-loose"]').forEach((b) => b.classList.toggle("on", (b.dataset.v === "1") === a.loose));
+  fitAsk(ta);
+}
+function fitAsk(ta) { ta.style.height = "auto"; ta.style.height = `${Math.min(ta.scrollHeight, 150)}px`; }
 // A link can open the set right on one of its shots: #/r/<round>/s/<scene>/<item>/cena3d/<shot id> (the room's router
 // stops at the tab). It is applied once per item and shot, at once (no flight), and saves nothing by itself. A saved
 // angle's id there brings back its camera and its scene (the studio sends a render's blocking here to be changed).
@@ -244,6 +286,7 @@ function fit() {
   E.low = sheet ? Math.max(0, Math.round(mr.bottom - pr.top)) : 0;
   E.el.style.setProperty("--side", `${E.side}px`);
   E.el.style.setProperty("--low", `${E.low}px`);
+  trw();
   const cv = E.renderer.domElement, px = E.renderer.getPixelRatio();
   if (!E.sized || Math.abs(cv.width / px - W) > 1 || Math.abs(cv.height / px - H) > 1) {
     E.renderer.setSize(W, H, false);
@@ -708,6 +751,7 @@ function track() {
 // the wheel dollies here, not in OrbitControls: slower (DOLLY), within the distance limits and the set's bounds, and
 // without the coast a trackpad adds after the fingers leave it
 function onWheel(e) {
+  if (e.target.closest?.(".c3d-ask")) return; // a long prompt scrolls in its box
   e.preventDefault();
   e.stopPropagation(); // OrbitControls, on the canvas inside this frame, never sees it
   if (!E.ready || !E.orbit.enabled || E.orbit.state !== -1) return;
@@ -976,16 +1020,31 @@ function onKey(e) {
   // the studio over the page owns the keyboard (its prompt is a contenteditable box, not an input)
   if (document.body.classList.contains("est-open") || e.target.isContentEditable) return;
   if (e.target.matches?.("input, textarea, select")) return;
-  const inside = E.hover || E.el.contains(document.activeElement) || E.el.classList.contains("full");
-  if (!inside) return;
   const k = e.key.toLowerCase();
+  // Esc also when the page itself has the focus (the 3D just came up and the pointer has not moved onto it yet)
+  const inside = E.hover || E.el.contains(document.activeElement) || E.el.classList.contains("full") || (k === "escape" && document.activeElement === document.body);
+  if (!inside) return;
   const mod = e.metaKey || e.ctrlKey;
   const take = () => { e.preventDefault(); e.stopImmediatePropagation(); };
   if (mod && k === "z") { take(); undo(e.shiftKey); return; }
   if (mod) return;
-  if (k === "escape") { if (E.sel) { take(); deselect(); } else if (E.el.classList.contains("full")) { take(); full(false); } return; }
+  // Esc goes one step back each time: the selection, the name box, the prompt box, a full window opened with ⤢ or F,
+  // then out of the 3D as its ✕ does (a render waiting in the studio gets back its angle unchanged). The room's
+  // popovers and panel first
+  if (k === "escape") {
+    const S = E.ctx.S;
+    if (S.more || S.dl || S.filt || S.drawer) return;
+    take();
+    if (E.sel) deselect();
+    else if ($(".c3d-savebox")) closeSave();
+    else if (E.ask?.open && origin()) { E.ask.open = false; keepAsk(); toolbar(); }
+    else if (E.el.classList.contains("full") && E.userFull) full(false);
+    else if (held()) { full(false); E.ctx.dropHeld?.(); }
+    else leave();
+    return;
+  }
   if (["g", "r", "s"].includes(k) && E.sel) { take(); E.mode = { g: "translate", r: "rotate", s: "scale" }[k]; gizmoMode(); toolbar(); E.needs = true; return; }
-  if (k === "f") { take(); if (E.sel) focusSel(); else full(); return; } // with a selection, F frames it
+  if (k === "f") { take(); if (E.sel) focusSel(); else full(undefined, true); return; } // with a selection, F frames it
   if (k === "c") { take(); E.ui.cmp = !E.ui.cmp; refImage(); toolbar(); side(); return; }
   if (k === "h") { take(); toggleFig(E.sel?.fig); return; }
   if (/^[1-9]$/.test(k) && E.set.cams[+k - 1]) { take(); setCam(E.set.cams[+k - 1]); return; }
@@ -1069,11 +1128,26 @@ function toolbar() {
     <div class="c3d-g"><select data-k="lens" aria-label="Lente (mm, full frame)" title="Lente em mm (equivalente full frame 35 mm)">${LENSES.map((mm) => `<option value="${mm}">${mm}mm</option>`).join("")}</select>${B("level", false, "Nivelar", "câmera sem inclinação, horizonte reto", I.level)}</div>
     <div class="c3d-g"><button data-k="cmp" class="${E.ui.cmp ? "on" : ""}" aria-label="Comparar com a aprovada (C)">${I.cmp}</button>${E.ui.cmp ? `<input data-k="op" type="range" min="0.1" max="0.9" step="0.05" value="${E.ui.op}" aria-label="Transparência da imagem aprovada">` : ""}${B("thirds", E.ui.thirds, "Terços", "", I.thirds)}${B("vert", E.ui.vert, "Corte 9:16", "o que entra na versão vertical", I.vert)}${B("names", E.ui.names, "Nomes", "", I.tag)}</div>
     <div class="c3d-g">${B("undo", false, "Desfazer", "⌘Z", I.undo, E.history.length > 1 ? "" : "disabled")}${B("redo", false, "Refazer", "⇧⌘Z", I.redo, E.future.length ? "" : "disabled")}${B("reset", false, "Voltar ao original", `${PRODUCT ? "elenco, produto" : "elenco"} e câmera como o set começou`, I.reset)}</div>`;
-  const isFull = E.el.classList.contains("full"), h = held();
-  $(".c3d-tr").innerHTML = `<div class="c3d-trrow">${h ? `<button class="c3d-back" data-k="held-back" title="Voltar pro render sem mudar o ângulo">${I.back}<span>${esc(h.title)}</span></button>` : ""}<button class="c3d-round" data-k="full" title="${isFull ? "Voltar para a página (Esc)" : "3D na janela inteira (F)"}" aria-label="${isFull ? "Sair da janela inteira" : "3D na janela inteira"}">${isFull ? I.unfull : I.full}</button><span class="c3d-sacts"></span><button class="c3d-save" data-k="save" title="${h ? "Salvar o que está na moldura como um ângulo novo e voltar pro render com ele: o texto e as referências ficam como estavam" : `Salvar o que está na moldura como uma opção nova da locação (PNG 1920×1080, sem ✓: ${CLIENT} não vê)`}">${I.shot}<span>${h ? "Salvar e voltar" : "Salvar ângulo"}</span></button></div>`;
+  const isFull = E.el.classList.contains("full"), h = held(), to = origin();
+  const escFull = isFull && E.userFull; // Esc leaves a full window opened with ⤢ or F first, else the 3D itself
+  // Renderizar (opened from a shot's card): the angle, and its render on that card, in one click; Salvar ângulo steps back.
+  // The button before it opens the prompt box under the row (the text goes in the render while the box is open)
+  const ai = !!E.ctx?.ai, a = to && askFor(to);
+  const ask = to && ai ? `<button class="c3d-round${a.open ? " on" : a.text.trim() ? " has" : ""}" data-k="ask" aria-pressed="${a.open}" title="${a.open ? "Fechar o prompt: o render volta a ser só a receita do blocking" : `Prompt do render: escrever o que mudar além do blocking${a.text.trim() ? " (tem um texto guardado pra este card)" : ""}`}" aria-label="Prompt do render">${I.text}</button>` : "";
+  const render = to && ai ? `<button class="c3d-save c3d-render" data-k="render" title="Salvar o que está na moldura como um ângulo novo e já mandar o render do blocking (Nano Banana 2.1, 2K) pro card ${esc(to.title)}${a.open ? ", com o prompt da caixa" : ""}: entra lá como uma variação nova, e a sala volta pro card">${I.spark}<span>Renderizar</span></button>` : "";
+  // ✕: out of the 3D, back to the page it was opened from (a render waiting in the studio has its own way back)
+  const close = h ? "" : `<button class="c3d-round" data-k="close" title="Fechar a Cena 3D e voltar ${to ? `pro card ${esc(to.title)}` : "pra página de onde veio"}${escFull ? "" : " (Esc)"}" aria-label="Fechar a Cena 3D">${I.x}</button>`;
+  // the row is drawn again each time; the prompt box under it stays (it may be being typed in)
+  const tr = $(".c3d-tr");
+  if (!tr.querySelector(".c3d-trrow")) tr.innerHTML = `<div class="c3d-trrow"></div><div class="c3d-ask" hidden><textarea data-k="ask-text" rows="2" maxlength="600" placeholder="O que mudar no render, além do blocking: ele olha pra trás, mais neblina, a câmera mais perto…" aria-label="Prompt do render"></textarea>
+      <div class="c3d-ask-foot"><span class="c3d-seg" role="group" aria-label="Quanto o render segue o blocking"><button data-k="ask-loose" data-v="0" title="Fiel: câmera, enquadramento, poses e olhares como no blocking (menos o que o texto mudar)">Fiel</button><button data-k="ask-loose" data-v="1" title="Solto: o blocking só guia a composição; poses, gestos, olhares e o enquadramento exato podem mudar pra cena ficar natural">Solto</button></span><small>⌘↵ renderiza</small></div></div>`;
+  $(".c3d-trrow").innerHTML = `${h ? `<button class="c3d-back" data-k="held-back" title="Voltar pro render sem mudar o ângulo (Esc)">${I.back}<span>${esc(h.title)}</span></button>` : ""}<button class="c3d-round" data-k="full" title="${isFull ? `Sair da janela inteira${escFull ? " (Esc)" : ""}` : "3D na janela inteira (F)"}" aria-label="${isFull ? "Sair da janela inteira" : "3D na janela inteira"}">${isFull ? I.unfull : I.full}</button><span class="c3d-sacts"></span><button class="c3d-save${to ? " alt" : ""}" data-k="save" title="${h ? "Salvar o que está na moldura como um ângulo novo e voltar pro render com ele: o texto e as referências ficam como estavam" : `Salvar o que está na moldura como uma opção nova da locação (PNG 1920×1080, sem ✓: ${CLIENT} não vê)`}">${I.shot}<span>${h ? "Salvar e voltar" : "Salvar ângulo"}</span></button>${ask}${render}${close}`;
+  syncAsk();
   shotActs();
   hud();
 }
+// the tools on the left wrap short of what sits on the right (the row, the name box, the prompt box: --trw, cena3d.css)
+function trw() { const w = $(".c3d-tr")?.offsetWidth; if (w) E.el.style.setProperty("--trw", `${w}px`); }
 // The camera stops, as dots over the bottom of the view that show while the pointer is on the 3D: the planned shots,
 // then, hollow and a little apart, the angles saved in this set (blocking_shots, newest last, not the ✕ ones). Hovering
 // a dot names it (a saved angle also shows its frame); a click flies the camera there; ← → go through all of them. A
@@ -1134,7 +1208,8 @@ function shotActs() {
   const box = $(".c3d-sacts");
   if (!box) return;
   const id = E.camShot && savedStops().some((x) => x.option_id === E.camShot) ? E.camShot : null;
-  box.innerHTML = id ? `<button class="c3d-round" data-k="shotall" data-v="${id}" title="Voltar a cena deste ângulo: poses do elenco${PRODUCT ? " e o produto" : ""}" aria-label="Voltar a cena deste ângulo">${I.reset}</button><button class="c3d-round" data-k="studio" data-v="${id}" title="Render com IA no estúdio: a locação e o elenco aprovados vestem este blocking" aria-label="Render com IA">${I.spark}</button>` : "";
+  box.innerHTML = id ? `<button class="c3d-round" data-k="shotall" data-v="${id}" title="Voltar a cena deste ângulo: poses do elenco${PRODUCT ? " e o produto" : ""}" aria-label="Voltar a cena deste ângulo">${I.reset}</button>${E.ctx?.ai ? `<button class="c3d-round" data-k="studio" data-v="${id}" title="Render com IA no estúdio: a locação e o elenco aprovados vestem este blocking" aria-label="Render com IA">${I.spark}</button>` : ""}` : "";
+  trw();
 }
 function stepStop(d) {
   const list = stops();
@@ -1188,12 +1263,21 @@ function side() {
 function bindUi() {
   E.el.addEventListener("click", (e) => {
     const t = e.target.closest("[data-k]");
-    if (!t || !E.el.contains(t) || t.tagName === "SELECT" || t.tagName === "INPUT") return;
+    if (!t || !E.el.contains(t) || t.tagName === "SELECT" || t.tagName === "INPUT" || t.tagName === "TEXTAREA") return;
     const k = t.dataset.k, v = t.dataset.v;
     if (k.startsWith("mode-")) { E.mode = k.slice(5); gizmoMode(); toolbar(); E.needs = true; }
+    else if (k === "ask" && E.ask) { // the prompt box opens on its text, the caret at the end
+      E.ask.open = !E.ask.open;
+      keepAsk(); toolbar();
+      const ta = $(".c3d-ask textarea");
+      if (E.ask.open && ta) { ta.focus({ preventScroll: true }); ta.setSelectionRange(ta.value.length, ta.value.length); } else E.el.focus({ preventScroll: true });
+    }
+    else if (k === "ask-loose" && E.ask) { E.ask.loose = v === "1"; keepAsk(); syncAsk(); }
     else if (k === "level") { E.orbit.target.y = E.camera.position.y; E.orbit.update(); E.needs = true; scheduleSave(); }
     else if (k === "cmp") { E.ui.cmp = !E.ui.cmp; refImage(); toolbar(); side(); }
-    else if (k === "full") full();
+    else if (k === "full") full(undefined, true);
+    else if (k === "close") leave();
+    else if (k === "render") doSave(origin());
     else if (k === "side-x") setSide(!sideOpen());
     else if (k === "thirds") { E.ui.thirds = !E.ui.thirds; guides(); toolbar(); }
     else if (k === "vert") { E.ui.vert = !E.ui.vert; guides(); toolbar(); }
@@ -1229,7 +1313,11 @@ function bindUi() {
     else if (k === "led") { setLed(E.device, t.value); commit(); E.needs = true; }
     else if (k === "attach") attachDevice(t.value);
   });
-  E.el.addEventListener("input", (e) => { if (e.target.dataset.k === "op") { E.ui.op = +e.target.value; refImage(); } });
+  E.el.addEventListener("input", (e) => {
+    const k = e.target.dataset.k;
+    if (k === "op") { E.ui.op = +e.target.value; refImage(); }
+    else if (k === "ask-text" && E.ask) { E.ask.text = e.target.value; keepAsk(); fitAsk(e.target); }
+  });
   const tl = $(".c3d-tl"); // the compare button shows the approved photo while hovered
   tl.addEventListener("mouseover", (e) => { const b = e.target.closest('[data-k="cmp"]'); if (b) peek(b); });
   tl.addEventListener("mouseout", (e) => { if (e.target.closest('[data-k="cmp"]') && !e.relatedTarget?.closest?.('[data-k="cmp"]')) peek(null); });
@@ -1242,6 +1330,11 @@ function bindUi() {
     if (e.target.dataset.k === "save-name") {
       if (e.key === "Enter") { e.preventDefault(); doSave(); }
       if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeSave(); }
+    }
+    // the prompt box: ⌘↵ renders; Esc leaves the text (the box stays open, the next Esc closes it)
+    if (e.target.dataset.k === "ask-text") {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); e.stopPropagation(); doSave(origin()); }
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); E.el.focus({ preventScroll: true }); }
     }
   });
 }
@@ -1303,11 +1396,12 @@ function savePrompt() {
   if ($(".c3d-savebox")) return closeSave();
   const p = E.set.cams.find((c) => c.id === E.camPreset);
   const def = p ? (p.id.startsWith("aprovada") ? `Blocking · ${p.label}` : `${p.label.split(" · ")[0]} · ${p.title.split(" · ")[0]}`) : `Ângulo ${shotOpts().length + 1}`;
-  $(".c3d-tr").insertAdjacentHTML("beforeend", `<div class="c3d-savebox"><input data-k="save-name" value="${esc(def)}" maxlength="90" aria-label="Nome do ângulo"><button data-k="save-go" class="go">Salvar</button><button data-k="save-x" class="c3d-ico" aria-label="Cancelar">${I.x}</button></div>`);
+  $(".c3d-trrow").insertAdjacentHTML("afterend", `<div class="c3d-savebox"><input data-k="save-name" value="${esc(def)}" maxlength="90" aria-label="Nome do ângulo"><button data-k="save-go" class="go">Salvar</button><button data-k="save-x" class="c3d-ico" aria-label="Cancelar">${I.x}</button></div>`);
+  trw();
   const i = $(".c3d-savebox input");
   i.focus(); i.select();
 }
-function closeSave() { $(".c3d-savebox")?.remove(); E.el.focus({ preventScroll: true }); }
+function closeSave() { $(".c3d-savebox")?.remove(); trw(); E.el.focus({ preventScroll: true }); }
 // where something sits in the frame, 0–1 from the top left
 function boxOf(obj) {
   const b = new THREE.Box3().setFromObject(obj);
@@ -1320,12 +1414,15 @@ function boxOf(obj) {
   const out = { x0: c(Math.min(...xs)), y0: c(Math.min(...ys)), x1: c(Math.max(...xs)), y1: c(Math.max(...ys)) };
   return out.x1 - out.x0 < 0.001 || out.y1 - out.y0 < 0.001 ? null : out;
 }
-async function doSave() {
-  const name = ($(".c3d-savebox input")?.value || "").trim() || "Ângulo";
+// to: the shot's card of Renderizar (origin()); the angle is named after it and counts as its shot (from_preset)
+async function doSave(to = null) {
+  const name = to ? to.title : ($(".c3d-savebox input")?.value || "").trim() || "Ângulo";
+  // with the prompt box open, its text and Fiel / Solto go in the render
+  const how = to && E.ask?.id === to.id && E.ask.open ? { ask: E.ask.text.trim(), loose: E.ask.loose } : {};
   closeSave();
   if (E.busy) return;
   E.busy = true;
-  const btn = $(".c3d-save");
+  const btn = $(to ? ".c3d-render" : ".c3d-save");
   btn?.classList.add("busy");
   try {
     const { ctx } = E;
@@ -1362,9 +1459,9 @@ async function doSave() {
       attach: d.userData.attach, local_position: arr(d.position, 4), local_rotation: [d.rotation.x, d.rotation.y, d.rotation.z].map((a) => round(a / D2R, 2)),
       led: d.userData.led, option_id: devApproved?.id || null, box: devBox } : null;
     const preset = E.set.cams.find((c) => c.id === E.camPreset);
-    const from = E.set.cams.find((c) => c.id === E.from);
+    const from = (to && E.set.cams.find((c) => c.id === to.variants?.shot)) || E.set.cams.find((c) => c.id === E.from);
     const camera = { position: arr(E.camera.position), target: arr(E.orbit.target), fov: round(E.camera.fov, 3), lens_mm: mm, aspect: "16:9", preset: preset?.id || null, preset_title: preset?.title || null,
-      from_preset: from?.id || null, from_title: from?.title || null }; // the last planned shot visited, even if the camera moved since
+      from_preset: from?.id || null, from_title: from?.title || null }; // the last planned shot visited, even if the camera moved since (Renderizar: the card's)
     const blob = await png;
     E.gizmo.getHelper().visible = true;
     for (const m of E.handles || []) m.visible = true;
@@ -1390,21 +1487,38 @@ async function doSave() {
     await ctx.sign([o.thumb_path || o.preview_path || o.path]);
     side(); shotsBar(); hud();
     if (held()) { full(false); await ctx.takeAngle(o.id); return; }
+    // Renderizar: the studio's blocking recipe runs on the new angle at once (estudio.js renderBlocking) and its result
+    // lands on the card as a variation of its own; the room goes back to that card, which shows the render running
+    if (to) {
+      try { await ctx.renderBlocking(o.id, to.id, how); }
+      catch (err) { console.error(err); ctx.toast(`O ângulo salvou, mas o render não saiu${err?.message ? `: ${err.message}` : ""}.`, true); return; }
+      leave(to, true);
+      ctx.toast(`✦ Renderizando ${to.title}${how.ask ? " com o seu texto" : ""}${how.loose ? ", solto do blocking" : ""}: entra no card como uma variação nova`);
+      return;
+    }
     ctx.toast(`Ângulo salvo nas versões da locação (sem ✓: ${CLIENT} não vê)`);
   } catch (e) {
     console.error(e);
     E.ctx.toast(`O ângulo não salvou${e?.message ? `: ${e.message}` : ""}.`, true);
   } finally {
     E.busy = false;
-    $(".c3d-save")?.classList.remove("busy");
+    E.el.querySelectorAll(".c3d-save.busy").forEach((b) => b.classList.remove("busy"));
   }
 }
-// the 3D over the whole window (⤢, or F with nothing selected); Esc or ⤡ puts it back in the page
-function full(on = !E.el.classList.contains("full")) {
+// the 3D over the whole window (⤢, or F with nothing selected); Esc or ⤡ puts it back in the page. user: opened with
+// ⤢ or F, so Esc leaves the full window first; the one a waiting render opens is the 3D itself, and Esc leaves it whole
+function full(on = !E.el.classList.contains("full"), user = false) {
   E.el.classList.toggle("full", on);
+  E.userFull = on && user;
   toolbar();
   fit();
   E.el.focus({ preventScroll: true });
+}
+// out of the 3D (✕, Esc, Renderizar): the room goes back to the page it was opened from, at the same scroll (app.js
+// leave3d), else to the shot's card that opened it; lit: the card a render went to comes into view, lit for a moment
+function leave(card = origin(), lit = false) {
+  full(false);
+  E.ctx.leave3d?.(card?.id || null, lit);
 }
 // the panel folds into its one round button (remembered on this computer)
 const SIDE_KEY = "sala-c3d-side";

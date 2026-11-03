@@ -2,6 +2,10 @@
 ._*
 # o config de cada job (o exemplo é sala/config.example.js)
 sala/config.js
+# os arquivos só de um job: os que o config.js aponta (sets da Cena 3D, modelo do produto, peça de motion, estilo)
+# e as migrações do banco que só aquele job precisa
+sala/job/
+supabase/job/
 .vercel/
 .netlify/
 node_modules/

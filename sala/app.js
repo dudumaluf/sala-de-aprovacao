@@ -18,9 +18,21 @@ const SCHEMA = CFG.SCHEMA || "public", BUCKET = CFG.BUCKET || "media", JOB = CFG
 const roomOf = (user) => { const m = user?.app_metadata || {}; return JOB ? (m.job === JOB ? m.room : "") : m.side; };
 // a storage key per side (and per job), so the team can keep both rooms, and other jobs' rooms, open in the same browser
 const AUTH_KEY = (side) => `${JOB || "sala"}-${side}`;
+// a room that kept its things in this browser under another prefix before it moved to this code (config.js STORE) has
+// them moved here once: its people stay signed in, with their preferences
+if (CFG.STORE && CFG.STORE !== "sala") try {
+  const old = `${CFG.STORE}-`;
+  for (const k of Object.keys(localStorage).filter((x) => x.startsWith(old))) {
+    const rest = k.slice(old.length), to = rest === "time" || rest === "cliente" ? AUTH_KEY(rest) : `sala-${rest}`;
+    if (localStorage.getItem(to) === null) localStorage.setItem(to, localStorage.getItem(k));
+    localStorage.removeItem(k);
+  }
+} catch { /* the room still works: they sign in again */ }
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { db: { schema: SCHEMA }, auth: { storageKey: AUTH_KEY(SIDE) } });
 document.title = `${PROJECT.name} · ${TEAM ? "Produção" : "Aprovação"}`;
 if (PROJECT.accent) document.documentElement.style.setProperty("--accent", PROJECT.accent);
+// the job's own stylesheet over the room's (config.js STYLE: its colors and fonts), a path from sala/
+if (CFG.STYLE) document.head.append(Object.assign(document.createElement("link"), { rel: "stylesheet", href: new URL(CFG.STYLE, import.meta.url).href }));
 
 const STATUS = { todo: "A fazer", doing: "Fazendo", ready: "Pronto" };
 const tag = (n) => two(n); // the scene label in the menu and in file names
@@ -84,9 +96,9 @@ const S = {
   feedback: [], wkRefs: [], tasks: [], pendencias: [], roundNotes: [], envio: [], annotations: [],
   ret: { resolved: false, said: {}, call: {} }, drawerTab: "comentarios",
   page: { kind: "round", round: null, scene: null, item: null }, pageKey: "",
-  me: store.get(`sala-name-${SIDE}`), drawer: null, mode: {}, uploading: {}, lightbox: null, modal: null,
+  me: store.get(`sala-name-${SIDE}`), drawer: null, mode: {}, uploading: {}, lightbox: null, lbx: null, modal: null,
   navOpen: false, pending: false, flash: null, matFilter: "all",
-  ov: { kinds: new Set(), curate: false, dropped: store.get("sala-dropped") === "1", view: store.get("sala-ov-view2") === "grid" ? "grid" : "hero" }, ovList: [], ovSel: {},
+  ov: { kinds: new Set(), curate: false, dropped: store.get("sala-dropped") === "1", view: store.get("sala-ov-view2") === "grid" ? "grid" : "hero" }, ovList: [], ovSel: (() => { try { return JSON.parse(store.get(`sala-ovsel-${SIDE}`) || "{}") || {}; } catch { return {}; } })(),
   more: null, dl: false, filt: false, sheet: {}, wipe: {}, sideOff: store.get("sala-side-off") === "1", scenesOff: store.get("sala-scenes-off") === "1", infoOff: store.get("sala-info-off") === "1",
   navPages: (() => { try { return JSON.parse(store.get("sala-nav-pages") || "{}"); } catch { return {}; } })(),
   ver: "now", peek: new Set(), vcmp: {},
@@ -210,7 +222,85 @@ const offWK = (o) => TEAM && !wkSeen().has(o.id);
 const optById = (id) => S.options.find((o) => o.id === id);
 const stackRoot = (o) => (o?.stack && optById(o.stack)) || o;
 const stackOf = (root) => [root, ...S.options.filter((x) => x.stack === root.id).sort((a, b) => a.created_at.localeCompare(b.created_at))];
-const faceOf = (o) => (o.face && S.options.find((x) => x.id === o.face && x.stack === o.id)) || o;
+// a ✕ version never hides its card: while the ✕ ones are hidden, the original shows in its place (the arrows may land
+// on a ✕ version)
+const faceOf = (o) => {
+  const f = o.face && S.options.find((x) => x.id === o.face && x.stack === o.id);
+  return f && (!dropped(f) || dropped(o) || showDrop(f)) ? f : o;
+};
+// Virar card novo: an image moves to another card. A version leaves its stack (its original stops showing it; based_on
+// still says where it came from); an original takes its versions along
+async function splitTo(id, itemId) {
+  const o = optById(id), root = o?.stack ? optById(o.stack) : null;
+  if (!o) return;
+  const ids = root ? [o.id] : [o.id, ...S.options.filter((x) => x.stack === o.id).map((x) => x.id)];
+  let { error } = await sb.from("options").update({ item_id: itemId }).in("id", ids);
+  if (error) throw error;
+  if (!root) return;
+  ({ error } = await sb.from("options").update({ stack: null }).eq("id", o.id));
+  if (error) throw error;
+  if (root.face === o.id) ({ error } = await sb.from("options").update({ face: null }).eq("id", root.id));
+  if (error) throw error;
+}
+// ---------- Motion (config.js MOTION): the job's motion piece, a page that edits and renders a video, opened over the
+// page from the motion button of the cards it is for ----------
+// It opens outside the app's re-rendered root, so the iframe survives refreshes, with the settings of the render on the
+// card; each render comes back as an MP4: a version of the render it was opened from, else a new image on the card
+const MOTION = TEAM && CFG.MOTION?.src ? CFG.MOTION : null;
+const MOTION_ICO = '<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><rect x="2" y="4.5" width="2.4" height="7" rx="1.2"/><rect x="6.8" y="2" width="2.4" height="12" rx="1.2"/><rect x="11.6" y="5.5" width="2.4" height="5" rx="1.2"/></svg>';
+const motionOf = (it) => !!MOTION && !!it && (!MOTION.kind || it.kind === MOTION.kind) && (!MOTION.scene || [].concat(MOTION.scene).includes(sceneName(it.scene)));
+const motionLabel = () => MOTION?.label || "Motion";
+// a render's settings: config.js names its file (name) and reads them back from that name (read); without those the file
+// is named after the piece and the time, and a card reopens the piece from its start settings
+const motionName = (s) => MOTION.name?.(s) || `${motionLabel().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\W+/g, "-").toLowerCase()}_${Date.now()}.mp4`;
+const motionSet = (o) => (o && MOTION.read?.(o.name || "")) || null;
+const motionDesc = (s) => MOTION.describe?.(s) || motionLabel();
+// a render of the motion piece (the Galeria files these under their own origin)
+const motionOpt = (o) => !!MOTION && !!o?.mime?.startsWith("video/") && (MOTION.read ? !!MOTION.read(o.name || "") : (o.model || "").startsWith(motionLabel()));
+function openMotion(itemId, fromId) {
+  const from = fromId ? optById(fromId) : null, set = motionSet(from);
+  closeMotion();
+  const ov = document.createElement("div");
+  ov.className = "motion-ov";
+  ov.dataset.item = itemId;
+  ov.dataset.from = set ? from.id : "";
+  // a card with no render yet starts from the piece's start settings
+  ov.innerHTML = `<iframe src="${new URL(MOTION.src, import.meta.url).href}?embed&${new URLSearchParams(set || MOTION.start || {})}" title="${esc(motionLabel())}"></iframe>`;
+  document.body.append(ov);
+  ov.querySelector("iframe").focus();
+}
+const closeMotion = () => document.querySelector(".motion-ov")?.remove();
+async function putMotion(itemId, from, s, video, poster) {
+  const it = itemOf(itemId), prefix = `items/${itemId}`, id = crypto.randomUUID(), path = `${prefix}/${id}.mp4`;
+  const up = await sb.storage.from(BUCKET).upload(path, video, { contentType: "video/mp4" });
+  if (up.error) throw up.error;
+  const small = poster ? await resized(new File([poster], "poster.jpg", { type: "image/jpeg" })).catch(() => null) : null;
+  const put = async (blob, suffix) => { const pp = `${prefix}/${id}.${suffix}.jpg`; const r = blob && (await sb.storage.from(BUCKET).upload(pp, blob, { contentType: "image/jpeg" })); return r && !r.error ? pp : null; };
+  const desc = motionDesc(s), root = from ? stackRoot(from) : null;
+  const { error } = await sb.from("options").insert({ item_id: itemId, path, preview_path: small ? await put(small.preview, "preview") : null, thumb_path: small ? await put(small.thumb, "thumb") : null,
+    mime: "video/mp4", name: motionName(s), caption: desc, prompt: desc, model: MOTION.model?.(s) || motionLabel(), created_by: myName(),
+    version: roundOf(it?.round_id)?.version || 1, based_on: from?.id || null, stack: root?.id || null });
+  if (error) throw error;
+  if (it?.status === "todo") await sb.from("items").update({ status: "doing" }).eq("id", itemId);
+  await refresh();
+}
+addEventListener("message", async (e) => {
+  const ov = document.querySelector(".motion-ov"), fr = ov?.querySelector("iframe");
+  if (!ov || e.origin !== location.origin || e.source !== fr?.contentWindow) return;
+  if (e.data?.type === "motion:close") return closeMotion();
+  if (e.data?.type !== "motion:render") return;
+  const { settings, video, poster } = e.data;
+  try {
+    await putMotion(ov.dataset.item, ov.dataset.from ? optById(ov.dataset.from) : null, settings, video, poster);
+    closeMotion();
+    toast("O vídeo entrou no card");
+  } catch (err) {
+    console.error(err);
+    fr.contentWindow.postMessage({ type: "motion:status", text: `Não subiu: ${err.message || err}` }, location.origin);
+    toast(`O vídeo não subiu: ${err.message || err}`, true);
+  }
+});
+addEventListener("keydown", (e) => { if (e.key === "Escape" && document.querySelector(".motion-ov")) { e.stopImmediatePropagation(); closeMotion(); } }, true);
 // the client's pick, on the card that shows it now: the client chose an original whose card may show a later version of it (the headless
 // sheet of an approved person, an edit made in the studio), so the pick is the whole stack
 const isPick = (it, o) => {
@@ -377,12 +467,13 @@ function defaultRound() {
   return clientRounds().at(-1)?.id || null;
 }
 
-// ---------- routing: #/r/a1 · #/r/a1/visao · #/r/a1/s/7[/itemId] · #/r/a1/retorno[/itemId] · #/apresentacao · #/materiais ----------
+// ---------- routing: #/r/a1 · #/r/a1/visao · #/r/a1/s/7[/itemId] · #/r/a1/retorno[/itemId] · #/apresentacao · #/materiais · #/galeria ----------
 function resolvePage() {
   const h = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
   let p;
   if (h[0] === "materiais") p = { kind: "materiais" };
   else if (h[0] === "aprovado" && TEAM) p = { kind: "aprovado", round: S.page.round };
+  else if (h[0] === "galeria" && TEAM) p = { kind: "galeria", round: S.page.round };
   else if (h[0] === "apresentacao" && TEAM) p = { kind: "apresentacao", round: S.page.round };
   else if (h[0] === "r" && visibleRounds().some((r) => r.id === h[1])) {
     p = h[2] === "s" && h[3] !== undefined ? { kind: "scene", round: h[1], scene: +h[3], item: h[4] || null, tab: h[5] || null }
@@ -434,14 +525,15 @@ async function sign(paths) {
   }
 }
 const warm = () => sign([
-  ...S.options.flatMap((o) => (o.mime.startsWith("video/") ? [o.path] : [o.preview_path || o.path, o.thumb_path])),
+  ...S.options.flatMap((o) => (o.mime.startsWith("video/") ? [o.path, o.preview_path] : [o.preview_path || o.path, o.thumb_path])),
   ...S.files.map((f) => f.thumb_path || f.preview_path || (f.mime.startsWith("image/") ? f.path : null)),
   ...S.wkRefs.map((x) => x.path),
 ]);
 async function hydrate() {
-  const els = [...$app.querySelectorAll("[data-path]")];
-  await sign(els.map((e) => e.dataset.path));
+  const els = [...$app.querySelectorAll("[data-path]")], posters = [...$app.querySelectorAll("[data-poster]")];
+  await sign([...els.map((e) => e.dataset.path), ...posters.map((e) => e.dataset.poster)]);
   els.forEach((e) => { const u = urls.get(e.dataset.path); if (u && e.getAttribute("src") !== u) e.src = u; });
+  posters.forEach((e) => { const u = urls.get(e.dataset.poster); if (u && e.getAttribute("poster") !== u) e.poster = u; });
   // vertical options (character views) get a taller frame instead of being cropped to 16:9
   $app.querySelectorAll(".frame img").forEach((img) => {
     const mark = () => {
@@ -457,11 +549,63 @@ const srcAttr = (p) => (urls.has(p) ? ` src="${esc(urls.get(p))}"` : "");
 // size: "thumb" for cards, "tile" for scene pages, "big" for the lightbox
 function media(o, size = "tile") {
   if (o.mime.startsWith("video/")) {
-    return `<video data-path="${esc(o.path)}" ${size === "big" ? "controls autoplay" : "muted loop"} playsinline preload="metadata"${srcAttr(o.path)}></video>`;
+    // a video with a still (its poster, like a motion render's last frame) shows it until it plays
+    const pp = o.preview_path, poster = pp ? ` data-poster="${esc(pp)}"${urls.has(pp) ? ` poster="${esc(urls.get(pp))}"` : ""}` : "";
+    return `<video data-path="${esc(o.path)}"${poster} ${size === "big" ? "controls autoplay" : "muted loop"} playsinline preload="metadata"${srcAttr(o.path)}></video>`;
   }
   const p = (size === "thumb" && o.thumb_path) || o.preview_path || o.path;
   return `<img data-path="${esc(p)}" alt="${esc(o.caption || o.name)}" decoding="async"${srcAttr(p)}>`;
 }
+// ---------- a card's video plays under the mouse ----------
+// muted and looping while the mouse is on its card or tile, back to its still when it leaves; only the one under the
+// mouse plays, and it starts loading then. A render moves the playing element into the new page, so it goes on. On a
+// touch screen the small ▶ on the card plays and stops it in place (a tap elsewhere still opens it big). A Galeria tile
+// that shows only a still (data-vid) gets its video laid over it while the mouse is there
+const VBOX = ".csh-tile, .ctile, .gal-t, .hero, .sitem-media";
+const vplayBtn = (o) => (o.mime.startsWith("video/") ? `<span class="vplay" data-act="vplay" role="button" aria-label="Tocar ou parar o vídeo">${ICON.play}</span>` : "");
+let vOn = null;
+function vidIn(t, make = false) {
+  const box = t?.closest?.(VBOX);
+  if (!box) return null;
+  const vs = box.querySelectorAll("video:not([controls])");
+  if (vs.length === 1) return vs[0];
+  if (vs.length || !make || !box.dataset.vid) return null;
+  const v = Object.assign(document.createElement("video"), { className: "vhover" });
+  v.dataset.path = box.dataset.vid;
+  v.style.cssText = "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none";
+  box.append(v);
+  return v;
+}
+async function vPlay(v) {
+  if (vOn && vOn !== v) vStop(vOn);
+  vOn = v;
+  Object.assign(v, { muted: true, loop: true, playsInline: true, preload: "auto" });
+  const p = v.dataset.path;
+  if (p && !v.getAttribute("src")) {
+    await sign([p]).catch(() => {});
+    if (vOn !== v || !urls.get(p)) return;
+    v.src = urls.get(p);
+  }
+  v.closest(VBOX)?.classList.add("vplaying");
+  v.play().catch(() => {});
+}
+function vStop(v) {
+  v.pause();
+  v.closest(VBOX)?.classList.remove("vplaying");
+  if (vOn === v) vOn = null;
+  if (v.classList.contains("vhover")) return v.remove();
+  if (v.poster) v.load(); // back to its still
+  else try { v.currentTime = 0; } catch {}
+}
+document.addEventListener("pointerover", (e) => {
+  if (e.pointerType !== "mouse") return;
+  const v = vidIn(e.target, true);
+  if (v && v !== vOn) vPlay(v);
+});
+document.addEventListener("pointerout", (e) => {
+  if (e.pointerType !== "mouse" || !vOn || vidIn(e.relatedTarget) === vOn) return;
+  vStop(vOn);
+});
 
 // ---------- uploads ----------
 async function resized(file) {
@@ -543,10 +687,30 @@ function openOption(id) {
 // the AI studio (estudio.js) is optional: ESTUDIO.on in config.js turns on its ✦ buttons; drawing on an image works either way
 const AI = !!ESTUDIO?.on;
 const estCtx = () => ({ sb, SIDE, TEAM, S, esc, itemOf, optsOf, letterOf, roundOf, putFile, refresh, toast, myName, sign, urls, sceneName, openOption, sceneLook: (n) => lookOf(n)?.label || "",
-  fnUrl: `${SUPABASE_URL}/functions/v1/${ESTUDIO.fn || "estudio"}`, anonKey: SUPABASE_KEY, schema: SCHEMA, bucket: BUCKET,
+  fnUrl: `${SUPABASE_URL}/functions/v1/${ESTUDIO.fn || "estudio"}`, anonKey: SUPABASE_KEY, schema: SCHEMA, bucket: BUCKET, ai: AI,
+  // the Galeria's Soul ID training (and the studio's Soul 2) go through their own edge function, named after the
+  // studio's unless config.js says otherwise (estudio → souls, sala-estudio → sala-souls)
+  soulsUrl: `${SUPABASE_URL}/functions/v1/${ESTUDIO.souls || (ESTUDIO.fn || "estudio").replace(/estudio$/, "souls")}`,
   // a render's blocking opens in its location's Cena 3D on that angle; the 3D's save hands the new angle back to the render
   openCena3d: (o) => { const it = itemOf(o.item_id); if (it) location.hash = `${sceneHref(it.round_id, it.scene, it.id)}/cena3d/${o.id}`; },
-  heldRender: () => Estudio.heldRender(), takeAngle: (id) => Estudio.takeAngle(estCtx(), id), dropHeld: () => Estudio.dropHeld(estCtx()) });
+  heldRender: () => Estudio.heldRender(), takeAngle: (id) => Estudio.takeAngle(estCtx(), id), dropHeld: () => Estudio.dropHeld(estCtx()),
+  // a 3D opened from a shot's card: Renderizar sends the new angle's render to that card (how: its prompt box's text and
+  // Fiel / Solto); ✕ and Esc go back (leave3d)
+  renderBlocking: (optionId, itemId, how = {}) => Estudio.renderBlocking(estCtx(), { optionId, itemId, ...how }), leave3d });
+// Galeria (galeria.js): everything the room made or received, to filter, select and act on with the right click.
+// Team only, loaded on the first visit; it draws inside page() like any other page
+let Galeria = null;
+function galeriaPage() {
+  if (Galeria) return Galeria.page();
+  if (!S.galLoading) {
+    S.galLoading = true;
+    import("./galeria.js").then((m) => { Galeria = m; m.init(galCtx()); render(true); })
+      .catch((e) => { console.error(e); S.galLoading = false; toast("A Galeria não carregou.", true); });
+  }
+  return head("Galeria", "Carregando…", "") + '<div class="main-body"></div>';
+}
+const galCtx = () => ({ ...estCtx(), studioCtx: estCtx, Estudio, render, head, run, dlName, zipDownload, openFile, approvedOpts, isPick, reviewOf, offWK, stackRoot,
+  sceneHref, fmtTime, KINDS, STAR, ICO, CL, DA_CL, TZ, motionLabel: MOTION ? motionLabel() : "", isMotion: motionOpt });
 const drawsOf = (o) => S.annotations.filter((a) => a.option_id === o.id && !a.resolved).length;
 async function signed(path, name, download) {
   const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(path, 3600, download ? { download: name || true } : undefined);
@@ -743,6 +907,7 @@ function sidebar() {
         <a class="nav ${S.page.kind === "review" ? "on" : ""}" href="#/r/${r.id}/resumo"><span class="ico">${ICO.keep}</span>Resumo e confirmação${r.confirmed_at ? '<i class="dot ok"></i>' : ""}</a>`
         : S.rounds[0] ? `<p class="side-note">As opções da ${roundLabel(S.rounds[0])} · ${esc(S.rounds[0].title)} entram aqui até ${fmtDay(S.rounds[0].due)}.</p>` : ""}
       <p class="side-label">${TEAM ? "Job" : "Materiais"}</p>
+      ${TEAM ? `<a class="nav ${S.page.kind === "galeria" ? "on" : ""}" href="#/galeria" title="Tudo o que a sala gerou e recebeu: filtrar, selecionar e agir (botão direito)"><span class="ico">${ICON.grid}</span>Galeria</a>` : ""}
       ${TEAM ? `<a class="nav ${S.page.kind === "aprovado" ? "on" : ""}" href="#/aprovado" title="Tudo o que o cliente aprovou até agora, na versão atual, pra baixar de uma vez"><span class="ico">${STAR}</span>Aprovado</a>` : ""}
       <a class="nav ${S.page.kind === "materiais" ? "on" : ""}" href="#/materiais"><span class="ico">${ICON.up}</span>${TEAM ? "Materiais" : "O que precisamos"}${newFiles ? `<b class="badge">${newFiles}</b>` : ""}</a>
     </nav>
@@ -809,6 +974,7 @@ function page() {
   if (p.kind === "materiais") return materialsPage();
   if (p.kind === "apresentacao") return deckPage();
   if (p.kind === "aprovado") return approvedPage();
+  if (p.kind === "galeria") return galeriaPage();
   const r = roundOf(p.round);
   if (!r) return head("Em breve", "", "") + `<div class="main-body"></div>`;
   if (p.kind === "retorno") return retornoPage(r);
@@ -866,6 +1032,12 @@ function filterBar(r, ctx, note = "") {
   const btn = `<button class="fbtn ${on.length ? "on" : ""} ${S.filt ? "open" : ""}" data-act="filt" aria-haspopup="dialog" aria-expanded="${!!S.filt}" title="Aprovação, autor${ctx.kinds?.length > 1 ? ", tipo" : ""} e o que aparece nos cards">${ICO.funnel}Filtros${on.length ? `<b aria-label="${plural(on.length, "filtro ligado", "filtros ligados")}">${on.length}</b>` : ""}</button>`;
   const chips = on.length ? `<div class="fchips">${on.map(([k, l]) => `<button class="fchip" data-act="filt-off" data-v="${k}" title="Tirar este filtro">${esc(l)}${ICO.drop}</button>`).join("")}<button class="link fchips-clear" data-act="filt-off" data-v="all">Limpar</button>${note ? `<span class="fchips-note">${note}</span>` : ""}</div>` : "";
   if (ctx.bare) return { btn: `<span class="fbar-bare">${btn}${pop}</span>`, chips };
+  // ico: Filtros is one more round icon in the page head, next to the
+  // overview's view icons; what is on still shows as chips over the cards
+  if (ctx.ico) {
+    const ib = `<button class="btn hico ${on.length ? "on" : ""}" data-act="filt" aria-haspopup="dialog" aria-expanded="${!!S.filt}" title="Filtros: aprovação, autor${ctx.kinds?.length > 1 ? ", tipo" : ""} e o que aparece nos cards" aria-label="Filtros">${ICO.funnel}${on.length ? `<b class="badge" aria-label="${plural(on.length, "filtro ligado", "filtros ligados")}">${on.length}</b>` : ""}</button>`;
+    return { btn: `<span class="fbar-bare fbar-head">${view}${ib}${pop}</span>`, chips };
+  }
   return `<div class="ov-bar fbar ${ctx.cls || ""}"><span class="fbar-end">${view}${btn}</span>${pop}</div>${chips}`;
 }
 const addButton = (n) => `<button class="btn hico" data-act="add-item" ${n === undefined ? "" : `data-scene="${n}"`} title="Novo item" aria-label="Novo item">${ICON.plus}</button>`;
@@ -1089,29 +1261,45 @@ function optFace(it, o, { size, by = false, act = "ov-open", del = false, plain 
   const meta = [by && o.created_by ? esc(o.created_by.split(" ")[0]) : "", TEAM && roundVers(it.round_id).length > 1 ? `v${verOf(o)}` : ""].filter(Boolean).join(" · ");
   const bl = `<span class="hz-bl"><button class="hz-chip ${nc ? "" : "hz-hover"}" data-act="drawer" data-id="${it.id}" title="${nc ? plural(nc, "comentário", "comentários") : "Comentar"}" aria-label="Comentários">${CHAT}${nc || ""}</button>${nd ? `<b class="hz-chip" title="${plural(nd, "desenho", "desenhos")} em aberto">${Estudio.ICONS.pen}${nd}</b>` : ""}${meta ? `<span class="hz-meta" title="Quem fez · versão">${meta}</span>` : ""}${rv.verdict === "drop" && rv.note ? `<span class="hz-meta" title="${dropWhy(rv)}">${esc(rv.note)}</span>` : ""}</span>`;
   const br = tools ? `<div class="hz-br">${TEAM && AI && !o.mime.startsWith("video/") ? `<button data-act="estudio" data-id="${o.id}" title="Editar com IA: esta imagem é a base" aria-label="Editar com IA">${Estudio.ICONS.spark}</button>` : ""}${vsCan(o) ? `<button data-act="vs-open" data-id="${it.id}" data-i="${i}" title="${blockOf(o) ? "Comparar com o blocking 3D" : "Comparar com a versão anterior"}" aria-label="Comparar">${ICON.vs}</button>` : ""}<button data-act="download" data-id="${o.id}" title="Baixar o original" aria-label="Baixar">${ICO.down}</button></div>` : "";
-  return `<button class="hero-img" data-act="${act}" data-id="${it.id}" data-i="${i}" aria-label="Abrir ${esc(it.title)} ${lab} grande"${off && !dropped(o) ? ' title="Fora do que o cliente vê nesta versão"' : ""}>${media(o, size)}</button>
+  return `<button class="hero-img" data-act="${act}" data-id="${it.id}" data-i="${i}" aria-label="Abrir ${esc(it.title)} ${lab} grande"${off && !dropped(o) ? ' title="Fora do que o cliente vê nesta versão"' : ""}>${media(o, size)}${vplayBtn(o)}</button>
     ${tr}${judge}${bl}${br}${verPill(o)}`;
 }
 // the history of an image edited in the studio, on its card's top right while hovered: ‹ 2/3 › steps through its
-// versions (1 is the original), and the one shown becomes the card's face. Variations (A, B…) keep the big arrows and dots
+// versions (1 is the original), and the one shown becomes the card's face. Variations (A, B…) keep the big arrows and dots.
+// The ✕ versions are skipped while the ✕ ones are hidden (Filtros › Mostrar descartadas brings them into the count)
 function verPill(o) {
   if (!TEAM) return "";
-  const root = stackRoot(o), all = stackOf(root);
+  const root = stackRoot(o), every = stackOf(root);
+  const all = every.filter((x) => x === root || !dropped(x) || showDrop(x)), hid = every.length - all.length;
   if (all.length < 2) return "";
-  const i = all.findIndex((x) => x.id === o.id);
+  const i = Math.max(0, all.findIndex((x) => x.id === o.id));
   const step = (d, label) => { const x = all[i + d]; return `<button data-act="vpick" data-id="${root.id}" data-v="${x?.id || ""}" ${x ? "" : "disabled"} aria-label="${label}">${d < 0 ? "‹" : "›"}</button>`; };
-  return `<span class="vpill" title="Histórico desta imagem: ${all.length} versões (a 1 é a original). As setas trocam a que fica no card.">${step(-1, "Versão anterior")}<b>${i + 1}/${all.length}</b>${step(1, "Próxima versão")}</span>`;
+  return `<span class="vpill" title="Histórico desta imagem: ${all.length} versões (a 1 é a original)${hid ? `, mais ${hid} com ✕ (Filtros › Mostrar descartadas)` : ""}. As setas trocam a que fica no card.">${step(-1, "Versão anterior")}<b>${i + 1}/${all.length}</b>${step(1, "Próxima versão")}</span>`;
 }
 // a contact-sheet cell: the face at thumbnail size, framed by the team's verdict
 const sheetTile = (it, o, opt = {}) => {
   const verdict = reviewOf(o.id)?.verdict;
   return `<div class="hero csh-tile ${verdict ? `rv-${verdict}` : ""} ${isPick(it, o) ? "chosen" : ""}">${optFace(it, o, { size: "thumb", by: true, ...opt })}</div>`;
 };
-// an item's big image, as on the overview: the shown option (picked with the arrows, else the kept one, else the first), dots and hover actions
-function heroOf(it, opts, { act = "ov-open", del = false, quiet = false, extra = null, tools = true } = {}) {
-  let k = opts.findIndex((o) => o.id === S.ovSel[it.id]);
+// the image picked on a card with its dots (S.ovSel) is kept by its original's id, so flipping its versions (‹ n/N ›), a
+// new version landing on it or new images arriving leave it where it was; this browser remembers it. One that is gone falls
+// back to the rule
+const selOf = (o) => stackRoot(o)?.id || o?.id;
+function pickSel(id, o) {
+  if (!o) return;
+  S.ovSel[id] = selOf(o);
+  store.set(`sala-ovsel-${SIDE}`, JSON.stringify(S.ovSel));
+}
+// which of a card's images shows: the one picked with the dots, else the client's pick (team), else the kept one, else the first
+function shownAt(it, opts) {
+  let k = opts.findIndex((o) => selOf(o) === S.ovSel[it.id]);
   if (k < 0 && TEAM) k = opts.findIndex(clientOk);
   if (k < 0) k = Math.max(0, opts.findIndex((o) => reviewOf(o.id)?.verdict === "keep"));
+  return k;
+}
+// an item's big image, as on the overview: the shown option (see shownAt), dots and hover actions
+function heroOf(it, opts, { act = "ov-open", del = false, quiet = false, extra = null, tools = true } = {}) {
+  const k = shownAt(it, opts);
   const o = opts[k];
   const lab = offWK(o) ? "–" : it.mode === "set" ? "" : letterOf(it, o);
   return {
@@ -1321,9 +1509,9 @@ function overviewPage(r) {
   const sub = [plural(all.length, "item", "itens"), `${images} imagens`, `${ready} prontos`].join(" · ") +
     (r.confirmed_at ? ` · <b class="ok">${esc(CL)} confirmou ${fmtTime(r.confirmed_at)}</b>` : "") +
     (owed ? ` · <a class="owed" href="#/materiais">${plural(owed, "material pendente", "materiais pendentes")} ${DA_CL}</a>` : "");
-  const bar = filterBar(r, { view: !trio, kinds, curate: true, dropped: true }, apprNote(filtering() ? all.filter((it) => kindOk(it) && !(trio ? trioShown(r, it) : hasView(it))).length : 0));
-  return head("Visão geral", sub, dlButton() + sendButton(r), `${esc(r.code)} · ${esc(r.title)}`) +
-    `<div class="main-body ov-body" data-keep="main">${bar}${sections || `<p class="empty">${trio && f.curate ? "Nada pra curar: tudo o que é novo já tem ✓ ou ✕." : "Nada com esse filtro."}</p>`}</div>`;
+  const bar = filterBar(r, { view: !trio, kinds, curate: true, dropped: true, ico: true }, apprNote(filtering() ? all.filter((it) => kindOk(it) && !(trio ? trioShown(r, it) : hasView(it))).length : 0)) || { btn: "", chips: "" };
+  return head("Visão geral", sub, bar.btn + dlButton() + sendButton(r), `${esc(r.code)} · ${esc(r.title)}`) +
+    `<div class="main-body ov-body" data-keep="main">${bar.chips}${sections || `<p class="empty">${trio && f.curate ? "Nada pra curar: tudo o que é novo já tem ✓ ou ✕." : "Nada com esse filtro."}</p>`}</div>`;
 }
 // ---------- the pages of cards: one grid that flows scene after scene, each card naming its scene ----------
 // nothing above, beside or under a card but its title, and, in yellow, what the client still asks of it
@@ -1548,10 +1736,15 @@ function sceneSteps(r, n) {
   return [all[i - 1], all[i + 1]];
 }
 // a scene page (team): on Atual the same rows as the overview, with the item's tools; on one version or all, the cards
-function sceneBody(r, items) {
+// a scene's Filtros, as an icon for the page head (fb.btn) and the chips of what is on (fb.chips)
+function sceneFilter(r, items) {
+  const trio = trioOn(r), list = items.filter((it) => (trio ? trioShown(r, it) : hasView(it)));
+  return filterBar(r, { dropped: items.some((x) => optsOf(x.id).some(dropped)), ico: true }, apprNote(filtering() ? items.length - list.length : 0)) || null;
+}
+function sceneBody(r, items, fb = null) {
   const trio = trioOn(r);
   const list = items.filter((it) => (trio ? trioShown(r, it) : hasView(it)));
-  const bar = filterBar(r, { dropped: items.some((x) => optsOf(x.id).some(dropped)) }, apprNote(filtering() ? items.length - list.length : 0));
+  const bar = fb ? fb.chips : filterBar(r, { dropped: items.some((x) => optsOf(x.id).some(dropped)) }, apprNote(filtering() ? items.length - list.length : 0));
   if (!list.length) return `${bar}<p class="empty">Nada com esse filtro.</p>`;
   S.ovList = [];
   return bar + (trio ? `<div class="trio-list big">${list.map((it) => trioRow(r, it, { tools: true })).join("")}</div>` : splitCols(list, teamRow));
@@ -1568,7 +1761,8 @@ function scenePage(r, n) {
     const t = d < 0 ? "Cena anterior" : "Próxima cena", ico = d < 0 ? ICON.prev : ICON.next;
     return s !== undefined ? `<a class="btn hico" data-step="${d}" href="${sceneHref(r.id, s)}" title="${t} (${d < 0 ? "←" : "→"}): ${tag(s)} ${esc(sceneName(s))}" aria-label="${t}">${ico}</a>` : `<span class="btn hico off" aria-hidden="true">${ico}</span>`;
   };
-  const right = TEAM ? `${sceneArrow(prev, -1)}${sceneArrow(next, 1)}${create}${addButton(n)}${dlButton()}${sendButton(r)}`
+  const fb = TEAM && items.length ? sceneFilter(r, items) : null;
+  const right = TEAM ? `${sceneArrow(prev, -1)}${sceneArrow(next, 1)}${create}${addButton(n)}${fb ? fb.btn : ""}${dlButton()}${sendButton(r)}`
     : `${progress(approved, items.length, `${approved} de ${items.length} aprovados`)}${dlButton()}`;
   const look = lookOf(n);
   // a later round (the shots of A2) shows the kit its scene is made of, approved in an earlier one
@@ -1578,7 +1772,7 @@ function scenePage(r, n) {
     look ? `<span class="look"><span class="sw">${(look.palette || []).map((c) => `<i style="background:${esc(c)}"></i>`).join("")}</span>${esc(look.label || "")}</span>` : "",
     TEAM && look ? `<button class="link copy" data-act="copy-look" data-v="${n}" title="${esc(lookPrompt(n))}">Copiar prompt da cena</button>` : ""].filter(Boolean).join(" · ");
   return head(`<span class="num">${tag(n)}</span>${esc(sceneName(n))}`, TEAM ? "" : line, right, `${esc(r.code)} · ${esc(r.title)}`) +
-    `<div class="main-body ${TEAM && items.length ? "fbody" : ""}" data-keep="main">${!items.length ? `<p class="empty">Nenhum item nesta cena.${TEAM ? ' <button class="link" data-act="add-item" data-scene="' + n + '">Criar um</button>' : ""}</p>` : TEAM ? sceneBody(r, items) : `<div class="items">${items.map(clientRow).join("")}</div>`}${TEAM ? "" : `<nav class="cnav">${prev !== undefined ? `<a class="btn" href="${sceneHref(r.id, prev)}">← ${tag(prev)} ${esc(sceneName(prev))}</a>` : `<a class="btn" href="#/r/${r.id}">← Apresentação</a>`}<span class="grow"></span>${next !== undefined ? `<a class="btn primary" href="${sceneHref(r.id, next)}">Próxima: ${tag(next)} ${esc(sceneName(next))} →</a>` : `<a class="btn primary" href="#/r/${r.id}/resumo">Ver o resumo e confirmar →</a>`}</nav>`}</div>`;
+    `<div class="main-body ${TEAM && items.length ? "fbody" : ""}" data-keep="main">${!items.length ? `<p class="empty">Nenhum item nesta cena.${TEAM ? ' <button class="link" data-act="add-item" data-scene="' + n + '">Criar um</button>' : ""}</p>` : TEAM ? sceneBody(r, items, fb) :`<div class="items">${items.map(clientRow).join("")}</div>`}${TEAM ? "" : `<nav class="cnav">${prev !== undefined ? `<a class="btn" href="${sceneHref(r.id, prev)}">← ${tag(prev)} ${esc(sceneName(prev))}</a>` : `<a class="btn" href="#/r/${r.id}">← Apresentação</a>`}<span class="grow"></span>${next !== undefined ? `<a class="btn primary" href="${sceneHref(r.id, next)}">Próxima: ${tag(next)} ${esc(sceneName(next))} →</a>` : `<a class="btn primary" href="#/r/${r.id}/resumo">Ver o resumo e confirmar →</a>`}</nav>`}</div>`;
 }
 // one card on its own (team, from the menu): the card at full width, every version of it underneath, and the
 // arrows (and ← →) going to the previous or next card of the page
@@ -1642,7 +1836,7 @@ function clientRow(it) {
     <header class="citem-head"><span class="kind">${KINDS[it.kind] || ""}</span><h3>${esc(it.title)}</h3><span class="state ${cls}">${label}</span><span class="grow"></span>${compareButton(it)}${chatButton(it)}${ADMIN ? `<button class="chat wk-rm-item" data-act="wk-item-off" data-id="${it.id}" title="${esc(cap(A_CL))} deixa de ver o item inteiro. Só você vê este botão.">${ICO.drop}Tirar o item</button>` : ""}</header>
     ${voicesLine(it)}
     <div class="ctiles n${Math.min(opts.length, 3)} ${canPick ? "pickable" : ""}">${opts.map((o, i) => `<figure class="ctile ${o.id === it.chosen_option ? "chosen" : ""}">
-      <button class="ctile-img" data-act="${canPick ? "choose" : "zoom"}" data-id="${it.id}" data-opt="${o.id}" data-i="${i}" aria-label="${canPick ? (o.id === it.chosen_option ? "Desfazer a escolha" : `Escolher a opção ${letter(i)}`) : "Ver em tela cheia"}" ${canPick && o.id === it.chosen_option ? 'title="Clique de novo para desfazer"' : ""}>${media(o)}</button>
+      <button class="ctile-img" data-act="${canPick ? "choose" : "zoom"}" data-id="${it.id}" data-opt="${o.id}" data-i="${i}" aria-label="${canPick ? (o.id === it.chosen_option ? "Desfazer a escolha" : `Escolher a opção ${letter(i)}`) : "Ver em tela cheia"}" ${canPick && o.id === it.chosen_option ? 'title="Clique de novo para desfazer"' : ""}>${media(o)}${vplayBtn(o)}</button>
       ${single ? "" : `<span class="lab">${letter(i)}</span>`}
       ${isNova(it, o) ? '<span class="ctile-new" title="Nova: entrou como extra pra você comparar e tirar a pior. Só você vê esta marca.">Nova</span>' : ""}
       ${o.id === it.chosen_option && !single ? `<span class="ctile-check">${ICO.keep}Escolhida</span>` : ""}
@@ -1667,8 +1861,16 @@ function blockOfShot(it) {
   return (S.bshots || []).filter((b) => b.item_id === loc.id && (b.camera?.from_preset === shot || b.camera?.preset === shot))
     .map((b) => optById(b.option_id)).filter((o) => o && !dropped(o)).sort((a, b) => b.created_at.localeCompare(a.created_at))[0] || null;
 }
-// a shot's 3D blocking: its location's Cena 3D, on the shot's camera when the deck planned one
-const shot3d = (it) => { const loc = it.kind === "plano" && shotLoc(it); return loc ? `${sceneHref(loc.round_id, loc.scene, loc.id)}/cena3d${it.variants?.shot ? `/${encodeURIComponent(it.variants.shot)}` : ""}` : ""; };
+// a shot's 3D blocking: its location's Cena 3D, on the shot's camera when the deck planned one ("-" when it did not),
+// then the card's own id, so the 3D's Renderizar sends its frame back to this card
+const shot3d = (it) => { const loc = it.kind === "plano" && shotLoc(it); return loc ? `${sceneHref(loc.round_id, loc.scene, loc.id)}/cena3d/${encodeURIComponent(it.variants?.shot || "-")}/${it.id}` : ""; };
+// what the studio is still making for a card (a render sent from Cena 3D, an edit…), on its title pill until it lands
+function makingOf(id) {
+  const js = TEAM ? Estudio.making(id) : [];
+  if (!js.length) return "";
+  const j = js.reduce((a, b) => (String(a.created_at) > String(b.created_at) ? a : b));
+  return `✦ ${{ queued: "Na fila", in_progress: "Gerando" }[j.status] || "Guardando"}${js.length > 1 ? ` · ${js.length}` : ""}…`;
+}
 // team: a scene's kit, the approved people, place and product it is made of (PRODUCT in config.js) (the studio's Criar starts from it), as their
 // cards show them now
 const kitOfScene = (n) => (TEAM ? Estudio.sceneKit(estCtx(), n) : { cast: [], place: [], device: null });
@@ -1730,18 +1932,21 @@ function teamRow(it, { scene = false, ov = false } = {}) {
   // nothing under the image: signals sit top left on it, the image's own actions top right, and on hover two small
   // pills along the bottom edge, status and title on the left, the card's tools on the right; they stay up while
   // the popover or the comments are open
-  const pos = S.uploading[it.id] ? esc(S.uploading[it.id]) : "";
+  const mk = S.uploading[it.id] ? "" : makingOf(it.id);
+  const pos = S.uploading[it.id] ? esc(S.uploading[it.id]) : mk;
   const ask = askOf(it);
   return `<article class="hcard sitem ${h?.verdict ? `rv-${h.verdict}` : ""} ${ask ? "ask" : ""} ${S.flash === it.id ? "flash" : ""}" id="item-${it.id}" data-drop="${it.id}"${orderOf(it)}>
     <div class="sitem-media">
     ${body}
-    <span class="t sitem-pill sitem-title">${grip(cls, `${label}${it.assignee ? ` · ${esc(PEOPLE[it.assignee] || it.assignee)}` : ""}${it.visible ? ` · ${A_CL} vê` : ""}`)}${scene ? `<span class="num">${two(it.scene)}</span>` : ""}<span class="tfit" data-v="${esc(it.title)}"><input class="inline title" data-field="title" data-id="${it.id}" value="${esc(it.title)}" maxlength="120" size="1" aria-label="Título" title="${esc(it.brief || it.title)}"></span>${fb ? `<span class="sitem-fb" title="${fb}${fbBy}">${fb}</span>` : ""}${pos ? `<span class="pos">${pos}</span>` : ""}</span>
-    <footer class="hcard-foot sitem-foot ${open || S.drawer === it.id || pos ? "pin" : ""}">
+    <span class="t sitem-pill sitem-title">${grip(cls, `${label}${it.assignee ? ` · ${esc(PEOPLE[it.assignee] || it.assignee)}` : ""}${it.visible ? ` · ${A_CL} vê` : ""}`)}${scene ? `<span class="num">${two(it.scene)}</span>` : ""}<span class="tfit" data-v="${esc(it.title)}"><input class="inline title" data-field="title" data-id="${it.id}" value="${esc(it.title)}" maxlength="120" size="1" aria-label="Título" title="${esc(it.brief || it.title)}"></span>${fb ? `<span class="sitem-fb" title="${fb}${fbBy}">${fb}</span>` : ""}${pos ? `<span class="pos${mk ? " mk" : ""}"${mk ? ' title="O estúdio está gerando pra este card: o resultado entra aqui sozinho"' : ""}>${pos}</span>` : ""}</span>
+    <footer class="hcard-foot sitem-foot ${open || S.drawer === it.id || (pos && !mk) ? "pin" : ""}">
       <span class="sitem-tools sitem-pill">
         ${all.length > 1 ? `<button class="ibtn ${grid ? "on" : ""}" data-act="item-sheet" data-id="${it.id}" aria-pressed="${!!grid}" title="${grid ? "Voltar para a imagem grande" : "Ver todas as versões juntas"}" aria-label="Ver todas as versões juntas">${ICON.grid}</button>` : ""}
         ${vp.length ? `<button class="ibtn ${S.vcmp[it.id] ? "on" : ""}" data-act="ver-cmp" data-id="${it.id}" aria-pressed="${!!S.vcmp[it.id]}" title="${S.vcmp[it.id] ? "Voltar para as opções" : `Comparar ${vp[0].l} × ${vp[0].r}: cada versão nova com a imagem de onde saiu`}" aria-label="Comparar versões">${TYPE_ICON.compare}</button>` : ""}
         ${refsOf(it).length && all.length ? `<button class="ibtn" data-act="compare" data-id="${it.id}" title="Comparar com as fotos originais" aria-label="Comparar">${CMP}</button>` : ""}
         ${shotBtn(it, h ? all[h.idx] : null)}
+        ${motionOf(it) ? `<button class="ibtn" data-act="motion" data-id="${it.id}" data-o="${h ? all[h.idx].id : ""}" title="${esc(motionLabel())}: ajustar e renderizar o vídeo aqui no card" aria-label="${esc(motionLabel())}">${MOTION_ICO}</button>` : ""}
+        ${h && canSplit(it, all[h.idx]) ? `<button class="ibtn" data-act="split" data-id="${all[h.idx].id}" title="Virar card novo: esta imagem sai deste card e vira um card logo ao lado" aria-label="Virar card novo">${SPLIT_ICO}</button>` : ""}
         ${h ? `<button class="ibtn" data-act="download" data-id="${all[h.idx].id}" title="Baixar o original" aria-label="Baixar">${ICO.down}</button>` : ""}
         ${all.length ? "" : `<button class="ibtn ${S.drawer === it.id ? "on" : ""} ${n ? "has" : ""}" data-act="drawer" data-id="${it.id}" title="Comentários" aria-label="Comentários">${CHAT}${n ? `<b>${n}</b>` : ""}</button>`}
         <button class="ibtn ${open ? "on" : ""}" data-act="more" data-id="${it.id}" title="Subir imagens, dono, status, briefing, prompts, apagar o card" aria-label="Mais" aria-expanded="${open}">⋯</button>
@@ -1754,18 +1959,38 @@ function teamRow(it, { scene = false, ov = false } = {}) {
     ${voicesLine(it)}
   </article>`;
 }
+// o, the image on the card now, can leave for a card of its own (the extract icon on the card's tools) when it is a version
+// or one of several images; never a Cena 3D angle, nor the one the client picked
+const canSplit = (it, o) => TEAM && !!o && !isAngle(o) && it.chosen_option !== o.id && (!!o.stack || optsOf(it.id).filter((x) => !isAngle(x)).length > 1);
+const SPLIT_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2.5" y="5.5" width="8" height="8" rx="1.3"/><path d="M8 8l5.5-5.5M9.5 2.5h4v4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+// the card's ⋯, a short context menu: actions as rows with an icon, the card's settings in compact rows between thin
+// lines. It opens above its button when the window ends first (S.moreUp, see fitMore)
 function morePop(it) {
   const vars = Object.keys(it.variants || {}).sort();
-  return `<div class="more-pop" role="dialog" aria-label="Ajustes de ${esc(it.title)}">
-    <div class="mp-row"><span>Imagens</span><label class="link" title="Ou arraste para o card, ou cole com ⌘V">Subir imagens ou vídeos<input type="file" multiple hidden accept="image/*,video/*" data-upload-item="${it.id}"></label></div>
-    <div class="mp-row"><span>Briefing</span><input class="field mp-brief" data-field="brief" data-id="${it.id}" value="${esc(it.brief)}" placeholder="Briefing para o time" maxlength="400" aria-label="Briefing"></div>
-    <div class="mp-row"><span>Dono</span><select class="sel" data-field="assignee" data-id="${it.id}" aria-label="Responsável"><option value="">Sem dono</option>${Object.entries(PEOPLE).map(([k, n]) => `<option value="${k}" ${it.assignee === k ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
+  return `<div class="more-pop${S.moreUp ? " up" : ""}" role="dialog" aria-label="Ajustes de ${esc(it.title)}">
+    <label class="mp-act" title="Ou arraste para o card, ou cole com ⌘V">${ICON.up}<span>Subir imagens ou vídeos</span><input type="file" multiple hidden accept="image/*,video/*" data-upload-item="${it.id}"></label>
+    ${optsOf(it.id).length > 1 ? `<button class="mp-act" data-act="item-zip" data-id="${it.id}">${ICON.down}<span>Baixar o pacote (.zip)</span></button>` : ""}
+    <hr class="mp-sep">
+    <div class="mp-row"><span>Dono</span><select class="sel mini" data-field="assignee" data-id="${it.id}" aria-label="Responsável"><option value="">Sem dono</option>${Object.entries(PEOPLE).map(([k, n]) => `<option value="${k}" ${it.assignee === k ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
     <div class="mp-row"><span>Status</span><div class="seg" role="group" aria-label="Status">${Object.entries(STATUS).map(([k, n]) => `<button data-act="status" data-id="${it.id}" data-v="${k}" class="${it.status === k ? "on" : ""}" aria-pressed="${it.status === k}">${n}</button>`).join("")}</div></div>
-    <div class="mp-row"><span>${esc(cap(A_CL))}</span><button class="vis" data-act="mode" data-id="${it.id}" title="${it.mode === "set" ? `As opções são vistas de uma coisa só: ${A_CL} aprova o conjunto` : `${cap(A_CL)} escolhe uma das opções`}">${it.mode === "set" ? "Aprova o conjunto" : "Escolhe uma"}</button><button class="vis ${it.visible ? "on" : ""}" data-act="visible" data-id="${it.id}" title="${it.visible ? `${cap(A_CL)} está vendo. Clique para esconder.` : `Mostrar só este item ${AO_CL}`}">${it.visible ? "Já vê" : "Oculto"}</button></div>
+    <div class="mp-row"><span>${esc(CL)}</span><button class="vis" data-act="mode" data-id="${it.id}" title="${it.mode === "set" ? `As opções são vistas de uma coisa só: ${A_CL} aprova o conjunto` : `${cap(A_CL)} escolhe uma das opções`}">${it.mode === "set" ? "Aprova o conjunto" : "Escolhe uma"}</button><button class="vis ${it.visible ? "on" : ""}" data-act="visible" data-id="${it.id}" title="${it.visible ? `${cap(A_CL)} está vendo. Clique para esconder.` : `Mostrar só este item ${AO_CL}`}">${it.visible ? "Já vê" : "Oculto"}</button></div>
     ${vars.length ? `<div class="mp-row"><span>Prompts</span><span class="vars" title="Prompt pronto de cada direção do briefing: clique para copiar e colar no gerador de imagens">${vars.map((k) => { const n = k.charCodeAt(0) - 64; return `<button class="link" data-act="copy-var" data-id="${it.id}" data-v="${k}" data-n="${n}" title="Copiar o prompt da direção ${n}: ${esc(variantPrompt(it, k))}">${n}</button>`; }).join("")}</span></div>` : ""}
-    ${optsOf(it.id).length > 1 ? `<div class="mp-row"><span>Arquivos</span><button class="link" data-act="item-zip" data-id="${it.id}">Baixar o pacote (.zip)</button></div>` : ""}
-    <div class="mp-row mp-foot">${it.visible && it.decision !== "pending" ? `<button class="link" data-act="reopen" data-id="${it.id}">Reabrir a decisão</button>` : "<span></span>"}<button class="link danger" data-act="item-del" data-id="${it.id}">Apagar o card</button></div>
+    <input class="field mp-brief" data-field="brief" data-id="${it.id}" value="${esc(it.brief)}" placeholder="Briefing para o time" maxlength="400" aria-label="Briefing">
+    <hr class="mp-sep">
+    ${it.visible && it.decision !== "pending" ? `<button class="mp-act" data-act="reopen" data-id="${it.id}">${ICO.redo}<span>Reabrir a decisão</span></button>` : ""}
+    <button class="mp-act danger" data-act="item-del" data-id="${it.id}">${ICO.trash}<span>Apagar o card</span></button>
   </div>`;
+}
+// the ⋯ menu hangs below its button; when the window (under the page's header) ends before it does and there is more room
+// above, it opens upward. Measured once it is drawn; the side it took stays through the re-renders while it is open
+function fitMore() {
+  const p = S.more && $app.querySelector(".more-pop");
+  if (!p) return;
+  const b = p.parentElement.getBoundingClientRect(), need = p.offsetHeight + 14;
+  const top = Math.max(0, $app.querySelector('[data-keep="main"]')?.getBoundingClientRect().top || 0);
+  const below = innerHeight - b.bottom, above = b.top - top;
+  const up = S.moreUp ? !(above < need && below > above) : below < need && above > below;
+  if (up !== !!S.moreUp) { S.moreUp = up; render(true); }
 }
 
 // ---------- retorno: the client's answer to a round, turned into work ----------
@@ -2242,7 +2467,73 @@ function lbOption() {
     const pairs = wipePairs(S.lightbox.wipe);
     return pairs[Math.min(S.wipe[S.lightbox.wipe] || 0, pairs.length - 1)]?.ia;
   }
-  return S.lightbox?.id ? optsOf(S.lightbox.id)[S.lightbox.i] : null;
+  return S.lightbox?.id ? lbShown(optsOf(S.lightbox.id)[S.lightbox.i]) : null;
+}
+// ---------- the image's history in the ver grande: its versions in a strip under it (↑ ↓ step through them, ← → still
+// go card to card); "Tornar atual" makes the one shown the card's ----------
+// the versions the team sees (the ✕ ones stay out while they are hidden, as on the card's ‹ n/N ›)
+const verList = (root) => stackOf(root).filter((x) => x === root || !dropped(x) || showDrop(x));
+// the version a team lightbox shows: the one picked in its history (S.lightbox.ver), else the card's own
+function lbShown(card) {
+  const v = S.lightbox?.ver;
+  return (v && card && stackOf(stackRoot(card)).find((x) => x.id === v)) || card;
+}
+function verStrip(hist, o, face) {
+  return `<div class="vs-pick lb-vers"><span>Versões</span>${hist.map((x, k) => `<button class="vs-th ${x.id === o.id ? "on" : ""}" data-act="lb-ver" data-v="${x.id}" title="Versão ${k + 1}${k === 0 ? " · original" : ""}${x.id === face.id ? " · a do card" : ""}${x.model ? ` · ${esc(x.model.replace(" · estúdio", ""))}` : ""}">${media(x, "thumb")}<i>${k + 1}</i>${x.id === face.id ? '<i class="c now">atual</i>' : ""}</button>`).join("")}</div>`;
+}
+function stepVer(d) {
+  const card = S.lightbox?.id ? optsOf(S.lightbox.id)[S.lightbox.i] : null;
+  if (!card || S.lbx) return;
+  const hist = verList(stackRoot(card)), k = hist.indexOf(lbShown(card)), next = hist[k + d];
+  if (hist.length < 2 || !next) return;
+  S.lightbox.ver = next.id;
+  render(true);
+}
+// ---------- Ajustar in the ver grande (sem IA): the image moved, turned, flipped or scaled in its own frame, then kept as
+// a new version of its card (Estudio.saveAdjusted renders it at full size). It always covers the frame: a turn zooms in as
+// much as it needs and a pan stops at the edge. S.lbx = {id, W, H, t} while it is on ----------
+const lbxBox = (o) => `<div class="lb-xfbox" style="--ar:${S.lbx.W / S.lbx.H}">${media(o, "big").replace("<img ", `<img style="transform:${Estudio.xfCss(S.lbx.t)}" `)}</div>`;
+const turnTo = (r) => Math.round(((((r + 180) % 360) + 360) % 360 - 180) * 10) / 10;
+const lbxChanged = (t) => t.s !== 1 || t.r !== 0 || t.fx || t.fy || t.x !== 0 || t.y !== 0;
+function lbxBar() {
+  const t = S.lbx.t, I = Estudio.ICONS;
+  const b = (v, icon, n) => `<button class="hud ${(v === "fx" && t.fx) || (v === "fy" && t.fy) ? "on" : ""}" data-act="lbx-op" data-v="${v}" title="${n}" aria-label="${n.replace(/ \(.*\)$/, "")}">${icon}</button>`;
+  return `<div class="lb-adj" role="toolbar" aria-label="Ajustar">
+    <span class="lb-hud-g">${b("out", I.minus, "Afastar (⇧ 1%)")}<button class="hud lbx-v" data-act="lbx-op" data-v="s1" data-lbxv="s" title="Voltar a 100%">${Math.round(t.s * 100)}%</button>${b("in", I.plus, "Aproximar (⇧ 1%)")}</span>
+    <span class="lb-hud-g">${b("l", I.rotl, "Girar 1° pra esquerda (⇧ 90°)")}<button class="hud lbx-v" data-act="lbx-op" data-v="r0" data-lbxv="r" title="Voltar a 0°">${String(t.r).replace(".", ",")}°</button>${b("r", I.rotr, "Girar 1° pra direita (⇧ 90°)")}</span>
+    <span class="lb-hud-g">${b("fx", I.flipx, "Espelhar na horizontal")}${b("fy", I.flipy, "Espelhar na vertical")}${b("reset", I.reset, "Voltar ao original")}</span>
+    <span class="lb-hud-g"><button class="hud lbx-x" data-act="lbx" title="Sair sem salvar (Esc)">Cancelar</button><button class="hud lbx-save" data-act="lbx-save" ${lbxChanged(t) && !S.lbx.busy ? "" : "disabled"} title="Salvar como versão nova do card, sem IA">${S.lbx.busy ? "Salvando…" : "Salvar versão"}</button></span>
+  </div>`;
+}
+// the picture follows the transform without redrawing the page; the bar says where it is
+function lbxSet(next) {
+  const x = S.lbx;
+  if (!x || x.busy) return;
+  x.t = Estudio.xfCover({ ...x.t, ...next }, x.W, x.H);
+  const box = $app.querySelector(".lb-xfbox");
+  if (!box) return;
+  box.querySelector("img").style.transform = Estudio.xfCss(x.t);
+  const say = (k, s) => { const el = $app.querySelector(`[data-lbxv="${k}"]`); if (el) el.textContent = s; };
+  say("s", `${Math.round(x.t.s * 100)}%`);
+  say("r", `${String(x.t.r).replace(".", ",")}°`);
+  $app.querySelector('[data-act="lbx-op"][data-v="fx"]')?.classList.toggle("on", !!x.t.fx);
+  $app.querySelector('[data-act="lbx-op"][data-v="fy"]')?.classList.toggle("on", !!x.t.fy);
+  const sv = $app.querySelector('[data-act="lbx-save"]');
+  if (sv) sv.disabled = !lbxChanged(x.t);
+}
+function lbxOp(k, shift) {
+  const t = S.lbx?.t;
+  if (!t) return;
+  const step = shift ? 1.01 : 1.05, turn = shift ? 90 : 1;
+  if (k === "in") lbxSet({ s: t.s * step });
+  else if (k === "out") lbxSet({ s: t.s / step });
+  else if (k === "s1") lbxSet({ s: 1 });
+  else if (k === "l") lbxSet({ r: turnTo(t.r - turn) });
+  else if (k === "r") lbxSet({ r: turnTo(t.r + turn) });
+  else if (k === "r0") lbxSet({ r: 0 });
+  else if (k === "fx") lbxSet({ fx: !t.fx });
+  else if (k === "fy") lbxSet({ fy: !t.fy });
+  else if (k === "reset") { S.lbx.t = { ...Estudio.XF0 }; lbxSet({}); }
 }
 function lightbox() {
   if (S.lightbox.wipe) return wipeView();
@@ -2388,16 +2679,22 @@ function pedidoSec(it, o, vs) {
       ${open ? `<div class="ret-said">${said.map((c) => `<div class="msg cliente"><p class="meta"><b>${esc(c.author)}</b> · ${fmtTime(c.created_at)}</p><p class="body">${esc(c.body)}</p></div>`).join("")}${extra.map((l) => `<div class="msg cliente"><p class="meta"><b>Fora da sala</b></p><p class="body">${esc(l)}</p></div>`).join("")}</div>` : ""}` : ""}
   </div>`;
 }
-function teamLightbox(it, opts, o, i) {
+function teamLightbox(it, opts, card, i) {
+  // the version picked in the image's history (the strip under it, ↑ ↓) is what shows and what the actions act on; the
+  // card's own place (letter, position on the page) stays the card's
+  const o = lbShown(card), root = stackRoot(card), hist = verList(root), vi = hist.indexOf(o), face = faceOf(root);
   const wk = wkOpts(it.id);
-  const lab = dropped(o) ? "descartada" : offWK(o) ? `fora ${DA_CL}` : it.mode === "set" ? `${wk.indexOf(o) + 1} de ${wk.length}` : `Opção ${letterOf(it, o)} de ${wk.length}`;
+  const lab = dropped(card) ? "descartada" : offWK(card) ? `fora ${DA_CL}` : it.mode === "set" ? `${wk.indexOf(card) + 1} de ${wk.length}` : `Opção ${letterOf(it, card)} de ${wk.length}`;
   const pos = S.lightbox.ov ? S.ovList.findIndex((x) => x.id === it.id && x.i === i) : -1;
-  const many = S.lightbox.ov ? S.ovList.length > 1 : opts.length > 1;
-  const can = vsCan(o) || /^(ref|kit|path):/.test(S.lightbox.vsWith || "");
+  const adj = !!S.lbx && S.lbx.id === o.id;
+  const many = !adj && (S.lightbox.ov ? S.ovList.length > 1 : opts.length > 1);
+  const can = !adj && (vsCan(o) || /^(ref|kit|path):/.test(S.lightbox.vsWith || ""));
   const vs = can && S.lightbox.vs ? vsAgainst(it, o) : null;
   const L = letterOf(it, o);
   const vers = roundVers(it.round_id).length > 1 ? ` · v${verOf(o)}` : "";
-  const frame = vs?.duo
+  const frame = adj
+    ? `<div class="lb-frame adj">${lbxBox(o)}${lbxBar()}</div>`
+    : vs?.duo
     ? `<div class="lb-frame duo"><div><figure class="duo-fig">${media(o, "big")}<span class="duo-lab">Esta imagem${L ? ` · ${L}` : ""}</span></figure>${lbHud(it, o, { del: true })}</div><div><figure class="duo-fig">${vs.html}<span class="duo-lab">${esc(vs.lab)}</span></figure></div></div>`
     : vs
     ? `<div class="lb-frame wipe" data-wipe title="Passe o mouse (ou arraste) para mover a linha">
@@ -2405,16 +2702,20 @@ function teamLightbox(it, opts, o, i) {
         <i class="wipe-line" aria-hidden="true"></i><span class="wipe-lab l">${esc(vs.lab)}</span><span class="wipe-lab r">Agora · v${verOf(o)}${L ? ` · ${L}` : ""}</span>
         ${lbHud(it, o, { del: true })}</div>`
     : `<div class="lb-frame">${media(o, "big")}${lbHud(it, o, { del: true })}</div>`;
-  const tools = can ? lbTools().replace('<span class="lb-tools">', `<span class="lb-tools"><button class="lb-info ${vs ? "on" : ""}" data-act="vs-toggle" aria-pressed="${!!vs}" title="${vs ? "Sair da comparação" : "Comparar com a versão anterior"} (C)" aria-label="Comparar com a versão anterior">${ICON.vs}</button>`) : lbTools();
+  // top right: make the version shown the card's, Ajustar (sem IA), compare, info, close
+  const more = `${hist.length > 1 && o.id !== face.id && !adj ? `<button class="btn small" data-act="vpick" data-id="${root.id}" data-v="${o.id}" title="O card passa a mostrar esta versão">Tornar atual</button>` : ""}`
+    + `${o.mime.startsWith("video/") ? "" : `<button class="lb-info ${adj ? "on" : ""}" data-act="lbx" aria-pressed="${adj}" title="${adj ? "Sair do ajuste sem salvar (Esc)" : "Ajustar sem IA: espelhar, girar ou mudar a escala, e salvar como versão nova"}" aria-label="Ajustar">${Estudio.ICONS.crop}</button>`}`
+    + `${can ? `<button class="lb-info ${vs ? "on" : ""}" data-act="vs-toggle" aria-pressed="${!!vs}" title="${vs ? "Sair da comparação" : "Comparar com a versão anterior"} (C)" aria-label="Comparar com a versão anterior">${ICON.vs}</button>` : ""}`;
+  const tools = lbTools().replace('<span class="lb-tools">', `<span class="lb-tools">${more}`);
   return `<div class="lb lb-team" data-act="lb-bg" role="dialog" aria-modal="true" aria-label="${esc(it.title)}">
-    <div class="lb-top"><span><b>${esc(it.title)}</b> · ${lab}${vers}${o.created_by ? ` · por ${esc(o.created_by)}` : ""}${pos >= 0 ? ` · ${pos + 1} de ${S.ovList.length} nesta página` : ""}</span>${tools}</div>
+    <div class="lb-top"><span><b>${esc(it.title)}</b> · ${lab}${vers}${hist.length > 1 ? ` · versão ${vi + 1}/${hist.length}${o.id === face.id ? " (atual)" : ""}` : ""}${o.created_by ? ` · por ${esc(o.created_by)}` : ""}${pos >= 0 ? ` · ${pos + 1} de ${S.ovList.length} nesta página` : ""}</span>${tools}</div>
     <div class="lb-split ${S.infoOff ? "info-off" : ""}">
       <div class="lb-left">
         <div class="lb-stage">
           ${many ? `<button class="lb-nav prev" data-act="lb-step" data-v="-1" aria-label="Anterior">‹</button><button class="lb-nav next" data-act="lb-step" data-v="1" aria-label="Próxima">›</button>` : ""}
           ${frame}
         </div>
-        ${vs && !vs.duo ? vsPicker(it, o, vs) : ""}
+        ${vs && !vs.duo ? vsPicker(it, o, vs) : !adj && hist.length > 1 ? verStrip(hist, o, face) : ""}
       </div>
       ${infoPanel(it, o, { note: refsSec(it, o, vs) + pedidoSec(it, o, vs) })}
     </div>
@@ -2575,7 +2876,9 @@ const ACTS = {
       await refresh();
     }, `v${v} aberta`);
   },
-  more(el) { S.more = S.more === el.dataset.id ? null : el.dataset.id; render(true); },
+  more(el) { S.more = S.more === el.dataset.id ? null : el.dataset.id; S.moreUp = false; render(true); fitMore(); },
+  // the ▶ on a card's video (touch screens): plays it in place, or stops it
+  vplay(el) { const v = el.parentElement?.querySelector("video:not([controls])"); if (v) (vOn === v ? vStop(v) : vPlay(v)); },
   // the folded part at the end of a page of cards (what stays out, what was not answered), open or not per page
   "task-new"(el, e) { e?.preventDefault(); S.modal = { task: { who: el.dataset.who || "", item: el.dataset.item || "" } }; render(true); $app.querySelector('[data-form="task-new"] textarea')?.focus(); },
   rest() { S.rest = { ...S.rest, [S.page.kind]: !S.rest?.[S.page.kind] }; render(true); },
@@ -2623,7 +2926,33 @@ const ACTS = {
   undo(el) { const it = itemOf(el.dataset.id); decide(it.id, it.chosen_option, "pending"); },
   reopen(el) { decide(el.dataset.id, null, "pending", `Reaberto para ${A_CL}`); },
   zoom(el) { S.lightbox = { id: el.dataset.id, i: +el.dataset.i }; render(true); },
-  "lb-close"() { S.lightbox = S.lightbox?.back || null; if (!S.lightbox) S.infoOff = true; render(true); },
+  "lb-close"() { S.lbx = null; S.lightbox = S.lightbox?.back || null; if (!S.lightbox) S.infoOff = true; render(true); },
+  // the ver grande's history: a version picked in the strip shows (the card keeps its own until Tornar atual)
+  "lb-ver"(el) { if (!S.lightbox) return; S.lightbox.ver = el.dataset.v; S.lbx = null; render(true); },
+  // Ajustar (sem IA): on and off, its buttons, and Salvar versão
+  lbx() {
+    if (S.lbx) { S.lbx = null; return render(true); }
+    const o = lbOption();
+    if (!o || o.mime.startsWith("video/")) return;
+    const img = $app.querySelector(".lb-frame img");
+    S.lightbox.vs = false;
+    S.lbx = { id: o.id, W: img?.naturalWidth || 16, H: img?.naturalHeight || 9, t: { ...Estudio.XF0 } };
+    render(true);
+  },
+  "lbx-op"(el, e) { lbxOp(el.dataset.v, e.shiftKey); },
+  async "lbx-save"() {
+    const x = S.lbx, o = x && optById(x.id);
+    if (!o || x.busy || !lbxChanged(x.t)) return;
+    x.busy = true;
+    render(true);
+    await run(async () => {
+      const n = await Estudio.saveAdjusted(estCtx(), o, x.t);
+      if (S.lbx === x) S.lbx = null;
+      if (S.lightbox) S.lightbox.ver = n.id;
+      render(true);
+    }, "✦ Versão nova, sem IA: agora é a do card");
+    if (S.lbx === x) { x.busy = false; render(true); }
+  },
   compare(el) { S.lightbox = { cmp: el.dataset.id, r: 0, i: 0 }; render(true); },
   "cmp-ref"(el) { S.lightbox.r = +el.dataset.v; render(true); },
   "cmp-opt"(el) { S.lightbox.i = +el.dataset.v; render(true); },
@@ -2686,9 +3015,9 @@ const ACTS = {
   peek(el) { S.peek.add(el.dataset.id); render(true); },
   "ov-open"(el) { S.lightbox = { id: el.dataset.id, i: +el.dataset.i, ov: true }; render(true); },
   "ov-cycle"(el) {
-    const opts = shownOpts(el.dataset.id);
-    const k = Math.max(0, opts.findIndex((o) => o.id === S.ovSel[el.dataset.id]));
-    S.ovSel[el.dataset.id] = opts[(k + +el.dataset.v + opts.length) % opts.length].id;
+    const it = itemOf(el.dataset.id), opts = shownOpts(el.dataset.id);
+    if (!it || !opts.length) return;
+    pickSel(it.id, opts[(shownAt(it, opts) + +el.dataset.v + opts.length) % opts.length]);
     render(true);
   },
   "lb-compare"(el) { S.lightbox = { cmp: el.dataset.id, r: 0, i: S.lightbox.i, back: S.lightbox }; render(true); },
@@ -2730,6 +3059,48 @@ const ACTS = {
   estudio(el) { Estudio.openStudio(estCtx(), { optionId: el.dataset.id }); },
   "estudio-criar"(el) { Estudio.openCreate(estCtx(), { roundId: el.dataset.round, scene: +el.dataset.scene, itemId: el.dataset.item }); },
   "add-item"(el) { S.modal = { add: el.dataset.scene !== undefined ? +el.dataset.scene : S.page.kind === "scene" ? S.page.scene : 0 }; render(true); $app.querySelector('[data-form="add-item"] [name="label"]')?.focus(); },
+  motion(el) { openMotion(el.dataset.id, el.dataset.o || null); },
+  // Virar card novo (one click): the image on the card becomes a card of
+  // its own right after it, in its scene, named after it (· 2, · 3…), with the image's caption (else the card's briefing).
+  // The page stays (the card's own page goes back to its scene), the new card lights up with its title selected to rename
+  // by typing, and the toast can undo it (the image goes back, to its stack too; the new card goes if it is still empty)
+  async split(el) {
+    const o = optById(el.dataset.id), it = o && itemOf(o.item_id);
+    if (!it) return;
+    if (it.chosen_option === o.id) return toast(`${cap(A_CL)} escolheu esta imagem neste card: ela fica aqui.`, true);
+    S.more = null;
+    const root = o.stack ? optById(o.stack) : null, wasFace = !!root && root.face === o.id;
+    const moved = root ? [o.id] : [o.id, ...S.options.filter((x) => x.stack === o.id).map((x) => x.id)];
+    const scene = itemsOf(it.round_id).filter((x) => x.scene === it.scene);
+    const after = scene.filter((x) => x.sort > it.sort).map((x) => [x.id, x.sort]);
+    const re = new RegExp(`^${it.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} · (\\d+)$`);
+    const title = `${it.title} · ${Math.max(1, ...scene.map((x) => +(re.exec(x.title)?.[1] || 0))) + 1}`.slice(0, 120);
+    const sorts = (list, d) => Promise.all(list.map(([x, s]) => sb.from("items").update({ sort: s + d }).eq("id", x))).then((res) => { const bad = res.find((r) => r.error); if (bad) throw bad.error; });
+    let id = null;
+    await run(async () => {
+      await sorts(after, 1);
+      const { data, error } = await sb.from("items").insert({ round_id: it.round_id, scene: it.scene, kind: it.kind, title, brief: (o.caption || it.brief || "").slice(0, 400), assignee: it.assignee || (PEOPLE[S.me] ? S.me : null), sort: it.sort + 1 }).select("id").single();
+      if (error) throw error;
+      id = data.id;
+      await splitTo(o.id, id);
+      await load(true);
+    });
+    if (!id) return;
+    const back = () => run(async () => {
+      let { error } = await sb.from("options").update({ item_id: it.id }).in("id", moved);
+      if (!error && root) ({ error } = await sb.from("options").update({ stack: root.id }).eq("id", o.id));
+      if (!error && wasFace) ({ error } = await sb.from("options").update({ face: o.id }).eq("id", root.id));
+      if (error) throw error;
+      const { count } = await sb.from("options").select("id", { count: "exact", head: true }).eq("item_id", id);
+      if (!count) ({ error } = await sb.from("items").delete().eq("id", id));
+      if (error) throw error;
+      await sorts(after, 0);
+      await load(true);
+      goLand(location.hash, it.id);
+    }, "A imagem voltou pro card");
+    goLand(S.page.item === it.id ? sceneHref(it.round_id, it.scene) : location.hash, id, true);
+    toast(`Virou card novo: ${title}`, false, { label: "Desfazer", fn: back });
+  },
   async "item-del"(el) {
     const it = itemOf(el.dataset.id);
     if (!confirm(`Excluir “${it.title}” e todas as opções dele?`)) return;
@@ -2792,7 +3163,7 @@ const ACTS = {
   },
   // a new version against the old one, in the lightbox
   "vs-open"(el) { S.lightbox = { id: el.dataset.id, i: +el.dataset.i || 0, vs: true }; render(true); },
-  "vs-toggle"() { if (S.lightbox) { S.lightbox.vs = !S.lightbox.vs; render(true); } },
+  "vs-toggle"() { if (S.lightbox) { S.lightbox.vs = !S.lightbox.vs; S.lbx = null; render(true); } },
   "vs-with"(el) { S.lightbox.vs = true; S.lightbox.vsWith = el.dataset.v; render(true); },
   "lb-go"(el) { S.lightbox = null; location.hash = el.getAttribute("href"); },
   // retorno
@@ -2824,7 +3195,9 @@ const ACTS = {
   },
 };
 function step(d) {
-  if (!S.lightbox) return;
+  if (!S.lightbox || S.lbx) return;
+  // another card shows its own version (the one on it)
+  S.lightbox.ver = null;
   if (S.lightbox.wipe) return ACTS["wipe-step"]({ dataset: { id: S.lightbox.wipe, v: d } });
   if (S.lightbox.pair) {
     const n = pairList(itemOf(S.lightbox.pair)).length;
@@ -2845,7 +3218,7 @@ function step(d) {
     const k = S.ovList.findIndex((x) => x.id === S.lightbox.id && x.i === S.lightbox.i);
     const next = S.ovList[(k + d + S.ovList.length) % S.ovList.length];
     Object.assign(S.lightbox, next);
-    S.ovSel[next.id] = optsOf(next.id)[next.i]?.id;
+    pickSel(next.id, optsOf(next.id)[next.i]);
     return render(true);
   }
   const n = S.lightbox.req ? filesShown(S.lightbox.req).length : optsOf(S.lightbox.id).length;
@@ -2883,7 +3256,46 @@ document.addEventListener("click", (e) => {
   const fn = ACTS[el.dataset.act];
   if (fn) { if (el.tagName === "A") e.preventDefault(); fn(el, e); }
 });
-window.addEventListener("hashchange", onRoute);
+// Cena 3D keeps the page it was opened from and how far down that page was: its ✕, Esc and Renderizar go back there
+window.addEventListener("hashchange", (e) => {
+  const had = !!$app.querySelector("[data-c3d]"), top = $app.querySelector('[data-keep="main"]')?.scrollTop || 0;
+  onRoute();
+  if (!had && $app.querySelector("[data-c3d]")) S.back3d = { hash: new URL(e.oldURL).hash, top };
+  if (S.landing) land();
+});
+// out of Cena 3D: back to the page it was opened from, as far down as it was (else to the shot's card that opened it, or
+// the location's own versions); lit: the card a render went to comes into view, lit for a moment, its progress on it
+function leave3d(itemId = null, lit = false) {
+  const b = S.back3d, it = itemId ? itemOf(itemId) : null, loc = S.page.item ? itemOf(S.page.item) : null;
+  S.back3d = null;
+  const to = b?.hash || (it ? sceneHref(it.round_id, it.scene, it.id) : loc ? `${sceneHref(loc.round_id, loc.scene, loc.id)}/versoes` : "#/");
+  S.landing = { top: b?.hash === to ? b.top : 0, item: lit ? itemId : null };
+  if (location.hash === to) { onRoute(); land(); } else location.hash = to;
+}
+function land() {
+  const { top, item, focus } = S.landing;
+  S.landing = null;
+  const main = $app.querySelector('[data-keep="main"]');
+  if (main && top) main.scrollTop = top;
+  const el = item && document.getElementById(`item-${item}`);
+  if (!el) return;
+  el.scrollIntoView({ block: "nearest" });
+  S.flash = item;
+  el.classList.add("flash");
+  setTimeout(() => { S.flash = null; document.getElementById(`item-${item}`)?.classList.remove("flash"); }, 1600);
+  if (focus) { const t = el.querySelector("input.inline.title"); t?.focus({ preventScroll: true }); t?.select(); }
+}
+// to a page (the one already open keeps its scroll) with a card in view, lit for a moment; focus: its title selected,
+// to rename it by typing
+function goLand(to, item, focus = false) {
+  S.landing = { top: location.hash === to ? $app.querySelector('[data-keep="main"]')?.scrollTop || 0 : 0, item, focus };
+  if (location.hash === to) { onRoute(); land(); } else location.hash = to;
+}
+// a card's progress line follows the studio's jobs: the room draws again when one starts, moves on or lands
+const onMaking = () => {
+  const k = Estudio.making().map((j) => `${j.id}:${j.status}`).join();
+  if (k !== S.makingKey) { S.makingKey = k; render(); }
+};
 
 document.addEventListener("input", (e) => {
   if (e.target.matches?.("input, textarea")) e.target.dataset.dirty = "1";
@@ -2941,10 +3353,13 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && t.matches?.("input.inline, textarea.brief, textarea.ret-basenote, textarea.btask-text, input.cap-in, input.lb-capin, input.rv-note, input.note")) { e.preventDefault(); t.blur(); return; }
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && t.matches?.(".compose textarea")) { t.form.requestSubmit(); return; }
   if (S.lightbox) {
-    if (e.key === "Escape") ACTS["lb-close"]();
-    if (typing) return;  // arrows and letters belong to the field being edited
+    // Esc leaves Ajustar first (without saving), then the lightbox; while adjusting, no other key acts
+    if (e.key === "Escape") { if (S.lbx) { S.lbx = null; return render(true); } return ACTS["lb-close"](); }
+    if (typing || S.lbx) return;  // arrows and letters belong to the field being edited
     if (e.key === "ArrowRight") step(1);
     if (e.key === "ArrowLeft") step(-1);
+    // ↑ ↓: the image's history (older, newer)
+    if (TEAM && S.lightbox.id && (e.key === "ArrowUp" || e.key === "ArrowDown")) { e.preventDefault(); stepVer(e.key === "ArrowDown" ? 1 : -1); }
     if (TEAM && e.key.toLowerCase() === "i" && !e.metaKey && !e.ctrlKey && (S.lightbox.id || S.lightbox.wipe)) toggleInfo();
     if (TEAM && e.key.toLowerCase() === "c" && !e.metaKey && !e.ctrlKey && S.lightbox.id && vsCan(lbOption())) return ACTS["vs-toggle"]();
     const v = { m: "keep", r: "redo", d: "drop" }[e.key.toLowerCase()];
@@ -2975,6 +3390,30 @@ document.addEventListener("pointermove", (e) => {
   const r = w.getBoundingClientRect();
   w.style.setProperty("--x", `${Math.max(0, Math.min(100, ((e.clientX - r.left) / r.width) * 100))}%`);
 });
+// Ajustar in the ver grande: dragging the picture moves it, the wheel (or a pinch) zooms about the pointer, ⌥ + wheel turns
+let lbxDrag = null;
+document.addEventListener("pointerdown", (e) => {
+  const box = e.target.closest?.(".lb-xfbox");
+  if (!box || !S.lbx) return;
+  e.preventDefault();
+  lbxDrag = { x: e.clientX, y: e.clientY, t: { ...S.lbx.t }, w: box.clientWidth, h: box.clientHeight };
+  box.setPointerCapture?.(e.pointerId);
+});
+document.addEventListener("pointermove", (e) => {
+  const d = lbxDrag;
+  if (d && S.lbx) lbxSet({ x: d.t.x + (e.clientX - d.x) / d.w, y: d.t.y + (e.clientY - d.y) / d.h });
+});
+document.addEventListener("pointerup", () => { lbxDrag = null; });
+document.addEventListener("pointercancel", () => { lbxDrag = null; });
+document.addEventListener("wheel", (e) => {
+  const box = e.target.closest?.(".lb-xfbox"), t = S.lbx?.t;
+  if (!box || !t) return;
+  e.preventDefault();
+  if (e.altKey) return lbxSet({ r: turnTo(t.r + (e.deltaY > 0 ? 0.5 : -0.5)) });
+  const r = box.getBoundingClientRect(), W = r.width, H = r.height, qx = e.clientX - r.left - W / 2, qy = e.clientY - r.top - H / 2;
+  const s = Math.max(0.25, Math.min(4, t.s * Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)))), k = s / t.s;
+  lbxSet({ s, x: (qx - k * (qx - t.x * W)) / W, y: (qy - k * (qy - t.y * H)) / H });
+}, { passive: false });
 
 document.addEventListener("submit", async (e) => {
   const f = e.target;
@@ -3004,8 +3443,8 @@ document.addEventListener("submit", async (e) => {
       clearForm(f);
       S.modal = null;
       await load(true);
-      location.hash = sceneHref(r.id, scene, data.id);
-      onRoute();
+      // the new card shows among its scene's cards, lit for a moment (not on an empty page of its own)
+      goLand(sceneHref(r.id, scene), data.id);
     }, "Item criado");
     return;
   }
@@ -3241,7 +3680,7 @@ document.addEventListener("paste", (e) => {
 // ---------- boot ----------
 // a tab opened before a deploy keeps running the old code: when the published app changes, offer a reload. The studio
 // and Cena 3D ship on their own too, so their files count.
-const CODE = ["./app.js", "./estudio.js", "./style.css", "./cena3d/cena3d.js"].map((f) => new URL(f, import.meta.url).href);
+const CODE = ["./app.js", "./estudio.js", "./style.css", "./cena3d/cena3d.js", "./galeria.js"].map((f) => new URL(f, import.meta.url).href);
 let codeTag = null;
 async function checkVersion() {
   try {
@@ -3318,7 +3757,7 @@ async function boot() {
   if (!S.me || (TEAM && !PEOPLE[S.me])) S.modal = "name";
   onRoute();
   // generations that finished (or are still running) while no tab was open go into their items now
-  if (TEAM && AI) Estudio.resume(estCtx()).catch((e) => console.error(e));
+  if (TEAM && AI) { Estudio.onJobs(onMaking); Estudio.resume(estCtx()).catch((e) => console.error(e)); }
   if (!polling) {
     polling = true;
     setInterval(poll, 15000);

@@ -115,6 +115,10 @@ img:not([src]) { visibility: hidden; }
 .seg-ico .btn.hico.on { border-color: var(--accent-edge); color: var(--accent); background: var(--accent-soft); }
 .fbar-bare { position: relative; display: inline-flex; }
 .fbar-bare .filt-pop { right: 0; }
+/* Filtros as an icon in the page head (with the overview's view icons); its chips sit over the cards */
+.fbar-head { align-items: center; gap: 10px; }
+.fbar-head .filt-pop { text-align: left; }
+@media (max-width: 860px) { .fbar-head { position: static; } .fbar-head .filt-pop { position: fixed; top: 72px; left: 16px; right: 16px; width: auto; } }
 .mh-right .btn.hico .dot.warn { position: absolute; top: 6px; right: 6px; width: 7px; height: 7px; margin: 0; }
 .mh-right .btn.hico { position: relative; }
 .dl { position: relative; display: inline-flex; }
@@ -378,6 +382,10 @@ textarea.field { height: auto; padding: 10px 12px; resize: none; }
 .sheet h2 { font-family: var(--head); font-size: 24px; font-weight: 700; letter-spacing: -0.01em; }
 .sheet form { display: flex; flex-direction: column; gap: 10px; }
 .sheet .row { display: flex; gap: 10px; align-items: center; }
+/* Motion (config.js MOTION): the job's motion piece over the whole room, opened from a card */
+.motion-ov { position: fixed; inset: 0; z-index: 95; background: #060907; }
+.motion-ov iframe { display: block; width: 100%; height: 100%; border: 0; }
+/* Virar card novo: the image that leaves its card, on top of the new-card form */
 .sheet .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .sheet .sel { height: 40px; width: 100%; border-radius: var(--r-sm); }
 .sheet .people3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -890,14 +898,32 @@ button.hcard-ask:hover { text-decoration: underline; text-underline-offset: 2px;
 .sitem.over .hero-empty { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .csh-tile.chosen .hero-lab { background: var(--accent); color: var(--ink); }
 .csh-tile.chosen .hero-lab small { color: var(--ink); }
-.more-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 12; width: 340px; display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; border: 1px solid var(--line2); border-radius: 12px; background: var(--raise); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5); }
-.mp-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
-.mp-row > span:first-child { width: 58px; flex: none; color: var(--dim); font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
-.mp-row .sel { flex: 1; }
+/* the card's ⋯, a short context menu: action rows with an icon, the card's settings in compact rows between thin
+   lines; .up opens it above its button when the window ends first (fitMore) */
+.more-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 12; width: 252px; display: flex; flex-direction: column; gap: 1px; padding: 5px; border: 1px solid var(--line2); border-radius: 10px; background: var(--raise); box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5); font-size: 13px; }
+.more-pop.up { top: auto; bottom: calc(100% + 6px); }
+.mp-act { display: flex; align-items: center; gap: 9px; width: 100%; height: 30px; padding: 0 9px; border: 0; border-radius: 6px; background: none; color: var(--text); font: inherit; text-align: left; white-space: nowrap; cursor: pointer; }
+.mp-act svg { width: 14px; height: 14px; flex: none; color: var(--muted); }
+.mp-act:hover { background: rgba(255, 255, 255, 0.07); }
+.mp-act.danger { color: var(--muted); }
+.mp-act.danger:hover, .mp-act.danger:hover svg { color: var(--amber); }
+.mp-sep { height: 1px; margin: 4px; border: 0; background: var(--line); }
+.mp-row { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 4px 0 9px; font-size: 12px; }
+.mp-row > span:first-child { width: 44px; flex: none; color: var(--dim); font-size: 12px; }
+.more-pop .sel.mini { flex: 1; min-width: 0; color: var(--text); }
+.mp-row .seg button { height: 22px; padding: 0 8px; font-size: 11px; }
+.mp-row .vis { height: 24px; padding: 0 9px; font-size: 11px; }
 .mp-row .vars { display: inline-flex; gap: 10px; }
-.mp-foot { justify-content: space-between; padding-top: 10px; border-top: 1px solid var(--line); }
-.mp-foot .danger:hover { color: var(--amber); }
-@media (max-width: 860px) { .more-pop { width: min(340px, calc(100vw - 32px)); } }
+@media (max-width: 860px) { .more-pop { width: min(252px, calc(100vw - 32px)); } }
+/* a card's video plays under the mouse (app.js vPlay); on a touch screen its small ▶ plays and stops it in place */
+.vplay { display: none; }
+@media (hover: none) {
+  .hero-img, .ctile-img { position: relative; }
+  .vplay { position: absolute; left: 50%; top: 50%; z-index: 1; width: 34px; height: 34px; margin: -17px 0 0 -17px; display: grid; place-items: center; border-radius: 50%; background: rgba(5, 7, 6, 0.72); color: var(--text); }
+  .vplay svg { width: 13px; height: 13px; margin-left: 2px; }
+  .vplaying .vplay { opacity: 0.5; }
+}
+.vplaying .gal-play { opacity: 0; }
 
 /* sidebar: scenes nest under Visão geral (client: Apresentação), on a thin guide line; the chevron folds them */
 .nav-parent { position: relative; }
@@ -1235,6 +1261,22 @@ textarea.ret-notes { display: block; height: auto; min-height: 80px; margin-top:
 .hud.redo.on { background: var(--amber); color: #0e0b09; }
 .hud.drop.on { background: #c8322b; color: #fff; }
 .hud.danger:hover { color: #ff7a6b; }
+/* the ver grande's history: the image's versions under it ("atual" = the card's), and Ajustar sem IA over it. While
+   adjusting, the picture sits in a box of its own shape that clips it, and the bar stays on */
+.lb-vers .vs-th i.now { left: auto; right: 3px; }
+.lb-tools .btn.small { white-space: nowrap; }
+.lb-frame.adj { display: grid; place-items: center; }
+.lb-xfbox { position: absolute; inset: 0; margin: auto; width: min(100cqw, 100cqh * 16 / 9, min(100cqw * 9 / 16, 100cqh) * var(--ar)); aspect-ratio: var(--ar); overflow: hidden; border-radius: 6px; cursor: grab; touch-action: none; }
+.lb-xfbox:active { cursor: grabbing; }
+.lb-stage .lb-xfbox > img { width: 100%; height: 100%; max-width: none; max-height: none; object-fit: fill; border-radius: 0; transform-origin: 50% 50%; pointer-events: none; user-select: none; }
+.lb-adj { position: absolute; left: 50%; bottom: 14px; z-index: 2; display: flex; gap: 10px; padding: 6px; transform: translateX(-50%); border-radius: 999px; background: rgba(14, 11, 9, 0.8); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); white-space: nowrap; }
+.lb-adj .hud.on { color: var(--accent); }
+.lb-adj .lbx-v { width: auto; min-width: 46px; padding: 0 6px; border-radius: 999px; font: 600 12px var(--sans); font-variant-numeric: tabular-nums; }
+.lb-adj .lbx-x, .lb-adj .lbx-save { width: auto; padding: 0 14px; border-radius: 999px; font: 600 13px var(--sans); }
+.lb-adj .lbx-save { background: var(--accent); color: #0e0b09; }
+.lb-adj .lbx-save:hover { background: var(--accent); filter: brightness(1.08); }
+.lb-adj .lbx-save:disabled { opacity: 0.4; cursor: default; filter: none; }
+@media (max-width: 860px) { .lb-adj { gap: 4px; padding: 4px; } .lb-adj .hud { width: 32px; height: 32px; } }
 /* the team's verdict next to its label in the info panel: one small pill, icon and word on one line */
 .rv-head { display: flex; align-items: center; gap: 8px; }
 .rv-tag { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 8px 0 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1; letter-spacing: 0; text-transform: none; }
@@ -1270,6 +1312,10 @@ textarea.ret-notes { display: block; height: auto; min-height: 80px; margin-top:
 .sitem-foot { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 3; padding: 0; gap: 8px; pointer-events: none; opacity: 0; transition: opacity 0.15s; }
 .sitem-pill { height: 36px; display: flex; align-items: center; border-radius: 10px; background: rgba(5, 7, 6, 0.78); backdrop-filter: blur(6px); pointer-events: none; }
 .sitem-title { position: absolute; top: 10px; left: 10px; z-index: 3; max-width: calc(100% - 20px); gap: 8px; padding: 0 12px 0 11px; pointer-events: auto; }
+/* what the studio is still making for the card (a render from Cena 3D, an edit…), pulsing on its title until it lands */
+.sitem-title .pos.mk { flex: none; color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap; animation: mk-pulse 1.4s ease-in-out infinite; }
+@keyframes mk-pulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .sitem-title .pos.mk { animation: none; } }
 .sitem-tools.sitem-pill { position: relative; margin-left: auto; padding: 0 4px; }
 .sitem-tools .ibtn { color: var(--text); }
 .sitem-tools .ibtn:hover, .sitem-tools .ibtn.on { background: rgba(255, 255, 255, 0.12); }
@@ -1289,7 +1335,7 @@ textarea.ret-notes { display: block; height: auto; min-height: 80px; margin-top:
 .hero-talk { height: 26px; padding: 0 8px; display: inline-flex; align-items: center; gap: 4px; border-radius: 7px; background: rgba(5, 7, 6, 0.72); color: var(--text); font-size: 12px; font-weight: 600; }
 .hero-talk svg { width: 13px; height: 13px; }
 .lb-meta { color: var(--muted); font-size: 12px; }
-.mp-brief { flex: 1; min-width: 0; height: 32px; padding: 0 10px; font-size: 12px; }
+.more-pop .mp-brief { width: auto; min-width: 0; height: 28px; margin: 3px 4px; padding: 0 9px; border-radius: 6px; font-size: 12px; }
 
 /* the big wipe uses the lightbox frame */
 .lb-frame.wipe { --x: 50%; overflow: hidden; border-radius: var(--r-sm); cursor: ew-resize; }
@@ -1501,6 +1547,8 @@ textarea.ret-notes { display: block; height: auto; min-height: 80px; margin-top:
    Top bar; the stage (image + drawing, tools on the left) with the results or drawings rail; the prompt bar at the bottom. */
 body.est-open { overflow: hidden; }
 body.est-open .toast { bottom: auto; top: 18px; }
+/* "A sala foi atualizada" goes up into the studio's header instead of over the prompt card */
+body.est-open .update-bar { bottom: auto; top: 6px; height: 40px; }
 .est { position: fixed; inset: 0; z-index: 65; display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100dvh; background: var(--bg); color: var(--text); }
 .est-top { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 10px 18px; border-bottom: 1px solid var(--line); }
 .est-title { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 14px; }
@@ -1516,7 +1564,9 @@ body.est-open .toast { bottom: auto; top: 18px; }
 .est-img { display: block; max-width: 100%; max-height: calc(100vh - 290px); border-radius: 8px; user-select: none; -webkit-user-drag: none; }
 .est-canvas { position: absolute; left: 0; top: 0; border-radius: 8px; cursor: crosshair; touch-action: none; }
 .est.viewing .est-canvas { pointer-events: none; }
-.est-tools { position: absolute; left: 16px; top: 16px; z-index: 2; display: flex; flex-direction: column; gap: 2px; padding: 5px; border: 1px solid var(--line2); border-radius: 12px; background: rgba(14, 17, 16, 0.88); }
+/* the tools: one column just left of the picture, centered on it (what goes to the model | the drawing | undo, clear);
+   on narrow screens a row over the picture */
+.est-tools { position: absolute; right: calc(100% + 8px); top: 50%; z-index: 4; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 5px; transform: translateY(-50%); border: 1px solid var(--line2); border-radius: 12px; background: rgba(14, 17, 16, 0.88); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); line-height: normal; }
 .est-tool { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; }
 .est-tool svg { width: 17px; height: 17px; }
 .est-tool:hover { background: rgba(255, 255, 255, 0.08); color: var(--text); }
@@ -1525,7 +1575,68 @@ body.est-open .toast { bottom: auto; top: 18px; }
 .est-color { width: 34px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; background: none; cursor: pointer; }
 .est-color::before { content: ""; width: 16px; height: 16px; border-radius: 50%; background: var(--c); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45); }
 .est-color.on::before { box-shadow: 0 0 0 2px var(--raise), 0 0 0 4px var(--c); }
-.est-sep { height: 1px; margin: 4px 6px; background: var(--line2); }
+.est-sep { align-self: stretch; height: 1px; margin: 4px 6px; background: var(--line2); }
+/* só uma área (estudio.js): the Área tool sits apart at the top of the tools. Each area has a tag over it: its number
+   (filled on the one the prompt card edits), its size and how much it is enlarged (coral when it will not gain detail) or,
+   on the others, the start of their text; its references as small circles, + for one more, ✕ to drop it. A click on a tag
+   gives that area the card */
+.est-tool[hidden], .est-sep[hidden] { display: none; }
+.est-areas { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.est-areas[hidden] { display: none; }
+.est-area { position: absolute; display: inline-flex; align-items: center; gap: 6px; max-width: min(380px, 92%); height: 26px; padding: 0 3px; transform: translateY(calc(-100% - 6px)); border-radius: 999px; background: rgba(5, 7, 6, 0.86); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); color: var(--text); font: 12px/1 var(--sans); white-space: nowrap; pointer-events: auto; cursor: pointer; opacity: 0.82; transition: opacity 0.14s ease-out; }
+.est-area:hover, .est-area.on { opacity: 1; }
+.est-area.on { z-index: 1; }
+.est-area.below { transform: translateY(6px); }
+.est-area > b { flex: none; display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border: 1px solid rgba(255, 255, 255, 0.45); border-radius: 999px; font-weight: 700; font-size: 11px; font-variant-numeric: tabular-nums; }
+.est-area.on > b { border-color: var(--text); background: var(--text); color: #0A0C0B; }
+.est-area.warn > span { color: var(--coral); }
+.est-area.empty > span { color: var(--muted); }
+.est-area > span { overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.est-arefs { flex: none; display: inline-flex; align-items: center; }
+.est-arefs > img, .est-arefs > i { width: 18px; height: 18px; margin-left: -5px; border: 1.5px solid rgba(5, 7, 6, 0.9); border-radius: 50%; object-fit: cover; background: var(--raise2); }
+.est-arefs > :first-child { margin-left: 0; }
+.est-arefs > i { display: grid; place-items: center; color: var(--muted); font-style: normal; }
+.est-arefs svg { width: 10px; height: 10px; }
+.est-arefs > small { margin-left: 4px; color: var(--muted); font-size: 11px; }
+.est-area > button { flex: none; display: grid; place-items: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
+.est-area > button:hover { background: rgba(255, 255, 255, 0.1); color: var(--text); }
+.est-area > button svg { width: 10px; height: 10px; }
+.est.viewing .est-areas, .est-video .est-areas { display: none; }
+/* the prompt card says which area it edits, first in its row of circles (a click goes to the next area) */
+.est-apill { position: relative; flex: none; display: inline-flex; align-items: center; gap: 4px; height: 26px; margin-right: 10px; padding: 0 9px 0 7px; border-radius: 999px; background: rgba(255, 255, 255, 0.08); color: var(--text); font: 600 12px/1 var(--sans); font-variant-numeric: tabular-nums; }
+.est-apill[data-k] { cursor: pointer; }
+.est-apill[data-k]:hover { background: rgba(255, 255, 255, 0.14); }
+.est-apill > svg { width: 13px; height: 13px; color: var(--muted); }
+.est-apill > small { color: var(--muted); font-weight: 500; }
+.est-apill:hover .est-tip, .est-apill:focus-visible .est-tip { opacity: 1; }
+.est-apill + .est-chip { margin-left: 0; }
+/* the version pill over the top of the image lets a drag (an area, a stroke) start under it; only its arrows click */
+.est-vnav { pointer-events: none; }
+.est-vnav button { pointer-events: auto; }
+/* Ajustar (estudio.js): the picture moves, turns, flips and scales inside its frame (est-pic clips it; what it leaves
+   empty is the gray the model gets to fill). Its controls show in the toolbar while it is the tool; its button keeps a
+   dot while the base is adjusted */
+.est-pic { position: relative; overflow: hidden; border-radius: 8px; }
+.est-pic.xf { background: #808080; }
+.est-xfw { position: relative; display: grid; }
+.est-xf { position: absolute; left: calc(100% + 10px); top: -5px; z-index: 5; display: none; align-items: center; gap: 2px; padding: 4px; border: 1px solid var(--line2); border-radius: 12px; background: rgba(14, 17, 16, 0.92); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); white-space: nowrap; }
+.est-tools.xf .est-xf { display: flex; }
+.est-xv { min-width: 42px; height: 34px; padding: 0 4px; border: 0; border-radius: 8px; background: none; color: var(--text); font: 600 12px var(--sans); font-variant-numeric: tabular-nums; cursor: pointer; }
+.est-xv:hover { background: rgba(255, 255, 255, 0.08); }
+.est-tool.set { position: relative; }
+.est-tool.set::after { content: ""; position: absolute; top: 5px; right: 5px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+.est-tool.on.set::after { background: var(--ink); }
+.est-xf .est-tool.on { background: var(--accent-soft); color: var(--accent); }
+/* ✓ keeps the adjusted picture as a version of its own, sem IA (green when it can) */
+.est-xf [data-k="xf-save"] { margin-left: 4px; }
+.est-xf [data-k="xf-save"]:not(:disabled) { background: var(--accent-soft); color: var(--accent); }
+/* the stage keeps the picture between the toolbar and the prompt card (estudio.js fitStage measures both); a version
+   shown in place keeps the toolbar's room, so the picture does not jump */
+.est.viewing .est-tools { display: flex; visibility: hidden; }
+@media (min-width: 861px) {
+  .est-stage { container-type: size; place-items: start center; padding: var(--est-toph, 16px) 70px var(--est-barh, 190px); }
+  .est-img, .est-vid { max-height: 100cqh; }
+}
 .est-empty { display: none; flex-direction: column; gap: 8px; max-width: 420px; color: var(--muted); font-size: 14px; line-height: 1.5; text-align: center; }
 .est-empty b { color: var(--text); font-family: var(--head); font-size: 18px; }
 .est-stage.empty .est-empty { display: flex; }
@@ -1586,7 +1697,7 @@ body.est-open .toast { bottom: auto; top: 18px; }
 /* what goes with the prompt, as a stack of circles (estudio.js syncChips): the base ringed in green; hovering spreads the
    stack and names each one; a reference's ✕ shows on its own hover and a click edits it (it comes back in its place) */
 .est-refs { display: flex; align-items: center; min-height: 36px; padding: 2px 0 4px 2px; }
-.est-chip { position: relative; flex: none; display: grid; place-items: center; width: 32px; height: 32px; margin-left: -10px; border: 2px solid var(--raise); border-radius: 50%; background: var(--raise2); color: var(--muted); transition: margin-left 0.18s cubic-bezier(0.2, 0, 0, 1), transform 0.14s ease-out; }
+.est-chip { position: relative; flex: none; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; margin-left: -10px; border: 2px solid var(--raise); border-radius: 50%; background: var(--raise2); color: var(--muted); transition: margin-left 0.18s cubic-bezier(0.2, 0, 0, 1), transform 0.14s ease-out; }
 .est-chip:first-child { margin-left: 0; }
 .est-refs:hover > .est-chip:not(:first-child), .est-refs:focus-within > .est-chip:not(:first-child) { margin-left: 6px; }
 .est-chip > img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
@@ -1716,8 +1827,166 @@ body.est-open .toast { bottom: auto; top: 18px; }
 /* reference picker, above the bar */
 .est-pick { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); max-height: min(60vh, 520px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--line2); border-radius: 14px; background: var(--raise); box-shadow: 0 16px 50px rgba(0, 0, 0, 0.5); }
 .est-pick[hidden] { display: none; }
-.est-pick-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-.est-pick-head .link { margin-left: auto; }
+.est-pick-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.est-pick-head .grow { flex: 1; }
+/* its tabs (Aprovadas, Geradas, Material, 3D…) with how many each holds for the scene and the word picked */
+.est-ptabs { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line2); border-radius: 999px; }
+.est-ptabs button { display: inline-flex; align-items: baseline; gap: 5px; height: 26px; padding: 0 11px; border: 0; border-radius: 999px; background: none; color: var(--muted); font: 12.5px/26px var(--sans); white-space: nowrap; cursor: pointer; }
+.est-ptabs button small { color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+.est-ptabs button:hover { color: var(--text); }
+.est-ptabs button.on { background: var(--raise2); color: var(--text); }
+.est-psearch { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border: 1px solid var(--line2); border-radius: 999px; color: var(--muted); }
+.est-psearch:focus-within { border-color: var(--muted); }
+.est-psearch svg { width: 13px; height: 13px; }
+.est-psearch input { width: 120px; border: 0; outline: none; background: none; color: var(--text); font: 12.5px var(--sans); }
+.est-pbtn { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; border: 1px solid var(--line2); border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
+.est-pbtn:hover { border-color: var(--muted); color: var(--text); }
+.est-pbtn svg { width: 14px; height: 14px; }
+.est-pick-th.drop { opacity: 0.45; }
+.est-pmore { display: flex; margin: 14px auto 2px; }
+/* Soul 2 (estudio.js): the trained face's circle next to the base (dashed until one is picked) and the faces over the
+   prompt card, with the face's strength under them */
+.est-chip.soul { cursor: pointer; border-color: var(--text); }
+/* the empty face is a circle too: the page's global .empty (the empty pages' 40px padding) stretched it into a tall oval */
+.est-chip.soul.empty { border-style: dashed; border-color: var(--muted); }
+/* the face is a circle whatever the shape of the Soul's picture (Higgsfield's thumbnails stand upright) */
+.est-chip.soul > img, .est-chip.soul > i { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+.est-chip.soul > i, .est-soul > i { display: grid; place-items: center; border-radius: 50%; background: var(--raise2); color: var(--text); font: 600 13px var(--sans); font-style: normal; }
+.est-souls { max-height: min(50vh, 420px); }
+.est-souls-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 6px; overflow-y: auto; padding: 10px 12px; }
+.est-soul { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 8px 6px 6px; border: 1px solid var(--line); border-radius: 12px; background: none; color: var(--text); text-align: left; cursor: pointer; }
+.est-soul > img, .est-soul > i { flex: none; width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
+.est-soul > span { display: flex; flex-direction: column; min-width: 0; overflow: hidden; font-size: 13px; white-space: nowrap; text-overflow: ellipsis; }
+.est-soul small { color: var(--dim); font-size: 11px; }
+.est-soul:hover { border-color: var(--line2); }
+.est-soul.on { border-color: var(--accent-edge); background: var(--accent-soft); }
+.est-soul:disabled { opacity: 0.5; cursor: default; }
+.est-soul-k { display: flex; align-items: center; gap: 10px; padding: 10px 12px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px; }
+.est-soul-k input { flex: 1; accent-color: var(--accent); }
+.est-soul-k b { min-width: 38px; color: var(--text); font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+/* Câmera (estudio.js syncCam): the bar's pill (lit, with a short summary and its ✕, once something is set; dim when it does
+   not go, as with areas) and its menu over the prompt card, with the exact line that goes into the prompt at the bottom */
+.est-cam { gap: 0; padding: 0; }
+.est-cam > button { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border: 0; border-radius: 999px; background: none; color: var(--muted); font: inherit; white-space: nowrap; cursor: pointer; }
+.est-cam > button:hover { color: var(--text); }
+.est-cam.on { border-color: var(--accent-edge); }
+.est-cam.on .est-cam-b { padding-right: 2px; color: var(--accent); }
+.est-cam.idle { border-color: var(--line2); }
+.est-cam.idle .est-cam-b { color: var(--muted); }
+.est-cam.idle .est-cam-s { color: var(--dim); text-decoration: line-through; }
+.est-cam-s { max-width: 230px; overflow: hidden; color: var(--text); text-overflow: ellipsis; }
+.est-cam-s:empty { display: none; }
+.est-cam .est-cam-x { justify-content: center; width: 26px; padding: 0; }
+.est-cam .est-cam-x[hidden] { display: none; }
+.est-cam-x svg { width: 10px; height: 10px; }
+.est-cam-pop { right: auto; width: min(620px, 100%); max-height: min(72vh, 640px); }
+.est-cam-h { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
+.est-cam-h svg { width: 15px; height: 15px; color: var(--muted); }
+.est-cam-body { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; padding: 10px 12px 12px; }
+.est-cam-row { display: grid; grid-template-columns: 74px minmax(0, 1fr); align-items: center; gap: 8px; min-width: 0; }
+.est-cam-row > span { color: var(--muted); font-size: 12px; }
+.est-cam-row > span small { color: var(--dim); font-size: 10.5px; }
+.est-cam-row .est-sel, .est-cam-row .est-sel select { width: 100%; min-width: 0; }
+.est-cam-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; }
+.est-cam-two .est-cam-row + .est-cam-row { grid-template-columns: 52px minmax(0, 1fr); }
+.est-cam-chips { display: flex; flex-wrap: wrap; gap: 3px; }
+.est-cam-chips button { height: 26px; min-width: 30px; padding: 0 6px; border: 1px solid var(--line2); border-radius: 7px; background: none; color: var(--muted); font: 12px var(--sans); font-variant-numeric: tabular-nums; cursor: pointer; transition: border-color 0.12s ease-out, color 0.12s ease-out; }
+.est-cam-chips button:hover { border-color: var(--muted); color: var(--text); }
+.est-cam-chips button.on { border-color: var(--accent-edge); background: var(--accent-soft); color: var(--accent); }
+/* Novo ângulo: a switch with what it does under its name */
+.est-cam-novo { display: flex; align-items: center; gap: 11px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: none; color: var(--text); font: 13px var(--sans); text-align: left; cursor: pointer; }
+.est-cam-novo:hover { border-color: var(--line2); }
+.est-cam-novo > i { position: relative; flex: none; width: 30px; height: 18px; border-radius: 999px; background: var(--line2); transition: background 0.15s ease-out; }
+.est-cam-novo > i::after { content: ""; position: absolute; top: 3px; left: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--muted); transition: transform 0.15s ease-out, background 0.15s ease-out; }
+.est-cam-novo.on { border-color: var(--accent-edge); background: var(--accent-soft); }
+.est-cam-novo.on > i { background: var(--accent-edge); }
+.est-cam-novo.on > i::after { transform: translateX(12px); background: var(--accent); }
+.est-cam-novo b { font-weight: 600; }
+.est-cam-novo small { display: block; margin-top: 1px; color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+.est-cam-more { display: inline-flex; align-items: baseline; gap: 8px; align-self: flex-start; padding: 2px 0; border: 0; background: none; color: var(--text); font: 600 12.5px var(--sans); cursor: pointer; }
+.est-cam-more::before { content: "›"; display: inline-block; width: 8px; color: var(--muted); transition: transform 0.15s ease-out; }
+.est-cam-more.open::before { transform: rotate(90deg); }
+.est-cam-more small { color: var(--dim); font-size: 11.5px; font-weight: 400; }
+.est-cam-out { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px 12px 12px; border-top: 1px solid var(--line); }
+.est-cam-out > small { color: var(--muted); font-size: 11px; }
+.est-cam-line { margin: 0; color: var(--text); font-size: 12.5px; line-height: 1.45; }
+.est-cam-line em { color: var(--dim); font-style: normal; }
+.est-cam-line.woven { color: var(--dim); text-decoration: line-through; }
+.est-cam-out .est-note { margin: 0; font-size: 11.5px; }
+.est-cam-out .est-alt { margin-top: 4px; }
+@media (max-width: 560px) { .est-cam-two { grid-template-columns: 1fr; } .est-cam-two .est-cam-row + .est-cam-row { grid-template-columns: 74px minmax(0, 1fr); } .est-cam-s { max-width: 140px; } }
+@media (prefers-reduced-motion: reduce) { .est-cam-chips button, .est-cam-novo > i, .est-cam-novo > i::after, .est-cam-more::before { transition: none; } }
+/* Receitas (estudio.js): the book icon next to the history turns the drawer on the right into the recipes (search,
+   categories, each recipe to drag or click onto the prompt, ✎ to change it, Nova); a recipe on the prompt is a chip after the
+   references; a result keeps "Prompt enviado" folded under it, and the version on the stage shows its prompt on demand */
+.est-recb + .est-hist { margin-left: 6px; }
+.est-draw .est-recb { display: none; }
+.est-rhead { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.est-rhead .side-label { margin: 0; }
+.est-rhead .grow { flex: 1; }
+.est-rail .est-rsearch { display: flex; width: 100%; margin-bottom: 8px; }
+.est-rail .est-rsearch input { flex: 1; width: auto; min-width: 0; }
+.est-rcats { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 12px; }
+.est-rcats button { height: 24px; padding: 0 9px; border: 1px solid var(--line2); border-radius: 999px; background: none; color: var(--muted); font-size: 11.5px; white-space: nowrap; cursor: pointer; }
+.est-rcats button:hover { border-color: var(--muted); color: var(--text); }
+.est-rcats button.on { border-color: var(--accent-edge); background: var(--accent-soft); color: var(--accent); }
+.est-rcat { margin: 14px 0 6px; color: var(--dim); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
+.est-rlist > .est-rcat:first-child { margin-top: 2px; }
+.est-rec { position: relative; display: flex; align-items: stretch; margin-bottom: 5px; border: 1px solid var(--line); border-radius: 10px; cursor: grab; transition: border-color 0.12s ease-out, background 0.12s ease-out; }
+.est-rec:hover { border-color: var(--line2); background: var(--raise); }
+.est-rec:active { cursor: grabbing; }
+.est-rec.on { border-color: var(--accent-edge); background: var(--accent-soft); }
+.est-rec.dim { opacity: 0.5; }
+.est-rec.flash { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.est-rec-main { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; padding: 8px 4px 8px 10px; border: 0; background: none; color: var(--text); text-align: left; cursor: inherit; }
+.est-rec-main b { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 600; }
+.est-rec-main b svg { width: 12px; height: 12px; color: var(--accent); }
+.est-rec-main span { color: var(--muted); font-size: 12px; line-height: 1.35; }
+.est-rec-main small { color: var(--dim); font-size: 10.5px; }
+.est-rec-ed { flex: none; display: grid; place-items: center; width: 30px; padding: 0; border: 0; background: none; color: var(--dim); opacity: 0; cursor: pointer; transition: opacity 0.12s ease-out; }
+.est-rec-ed svg { width: 13px; height: 13px; }
+.est-rec:hover .est-rec-ed, .est-rec-ed:focus-visible { opacity: 1; }
+.est-rec-ed:hover { color: var(--text); }
+@media (hover: none) { .est-rec-ed { opacity: 1; } }
+.est-rfoot { margin-top: 12px; font-size: 11.5px; }
+/* the form: the room's fields; what the base is and what the drawing does as two-way switches */
+.est-rform { display: flex; flex-direction: column; gap: 10px; }
+.est-rform .side-label { margin: 0; }
+.est-rform > label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; }
+.est-rform > label small { color: var(--dim); font-size: 11px; }
+.est-rform .field { height: 34px; font-size: 13px; }
+.est-rform textarea.field { height: auto; font-size: 12.5px; line-height: 1.45; resize: vertical; }
+.est-rback { display: inline-flex; align-items: center; gap: 4px; }
+.est-rback svg { width: 13px; height: 13px; }
+.est-rrow { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; }
+.est-seg { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line2); border-radius: 999px; }
+.est-seg button { flex: 1; height: 26px; padding: 0 10px; border: 0; border-radius: 999px; background: none; color: var(--muted); font-size: 12px; white-space: nowrap; cursor: pointer; }
+.est-seg button.on { background: var(--raise2); color: var(--text); }
+.est-rcheck { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; cursor: pointer; }
+.est-rcheck input { accent-color: var(--accent); }
+.est-ract { display: flex; align-items: center; gap: 12px; margin-top: 4px; }
+.est-ract .grow { flex: 1; }
+/* the chips on the prompt card, after the references' circles */
+.est-rchips { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; min-width: 0; margin-left: 12px; }
+.est-rchip { display: inline-flex; align-items: center; height: 26px; border: 1px solid var(--accent-edge); border-radius: 999px; background: var(--accent-soft); }
+.est-rchip > button { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 4px 0 9px; border: 0; background: none; color: var(--text); font-size: 12px; white-space: nowrap; cursor: pointer; }
+.est-rchip > button svg { width: 12px; height: 12px; color: var(--accent); }
+.est-rchip > .est-rx { justify-content: center; width: 22px; padding: 0; color: var(--muted); }
+.est-rchip > .est-rx svg { width: 9px; height: 9px; color: inherit; }
+.est-rchip > .est-rx:hover { color: var(--text); }
+.est-rchip.off { border-color: var(--line2); background: none; }
+.est-rchip.off > button:first-child { color: var(--dim); text-decoration: line-through; }
+.est-rchip.off > button svg { color: var(--dim); }
+/* what went to the model: folded under a result in the rail, and over the prompt card for the version on the stage */
+.est-sent { margin-top: 4px; font-size: 11.5px; }
+.est-sent summary { color: var(--muted); cursor: pointer; }
+.est-sent summary:hover { color: var(--text); }
+.est-sent p { margin: 6px 0 0; max-height: 220px; overflow-y: auto; color: var(--muted); line-height: 1.45; white-space: pre-wrap; }
+.est-vptext { position: relative; width: 100%; max-width: 980px; max-height: 30vh; margin: 0 auto 8px; padding: 10px 12px; overflow-y: auto; border: 1px solid var(--line2); border-radius: 12px; background: rgba(5, 7, 6, 0.9); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); pointer-events: auto; }
+.est-vptext[hidden] { display: none; }
+.est-vptext p { margin: 0 0 8px; color: var(--text); font-size: 12.5px; line-height: 1.5; white-space: pre-wrap; }
+.est-viewbar .link.on { color: var(--text); }
+@media (prefers-reduced-motion: reduce) { .est-rec, .est-rec-ed { transition: none; } }
 .est-pick-body { overflow-y: auto; padding: 4px 12px 14px; }
 .est-pick-body .side-label { padding: 0; margin: 10px 0 8px; }
 .est-pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; }
@@ -1731,10 +2000,13 @@ body.est-open .toast { bottom: auto; top: 18px; }
 @media (max-width: 860px) {
   .est-mid { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
   .est-rail { max-height: 26vh; padding: 8px 16px; }
-  .est-stage { padding: 60px 16px 8px; }
+  .est-stage { padding: var(--est-toph, 60px) 16px 8px; }
   .est-img { max-height: calc(100vh - 400px); }
-  .est-tools { right: 16px; flex-direction: row; flex-wrap: wrap; top: 10px; }
-  .est-sep { width: 1px; height: auto; margin: 6px 4px; }
+  .est-tools { left: 0; right: 0; top: auto; bottom: calc(100% + 8px); flex-direction: row; flex-wrap: wrap; transform: none; }
+  .est-tools .est-sep { align-self: center; width: 1px; height: 20px; margin: 0 4px; }
+  .est-tools .est-color { width: 26px; height: 34px; }
+  .est-xfw { display: contents; }
+  .est-xf { position: static; padding: 0; border: 0; background: none; -webkit-backdrop-filter: none; backdrop-filter: none; }
   .est-ctx { display: none; }
 }
 .lb-draw svg { width: 15px; height: 15px; }

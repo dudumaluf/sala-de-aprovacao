@@ -1,6 +1,6 @@
 // Estúdio da sala: asks image and video models for the team, through two providers:
 // - Magnific (Nano Banana 2.1), key in the Edge Function secret MAGNIFIC_KEY;
-// - Higgsfield (GPT Image 2.5, Grok, Qwen, Seedance), key in HF_KEY or the Vault secret read by estudio_hf_key();
+// - Higgsfield (GPT Image 2.5, Grok, Qwen, Soul 2, Seedance), key in HF_KEY or the Vault secret read by estudio_hf_key();
 // and Claude, which looks at the images, the drawing and the notes and writes the prompt (ANTHROPIC_KEY).
 // The keys stay on the server and are never returned; only a caller signed in with the team login
 // (app_metadata.side = "time", or app_metadata.room = "time" in a job that shares the project) gets through. Inputs are
@@ -32,6 +32,9 @@ const MODELS: Record<string, { via: Via; path: string; fields: string[] }> = {
   "marketing-studio/image/flare": { via: "hf", path: "/marketing-studio/image/flare", fields: IMG },
   "xai/grok-imagine-image-2.0": { via: "hf", path: "/xai/grok-imagine-image-2.0", fields: IMG },
   "alibaba/qwen-image-3/edit": { via: "hf", path: "/alibaba/qwen-image-3/edit", fields: ["prompt", "image_urls"] },
+  // Soul 2 with a trained face (a Soul ID made by the Galeria's souls function, with this same key): the base is the
+  // scene it starts from, custom_reference_id the face, custom_reference_strength how much of it (0–1)
+  "higgsfield-ai/soul/v2/image-to-image": { via: "hf", path: "/higgsfield-ai/soul/v2/image-to-image", fields: ["prompt", "image_url", "custom_reference_id", "custom_reference_strength", "resolution", "aspect_ratio", "batch_size", "enhance_prompt", "seed"] },
   "bytedance/seedance-2.5/text-to-video": { via: "hf", path: "/bytedance/seedance-2.5/text-to-video", fields: ["prompt", "duration", "resolution", "aspect_ratio", "generate_audio"] },
   "bytedance/seedance-2.5/image-to-video": { via: "hf", path: "/bytedance/seedance-2.5/image-to-video", fields: ["prompt", "image_url", "end_image_url", "duration", "resolution", "generate_audio"] },
   "bytedance/seedance-2.5/reference-to-video": { via: "hf", path: "/bytedance/seedance-2.5/reference-to-video", fields: ["prompt", "image_urls", "video_urls", "audio_urls", "duration", "resolution", "aspect_ratio", "generate_audio"] },
@@ -43,7 +46,7 @@ const MG_STATUS: Record<string, string> = { CREATED: "queued", IN_PROGRESS: "in_
 // the provider's own words when it refuses something (FastAPI lists, plain messages, nested errors)
 // deno-lint-ignore no-explicit-any
 const errOf = (o: any): string => {
-  if (Array.isArray(o?.detail)) return o.detail.map((d: { msg?: string }) => d?.msg || "").filter(Boolean).join("; ");
+  if (Array.isArray(o?.detail)) return o.detail.map((d: { msg?: string; loc?: unknown[] }) => [d?.loc?.slice(1).join("."), d?.msg].filter(Boolean).join(": ")).filter(Boolean).join("; ");
   return [o?.detail, o?.message, o?.error?.message, o?.error, o?.data?.message].find((x) => typeof x === "string" && x) || "";
 };
 
@@ -52,20 +55,40 @@ const errOf = (o: any): string => {
 const LOOK = "{{look}}";
 const DEFAULT_LOOK = "photoreal film still, natural light, true-to-life color, real textures and skin";
 const MAX_LOOK = 400;
+// an image model reads a negated word as the word itself ("never muted" comes out muted), so a negated color word that
+// slips into a prompt comes out, and so do the film's own words to avoid (config.js ESTUDIO.avoid) said with a "never"
+const AVOID_MAX = 8;
+const unwash = (s: string, avoid: string[] = []) => {
+  const w = ["muted", "desaturated", "washed[- ]out", ...avoid.map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+"))].join("|");
+  return s.replace(new RegExp(`,?\\s*(?:and\\s+)?(?:never|not|no|nothing)\\s+(?:${w})(?:\\s+(?:or|and|nor)\\s+(?:${w}))*`, "gi"), "")
+    .replace(/\(\s*\)/g, "").replace(/[ \t]+([.,;])/g, "$1");
+};
 const WRITER: Record<string, string> = {
   edit: `You write prompts for an image model (Nano Banana) in the AI studio of a film production. The images you see are the ones the model will see, with the same numbers. Image 1 is the picture to edit. If one image is the same picture with the director's marks and numbered notes drawn on top, it only shows where and what to change. Any other image is a reference the director attached.
 Read the director's request and notes (often in Portuguese), look at the pictures, and write one edit instruction in English: what to change and exactly where (describe the spot by what is there and its position in the frame), how the result should look so it belongs in the scene (materials, light direction, perspective, scale), and that everything else stays exactly as in image 1. Name reference images by number when they matter. The model must never draw the marks, the numbers or the note text. ${LOOK}
 Answer with the prompt only, in plain prose, in at most 120 words.`,
+  // Novo ângulo: the base is the scene to photograph again from another camera position, not a frame to keep
+  angle: `You write prompts for an image model (Nano Banana) in the AI studio of a film production. The images you see are the ones the model will see, with the same numbers. Image 1 is the scene, to be photographed again from a new camera position: it is not a frame to keep. If one image is the same picture with the director's marks and numbered notes drawn on top, they show where the new camera goes and what it frames. Any other image is a reference the director attached.
+Read the director's request and notes (often in Portuguese), look at the pictures, and write one prompt in English for the new photograph of the same scene: where the camera is now, its height and angle, what it frames and how close, the lens and the perspective, and what can be seen from there, with the same place, people, objects, light and time of day as image 1. Name reference images by number when they matter. The model must never draw the marks, the numbers or the note text. ${LOOK}
+Answer with the prompt only, in plain prose, in at most 150 words.`,
   create: `You write prompts for an image model (Nano Banana) in the AI studio of a film production. The images you see are references the model will also see, with the same numbers. Read the director's idea (often in Portuguese) and write one prompt in English for a new picture: subject, action, setting, composition and camera (shot size, angle, lens feel), light, and which reference image gives which person, place or object, by number. ${LOOK}
 Answer with the prompt only, in plain prose, in at most 150 words.`,
   blocking: `You write prompts for an image model (Nano Banana) in the AI studio of a film production. Image 1 is a 3D blocking frame: grey low-poly placeholders that fix the camera, the framing, the scale and the poses of a shot. The other images are references (the approved location, the cast, the product), numbered as the model will see them; a copy of image 1 with marks and notes, if there is one, shows the director's changes. Write one prompt in English that turns image 1 into the real photographic frame: keep its camera, framing, scale and poses exactly, take every look from the references by number, replace every placeholder with the real thing, and apply the director's notes. ${LOOK}
 Answer with the prompt only, in plain prose, in at most 180 words.`,
   video: `You write prompts for Seedance 2.5, a video model, in the AI studio of a film production. References are tagged in load order: @image1, @image2… for images, @video1… for videos, @audio1… for voice takes the model lip-syncs to. You see the images; videos and audio are only named.
-Write one prompt in English for a single shot of the given duration, in these blocks, using only the ones the shot needs: SCENE CONTEXT, ACTIVE REFERENCES (each tag with a minimal anchor and "100% matches the reference"), LOCATION MAP, FIRST FRAME / BLOCKING, FORMAT MODE ("One continuous shot, the camera does not cut on its own." unless cuts are asked for), CAMERA (field of view in degrees, one of 84°, 63°, 47°, 29°, 18°, 12°; height; movement), ACTION, PERFORMANCE, LIGHTING (source, direction, white balance in Kelvin), AUDIO, POSITIVE LOCKS.
+Write one prompt in English for a single shot of the given duration, in these blocks, using only the ones the shot needs: SCENE CONTEXT, ACTIVE REFERENCES (each tag with a minimal anchor and "100% matches the reference"), LOCATION MAP, FIRST FRAME / BLOCKING, FORMAT MODE ("One continuous shot, the camera does not cut on its own." unless cuts are asked for), CAMERA (field of view in degrees, one of 107°, 84°, 63°, 47°, 29°, 18°, 12°, 8°, or 180° for a fisheye; height; movement), ACTION, PERFORMANCE, LIGHTING (source, direction, white balance in Kelvin), AUDIO, POSITIVE LOCKS.
 Write what can be seen and measured, in positive phrasing only; left and right are from the camera; speeds in km/h; no director, film or equipment names. When a voice is attached, say who speaks the line from which @audio tag, lips in sync. ${LOOK}
 Answer with the prompt only.`,
   frames: `You write prompts for Seedance 2.5 image-to-video in the AI studio of a film production. The first image is the first frame of the shot and, when there is a second one, it is the last frame. Write one prompt in English for a single continuous shot of the given duration that takes the first frame to the last: what moves and how (speeds in km/h), what the camera does (field of view in degrees, movement), the performance, light consistent with the frames, and the sound. Write what can be seen, in positive phrasing only; left and right are from the camera; no director, film or equipment names. ${LOOK}
 Answer with the prompt only.`,
+};
+// the camera the director set in the studio's bar comes as one line already in the generator's own terms (photo words and
+// the gear for an image model; field of view and look words, no names, for Seedance); how says what it is for
+const CAM_ASK: Record<string, string> = {
+  keep: "The director set the camera look below: write the edit so the whole picture looks shot that way, while its framing and everything in it stay as in image 1.",
+  new: "The director set the new camera below: photograph the scene with it.",
+  weave: "The director set the camera below: the picture is shot with it.",
+  video: "The director set the camera below, already in field-of-view and look words: put it where the prompt describes the camera and the look, with its field of view as given and no camera, lens or film names.",
 };
 const CLAUDE_KEYS = ["ANTHROPIC_KEY", "ANTHROPIC_API_KEY", "CLAUDE_KEY", "CLAUDE_API_KEY"];
 const claudeKey = () => CLAUDE_KEYS.map((n) => (Deno.env.get(n) || "").trim()).find(Boolean) || "";
@@ -159,6 +182,10 @@ Deno.serve(async (req) => {
       // the film's look: a short line of text, or nothing (then the neutral default); one line, so it stays a sentence
       if (body.look != null && (typeof body.look !== "string" || body.look.length > MAX_LOOK)) return json({ error: `O look do filme precisa ser um texto de até ${MAX_LOOK} caracteres.` }, 400);
       const look = ((body.look as string | undefined) || "").replace(/\s+/g, " ").trim().replace(/[.\s]+$/, "") || DEFAULT_LOOK;
+      // words the film never wants in a prompt, not even negated (a few short words or phrases)
+      const avoid: string[] = (Array.isArray(body.avoid) ? body.avoid : []).filter((a: unknown) => typeof a === "string" && /^[\p{L}][\p{L} -]{0,29}$/u.test(a.trim()))
+        .map((a: string) => a.trim()).slice(0, AVOID_MAX);
+      const avoidLine = avoid.length ? ` Say it only in positive words: the words ${avoid.length > 1 ? `${avoid.slice(0, -1).join(", ")} and ${avoid.at(-1)}` : avoid[0]} never appear in your prompt, not even negated.` : "";
       const content: Anthropic.Beta.BetaContentBlockParam[] = [];
       const images = (Array.isArray(body.images) ? body.images : []).slice(0, 12);
       for (const [i, im] of images.entries()) {
@@ -166,13 +193,23 @@ Deno.serve(async (req) => {
         content.push({ type: "image", source: { type: "url", url: await sign(im?.path) } });
       }
       const notes = (Array.isArray(body.notes) ? body.notes : []).slice(0, 12).map((n: unknown) => String(n).slice(0, 200));
+      const camLine = typeof body.camera?.line === "string" ? body.camera.line.slice(0, 700) : "";
+      // the recipes the director put on the prompt (the room's `recipes` table): how to ask for that kind of change
+      const recipes = (Array.isArray(body.recipes) ? body.recipes : []).slice(0, 8)
+        .map((r: { name?: unknown; instruction?: unknown; base?: unknown; drawing?: unknown }) => ({
+          name: String(r?.name || "").slice(0, 60), instruction: String(r?.instruction || "").slice(0, 2000),
+          reshoot: r?.base === "reshoot", hint: r?.drawing === "hint",
+        }))
+        .filter((r: { instruction: string }) => r.instruction);
       const brief = [
         body.scene ? `Scene: ${String(body.scene).slice(0, 200)}.` : "",
         body.item ? `The result goes into the room item "${String(body.item).slice(0, 120)}".` : "",
         body.duration ? `Duration: ${Number(body.duration) || 5} s${body.aspect ? `, aspect ratio ${String(body.aspect).slice(0, 8)}` : ""}.` : "",
         ...(Array.isArray(body.tags) ? body.tags : []).slice(0, 12).map((t: { tag?: string; label?: string }) => `${String(t?.tag || "").slice(0, 12)}: ${String(t?.label || "").slice(0, 160)}`),
         notes.length ? `Notes written on the drawing: ${notes.map((n: string, i: number) => `${i + 1}) ${n}`).join("; ")}.` : "",
-        `What the director asks: ${String(body.prompt || "").slice(0, 3000) || "see the notes on the drawing."}`,
+        camLine ? `${CAM_ASK[body.camera?.how] || CAM_ASK.weave} Weave it into the prompt once, in your own words:\n${camLine}` : "",
+        recipes.length ? `The director picked ${recipes.length > 1 ? "these recipes" : "this recipe"} for the request. Follow ${recipes.length > 1 ? "each one" : "it"} in this scene's context and write it into the prompt once, in your own words; where a recipe and the general rules above differ, the recipe wins, and the director's own words win over both:\n${recipes.map((r: { name: string; instruction: string; reshoot: boolean; hint: boolean }, i: number) => `${i + 1}) ${r.name}${r.reshoot ? " (image 1 is the scene to photograph again)" : ""}${r.hint ? " (a drawing only points at what it is about)" : " (with a drawing, the change stays where it is marked)"}: ${r.instruction}`).join("\n")}` : "",
+        `What the director asks: ${String(body.prompt || "").slice(0, 3000) || (recipes.length ? "follow the recipes, with the notes on the drawing." : camLine || kind === "angle" ? "see the camera and the notes on the drawing." : "see the notes on the drawing.")}`,
       ].filter(Boolean).join("\n");
       content.push({ type: "text", text: brief });
       const r = await new Anthropic({ apiKey }).beta.messages.create({
@@ -181,11 +218,11 @@ Deno.serve(async (req) => {
         betas: ["server-side-fallback-2026-07-01"],
         fallbacks: "default",
         output_config: { effort: "medium" },
-        system: WRITER[kind].replace(LOOK, () => `The film's look: ${look}.`), // a function: a "$" in the look stays a "$"
+        system: WRITER[kind].replace(LOOK, () => `The film's look: ${look}.${avoidLine}`), // a function: a "$" in the look stays a "$"
         messages: [{ role: "user", content }],
       });
       if (r.stop_reason === "refusal") return json({ error: "O Claude não quis escrever esse prompt." }, 400);
-      const prompt = r.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n").trim();
+      const prompt = unwash(r.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n"), avoid).trim();
       if (!prompt) return json({ error: "O Claude não devolveu um prompt." }, 502);
       return json({ prompt });
     }

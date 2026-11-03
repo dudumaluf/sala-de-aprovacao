@@ -1,0 +1,160 @@
+/* Galeria (galeria.js): every image and video of the room in one grid of thumbnails. The image is the protagonist: the
+   tiles carry only signals (★ ✓ ✕, version, ▶); title, author and date come on hover; actions live in the bar at the
+   bottom and in the right-click menu. Uses the room's tokens (style.css) and the Filtros popover's classes. */
+
+/* ---------- head ---------- */
+.gal-qf { position: relative; display: inline-flex; align-items: center; }
+.gal-qf > svg { position: absolute; left: 11px; width: 14px; height: 14px; color: var(--dim); pointer-events: none; }
+.gal-q { width: 190px; height: 34px; padding: 0 12px 0 32px; border: 1px solid var(--line2); border-radius: 999px; background: var(--bg); font-size: 13px; transition: border-color 0.15s, width 0.2s ease-out; }
+.gal-q:focus { outline: none; border-color: var(--muted); width: 240px; }
+.gal-q::-webkit-search-cancel-button { filter: grayscale(1) brightness(1.6); cursor: pointer; }
+.gal-size { width: 84px; accent-color: var(--accent); cursor: pointer; }
+.gal-pop { width: 440px; max-height: min(72vh, 660px); overflow-y: auto; }
+.gal-pop .fopt { display: inline-flex; align-items: center; gap: 6px; }
+.gal-pop .fopt small { color: var(--dim); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+.gal-pop .fopt.on small { color: var(--muted); }
+
+/* ---------- body ---------- */
+.gal-body { position: relative; padding-top: 14px; padding-bottom: 96px; user-select: none; -webkit-user-select: none; }
+.gal-chips { margin: 0 0 14px; }
+.gal-mini { font-size: 12px; margin-left: 2px; }
+.gal-mini.danger:hover { color: var(--coral); }
+.gal-empty { padding: 60px 0; color: var(--dim); text-align: center; }
+
+/* the groups and the Souls, each one a filter */
+.gal-sets { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin: 0 0 14px; }
+.gal-sets-g, .gal-sets-s { display: flex; flex-wrap: wrap; gap: 6px; }
+.gal-set { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 11px 0 9px; border: 1px solid var(--line2); border-radius: 999px; background: none; color: var(--muted); font-size: 12.5px; transition: border-color 0.15s, color 0.15s; }
+.gal-set svg { width: 14px; height: 14px; color: var(--dim); }
+.gal-set small { color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+.gal-set:hover { color: var(--text); border-color: var(--muted); }
+.gal-set.on { color: var(--text); border-color: var(--accent-edge); background: var(--accent-soft); }
+.gal-set.on svg { color: var(--accent); }
+.gal-soul { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px 0 3px; border: 1px solid var(--line2); border-radius: 999px; background: none; color: var(--text); font-size: 12.5px; }
+.gal-soul > i { width: 26px; height: 26px; border-radius: 50%; overflow: hidden; display: grid; place-items: center; background: var(--raise2); color: var(--dim); }
+.gal-soul > i img { width: 100%; height: 100%; object-fit: cover; }
+.gal-soul > i svg { width: 14px; height: 14px; }
+.gal-soul small { color: var(--dim); font-size: 11px; }
+.gal-soul.completed small { color: var(--accent); }
+.gal-soul.failed small { color: var(--coral); }
+.gal-soul.queued small, .gal-soul.in_progress small, .gal-soul.not_ready small { color: var(--amber); }
+.gal-soul:hover { border-color: var(--muted); }
+.gal-soul.on { border-color: var(--accent-edge); background: var(--accent-soft); }
+
+/* sections: one per day (by date) or per scene */
+.gal-sec + .gal-sec { margin-top: 22px; }
+.gal-sh { position: sticky; top: -14px; z-index: 3; display: flex; align-items: baseline; gap: 10px; margin: 0 -32px 10px; padding: 10px 32px 8px; background: linear-gradient(var(--bg) 78%, transparent); font: 600 12px/1 var(--sans); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.gal-sh .num { color: var(--accent); font-size: 13px; }
+.gal-sh small { color: var(--dim); font-weight: 500; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+
+/* ---------- the grid ---------- */
+.gal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(var(--gw, 200px), 100%), 1fr)); gap: 6px; }
+.gal-t { position: relative; aspect-ratio: 16 / 9; border-radius: 8px; overflow: hidden; background: #0D1110; cursor: pointer; isolation: isolate; }
+.gal-t > img, .gal-t > video { width: 100%; height: 100%; object-fit: contain; transition: transform 0.16s ease-out, opacity 0.16s; }
+.gal-t.gal-x > img, .gal-t.gal-x > video { opacity: 0.38; filter: grayscale(0.5); }
+.gal-t::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04); pointer-events: none; transition: box-shadow 0.14s; }
+.gal-t:hover::after { box-shadow: inset 0 0 0 1px var(--line2); }
+.gal-none { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); font-size: 11px; }
+
+/* signals on the image: ★ the client's, ✓ the team's, ✕ dropped; the version in its card; ▶ a video */
+.gal-sig { position: absolute; top: 6px; right: 6px; z-index: 2; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; background: rgba(6, 8, 7, 0.72); }
+.gal-sig svg { width: 11px; height: 11px; }
+.gal-sig.s-pick { color: var(--amber); }
+.gal-sig.s-pick svg { fill: currentColor; }
+.gal-sig.s-keep { color: var(--accent); }
+.gal-sig.s-drop { color: var(--coral); }
+.gal-ver { position: absolute; left: 6px; bottom: 6px; z-index: 2; height: 18px; padding: 0 6px; border-radius: 9px; background: rgba(6, 8, 7, 0.72); color: var(--muted); font: 900 10px/18px var(--num); opacity: 0; transition: opacity 0.14s; }
+.gal-play { position: absolute; left: 50%; top: 50%; z-index: 1; width: 30px; height: 30px; margin: -15px 0 0 -15px; display: grid; place-items: center; border-radius: 50%; background: rgba(6, 8, 7, 0.6); color: var(--text); pointer-events: none; }
+.gal-play svg { width: 13px; height: 13px; margin-left: 2px; }
+.gal-cap { position: absolute; inset: auto 0 0 0; z-index: 1; display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 22px 9px 7px; background: linear-gradient(transparent, rgba(4, 5, 5, 0.86)); color: var(--text); font-size: 11.5px; line-height: 1.3; opacity: 0; transition: opacity 0.14s; pointer-events: none; }
+.gal-cap span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gal-cap small { flex: none; color: var(--muted); font-size: 10.5px; }
+.gal-t:hover .gal-cap { opacity: 1; }
+.gal-t:hover .gal-ver { opacity: 1; bottom: 30px; }
+
+/* selecting: a check on hover, on every tile once something is selected; a selected image shrinks a little in a ring */
+.gal-chk { position: absolute; top: 6px; left: 6px; z-index: 2; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; border: 1.5px solid rgba(237, 242, 238, 0.85); border-radius: 50%; background: rgba(6, 8, 7, 0.35); color: transparent; opacity: 0; transition: opacity 0.14s, background 0.14s; }
+.gal-chk svg { width: 12px; height: 12px; }
+.gal-t:hover .gal-chk, .gal-on .gal-chk { opacity: 1; }
+.gal-chk:hover { background: rgba(6, 8, 7, 0.6); color: rgba(237, 242, 238, 0.7); }
+.gal-t.gal-sel { background: var(--accent-soft); }
+.gal-t.gal-sel::after { box-shadow: inset 0 0 0 2px var(--accent); }
+.gal-t.gal-sel > img, .gal-t.gal-sel > video { transform: scale(0.88); border-radius: 4px; }
+.gal-t.gal-sel .gal-chk { opacity: 1; border-color: var(--accent); background: var(--accent); color: var(--ink); }
+.gal-band { position: fixed; z-index: 60; border: 1px solid var(--accent); border-radius: 3px; background: color-mix(in srgb, var(--accent) 8%, transparent); pointer-events: none; }
+body.gal-banding, body.gal-banding * { cursor: crosshair !important; }
+
+/* ---------- the selection bar ---------- */
+.gal-bar { position: absolute; left: 50%; bottom: 22px; z-index: 25; display: flex; align-items: center; gap: 2px; padding: 5px 6px 5px 5px; border: 1px solid var(--line2); border-radius: 999px; background: var(--raise2); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55); transform: translate(-50%, 16px); opacity: 0; pointer-events: none; transition: transform 0.24s ease-out, opacity 0.2s ease-out; }
+.gal-bar.on { transform: translate(-50%, 0); opacity: 1; pointer-events: auto; }
+.gal-bar button { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); transition: background 0.12s, color 0.12s; }
+.gal-bar button:hover { background: var(--raise); color: var(--text); }
+.gal-bar button svg { width: 16px; height: 16px; }
+.gal-bar .gal-bar-x svg { width: 11px; height: 11px; }
+.gal-bar button[data-v="keep"]:hover { color: var(--accent); }
+.gal-bar button[data-v="drop"]:hover { color: var(--coral); }
+.gal-n { padding: 0 10px 0 4px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.gal-n b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.gal-bar-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--line2); }
+
+/* ---------- the right-click menu ---------- */
+.gal-menu { position: fixed; z-index: 80; min-width: 236px; max-width: 320px; padding: 6px; border: 1px solid var(--line2); border-radius: 12px; background: var(--raise); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6); animation: gal-in 0.12s ease-out; }
+.gal-menu-h { padding: 6px 10px 7px; color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gal-menu button { display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--text); font-size: 13px; text-align: left; }
+.gal-menu button svg { flex: none; width: 15px; height: 15px; color: var(--muted); }
+.gal-menu button span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gal-menu button small { color: var(--dim); font-size: 11px; }
+.gal-menu button:hover:not(:disabled), .gal-menu button:focus-visible { background: var(--raise2); outline: none; }
+.gal-menu button:disabled { color: var(--dim); cursor: default; }
+.gal-menu button:disabled svg { color: var(--line2); }
+.gal-menu button.danger, .gal-menu button.danger svg { color: var(--coral); }
+.gal-menu-sep { display: block; height: 1px; margin: 5px 8px; background: var(--line); }
+@keyframes gal-in { from { opacity: 0; transform: translateY(-3px); } }
+
+/* ---------- dialogs ---------- */
+.gal-dlg { position: fixed; inset: 0; z-index: 85; display: grid; place-items: center; padding: 16px; background: rgba(4, 5, 5, 0.62); animation: gal-fade 0.18s ease-out; }
+.gal-dlg-box { width: min(460px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 20px; border: 1px solid var(--line2); border-radius: 16px; background: var(--raise); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6); }
+.gal-dlg-box h3 { font: 700 18px/1.25 var(--head); letter-spacing: -0.01em; }
+.gal-dlg-th { display: flex; flex-wrap: wrap; gap: 4px; }
+.gal-dlg-th img, .gal-dlg-th i { width: 54px; height: 54px; border-radius: 6px; object-fit: cover; background: var(--raise2); }
+.gal-dlg-th span { width: 54px; height: 54px; display: grid; place-items: center; border-radius: 6px; background: var(--raise2); color: var(--muted); font-size: 12px; }
+.gal-dlg-p { color: var(--muted); font-size: 13px; line-height: 1.55; }
+.gal-dlg-p.dim { color: var(--dim); font-size: 12px; }
+.gal-dlg-warn { color: var(--coral); font-size: 12.5px; }
+.gal-dlg-l { display: flex; flex-direction: column; gap: 6px; color: var(--dim); font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; }
+.gal-dlg-l .field { text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 14px; color: var(--text); }
+.gal-dlg-list { display: flex; flex-direction: column; gap: 2px; max-height: 210px; overflow-y: auto; margin-top: -6px; }
+.gal-dlg-row { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--text); font-size: 13px; text-align: left; }
+.gal-dlg-row svg { width: 15px; height: 15px; color: var(--muted); }
+.gal-dlg-row span { flex: 1; }
+.gal-dlg-row small { color: var(--dim); font-size: 11.5px; }
+.gal-dlg-row:hover { background: var(--raise2); }
+.gal-dlg-row2 { display: flex; align-items: center; justify-content: flex-end; gap: 16px; margin-top: 2px; }
+.gal-dlg-row2 .btn svg { width: 15px; height: 15px; }
+.btn.danger-fill { border-color: var(--coral); background: var(--coral); color: var(--ink); font-weight: 600; }
+.btn.danger-fill:disabled { opacity: 0.3; }
+@keyframes gal-fade { from { opacity: 0; } }
+
+/* ---------- the viewer (the room's .lb) ---------- */
+.gal-lb { z-index: 55; }
+.gal-lb .lb-top > span:first-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gal-lb-pos { flex: none; display: inline-flex; align-items: center; gap: 18px; font-variant-numeric: tabular-nums; }
+.gal-lb-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; padding: 14px 24px 18px; }
+.gal-lb-bar .btn svg { width: 15px; height: 15px; }
+.gal-lb-bar .btn.on { border-color: var(--accent-edge); color: var(--accent); background: var(--accent-soft); }
+.gal-lb-bar .btn.on.gal-x { border-color: var(--coral-edge); color: var(--coral); background: var(--coral-soft); }
+body.gal-viewing { overflow: hidden; }
+
+@media (max-width: 860px) {
+  .gal-q, .gal-q:focus { width: 140px; }
+  .gal-size { display: none; }
+  .gal-pop { width: min(440px, calc(100vw - 32px)); }
+  .gal-sh { top: 56px; margin: 0 -16px 10px; padding: 10px 16px 8px; }
+  .gal-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px; }
+  .gal-bar { position: fixed; bottom: 14px; max-width: calc(100vw - 24px); overflow-x: auto; }
+  .gal-n { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gal-t > img, .gal-t > video, .gal-bar, .gal-cap, .gal-chk, .gal-q { transition: none; }
+  .gal-menu, .gal-dlg { animation: none; }
+}
