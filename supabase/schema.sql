@@ -113,7 +113,11 @@ create table public.comments (
   -- a comment written on a video at a moment of it (the animatic): the video (an option of the item) and the second
   option_id uuid references public.options (id) on delete set null,
   t_sec double precision,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- changed or deleted by its own side (edit_comment, delete_comment): a deleted comment stays, hidden by the room
+  edited_at timestamptz,
+  deleted_at timestamptz,
+  deleted_by text not null default ''
 );
 
 -- What the team asks the client for (photos, voices, logos...), and the files that come back.
@@ -641,6 +645,28 @@ begin
   update public.requests set note = left(coalesce(p_note, ''), 2000) where id = p_request;
 end $$;
 
+-- A comment's text, changed by its own side (the client only on what it can see). The room shows the pencil only on
+-- the comments its viewer wrote.
+create or replace function public.edit_comment(p_comment uuid, p_body text) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  if length(btrim(coalesce(p_body, ''))) not between 1 and 4000 then raise exception 'a comment has 1 to 4000 characters'; end if;
+  update public.comments c set body = btrim(p_body), edited_at = now()
+   where c.id = p_comment and c.side = public.side() and c.deleted_at is null
+     and (public.is_team() or (public.is_client() and exists (select 1 from public.items i where i.id = c.item_id and i.visible)));
+  if not found then raise exception 'comment not found, or not from this side'; end if;
+end $$;
+
+-- A comment deleted (p_on) or brought back (not p_on) by its own side: the row stays, with who and when.
+create or replace function public.delete_comment(p_comment uuid, p_on boolean, p_who text) returns void
+language plpgsql security definer set search_path = '' as $$
+begin
+  update public.comments c set deleted_at = case when p_on then now() end, deleted_by = case when p_on then left(coalesce(p_who, ''), 60) else '' end
+   where c.id = p_comment and c.side = public.side()
+     and (public.is_team() or (public.is_client() and exists (select 1 from public.items i where i.id = c.item_id and i.visible)));
+  if not found then raise exception 'comment not found, or not from this side'; end if;
+end $$;
+
 -- ---------- the studio's API key (server side only) ----------
 -- The edge function `estudio` (supabase/functions/estudio) needs the image/video API key. The simplest way is an Edge
 -- Function secret named HF_KEY (Dashboard → Edge Functions → Secrets); the function reads it first. If you prefer
@@ -660,11 +686,15 @@ end $$;
 revoke execute on function public.decide(uuid, uuid, text, text) from public, anon;
 revoke execute on function public.confirm_round(text, text) from public, anon;
 revoke execute on function public.set_request_note(uuid, text) from public, anon;
+revoke execute on function public.edit_comment(uuid, text) from public, anon;
+revoke execute on function public.delete_comment(uuid, boolean, text) from public, anon;
 revoke execute on function public.option_dropped(uuid) from public, anon;
 revoke execute on function public.item_shown(uuid) from public, anon;
 grant execute on function public.decide(uuid, uuid, text, text) to authenticated, service_role;
 grant execute on function public.confirm_round(text, text) to authenticated, service_role;
 grant execute on function public.set_request_note(uuid, text) to authenticated, service_role;
+grant execute on function public.edit_comment(uuid, text) to authenticated, service_role;
+grant execute on function public.delete_comment(uuid, boolean, text) to authenticated, service_role;
 grant execute on function public.option_dropped(uuid) to authenticated, service_role;
 grant execute on function public.item_shown(uuid) to authenticated, service_role;
 revoke all on function public.estudio_hf_key() from public, anon, authenticated;

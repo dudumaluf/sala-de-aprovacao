@@ -329,8 +329,11 @@ textarea.field { height: auto; padding: 10px 12px; resize: none; }
 .clink:hover { color: var(--text); background: var(--raise2); }
 .msg:hover .clink, .tc-list li:hover .clink, .clink:focus-visible { opacity: 1; }
 @media (hover: none) { .clink { opacity: 0.7; } }
-.msg .clink { position: absolute; top: -4px; right: 0; }
-.tc-list .clink { margin-left: auto; }
+.cacts { display: inline-flex; align-items: center; gap: 2px; }
+.msg .cacts { position: absolute; top: -4px; right: 0; }
+.tc-list .cacts { flex: none; margin-left: auto; }
+.c-edit { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; flex: 1; min-width: 0; }
+.c-edit textarea { width: 100%; min-height: 72px; padding: 8px 10px; line-height: 1.45; resize: vertical; }
 .compose { display: flex; flex-direction: column; gap: 10px; padding: 16px 20px 20px; border-top: 1px solid var(--line); }
 .compose .hintline { color: var(--amber); font-size: 12px; }
 .compose .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }

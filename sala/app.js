@@ -97,7 +97,7 @@ const S = {
   ret: { resolved: false, said: {}, call: {} }, drawerTab: "comentarios",
   page: { kind: "round", round: null, scene: null, item: null }, pageKey: "",
   me: store.get(`sala-name-${SIDE}`), drawer: null, mode: {}, uploading: {}, lightbox: null, lbx: null, modal: null,
-  navOpen: false, pending: false, flash: null,
+  navOpen: false, pending: false, flash: null, cEdit: null,
   // Materiais: the page's filters (state, kind), a package's tab and who-sent filter, the ＋ Adicionar popover, the new package card
   matState: "all", matType: "all", matTab: "all", matSide: "all", matAdd: null, matNew: false, notes: [], notesOn: false,
   ov: { kinds: new Set(), curate: false, dropped: store.get("sala-dropped") === "1", view: store.get("sala-ov-view2") === "grid" ? "grid" : "hero" }, ovList: [], ovSel: (() => { try { return JSON.parse(store.get(`sala-ovsel-${SIDE}`) || "{}") || {}; } catch { return {}; } })(),
@@ -541,7 +541,7 @@ async function load(force = false) {
   const sig = JSON.stringify([...res, ...(labelsOn ? lab.slice(0, 2) : []), ...(imgMarks ? [lab[2]] : []), ...(notesOn ? [nres] : [])].map((r) => r.data));
   if (!force && sig === S.sig) return false;
   const [rounds, items, options, comments, requests, files, annotations, reviews = [], feedback = [], wkRefs = [], tasks = [], pendencias = [], roundNotes = [], envio = [], bshots = []] = res.map((r) => r.data);
-  Object.assign(S, { rounds, items, options, comments, requests, files, annotations, reviews, feedback, wkRefs, tasks, pendencias, roundNotes, envio, bshots,
+  Object.assign(S, { rounds, items, options, comments: comments.filter((c) => !c.deleted_at), requests, files, annotations, reviews, feedback, wkRefs, tasks, pendencias, roundNotes, envio, bshots,
     labels: labelsOn ? lab[0].data : [], itemLabels: labelsOn ? lab[1].data : [], optLabels: imgMarks ? lab[2].data : [], labelsOn, imgMarks,
     notes: notesOn ? nres.data : [], notesOn, sig });
   // the etiquetas marked padrão filter the room as it opens: once per tab, so a filter someone took off stays off
@@ -2840,7 +2840,7 @@ function drawer() {
   // closed group under them, every second saying its version, so a note on the old cut never reads as one on the new.
   // A second of the video on screen is a button: it takes the video there
   const verOfC = (c) => (on && c.option_id ? vv.find((o) => o.id === c.option_id) : null);
-  const msg = (c) => { const o = verOfC(c); return `<div class="msg ${c.side}${S.litComment === c.id ? " lit" : ""}" data-c="${c.id}"><p class="meta"><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)} · ${fmtTime(c.created_at)}${clink(c)}</p><p class="body">${cBody(c, o ? vidShort(vv, o) : "", !!shown && c.option_id === shown.id)}</p></div>`; };
+  const msg = (c) => { const o = verOfC(c); return `<div class="msg ${c.side}${S.litComment === c.id ? " lit" : ""}" data-c="${c.id}"><p class="meta"><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)} · ${fmtTime(c.created_at)}${c.edited_at ? ` · <span title="Editado ${fmtTime(c.edited_at)}">editado</span>` : ""}${cacts(c)}</p>${S.cEdit === c.id ? cEditForm(c) : `<p class="body">${cBody(c, o ? vidShort(vv, o) : "", !!shown && c.option_id === shown.id)}</p>`}</div>`; };
   const olds = on ? vv.filter((o) => o !== on).map((o) => [o, comments.filter((c) => c.option_id === o.id)]).filter(([, l]) => l.length) : [];
   const here = on ? comments.filter((c) => !olds.some(([o]) => o.id === c.option_id)) : comments;
   return `<aside class="drawer" aria-label="Comentários">
@@ -3035,10 +3035,20 @@ function lbxOp(k, shift) {
 }
 // under a video in Ver grande (both sides): pause anywhere and write, and the comment keeps that second. Its marks sit on
 // the bar and its time in the list; either jumps the video there. They also show in the card's comments with the time.
-const tcList = (o) => `<ol class="tc-list">${tcOf(o).map((c) => `<li class="${c.side}${S.litComment === c.id ? " lit" : ""}" data-c="${c.id}"><button class="tc-t" data-act="tc-seek" data-t="${c.t_sec}" title="Ir pra esse momento">${tcFmt(c.t_sec)}</button><p><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)}<span>${esc(c.body)}</span></p>${clink(c)}</li>`).join("") || '<li class="none">Nenhum comentário ainda. Pause o vídeo no momento que quiser comentar e escreva aqui.</li>'}</ol>`;
+const tcList = (o) => `<ol class="tc-list">${tcOf(o).map((c) => `<li class="${c.side}${S.litComment === c.id ? " lit" : ""}" data-c="${c.id}"><button class="tc-t" data-act="tc-seek" data-t="${c.t_sec}" title="Ir pra esse momento">${tcFmt(c.t_sec)}</button><p><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)}${S.cEdit === c.id ? "" : `<span>${esc(c.body)}</span>`}</p>${S.cEdit === c.id ? cEditForm(c) : ""}${cacts(c)}</li>`).join("") || '<li class="none">Nenhum comentário ainda. Pause o vídeo no momento que quiser comentar e escreva aqui.</li>'}</ol>`;
 // a comment at a second of the video has its own link (the video waits there, paused, with this comment lit), copied
 // from the small icon its row shows on hover, in the card's comments and in Ver grande's list
 const clink = (c) => (c.t_sec == null ? "" : `<button class="clink" data-act="copy-link" data-id="${c.item_id}"${c.option_id ? ` data-opt="${c.option_id}"` : ""} data-t="${c.t_sec}" data-c="${c.id}" title="Copiar o link deste comentário" aria-label="Copiar o link deste comentário">${LINK_ICO}</button>`);
+// on hover, next to the link: the pencil on the comments its viewer wrote (same side, same name), the trash on any
+// comment of its own side (one login is shared by a whole side, and Desfazer brings a deleted one back)
+const myComment = (c) => c.side === SIDE && (c.author || "").trim().toLowerCase() === myName().trim().toLowerCase();
+const cacts = (c) => {
+  const open = S.cEdit !== c.id;
+  const btns = clink(c) + (open && myComment(c) ? `<button class="clink" data-act="c-edit" data-id="${c.id}" title="Editar o comentário" aria-label="Editar o comentário">${PEN_ICO}</button>` : "")
+    + (open && c.side === SIDE ? `<button class="clink" data-act="c-del" data-id="${c.id}" title="Apagar o comentário${myComment(c) ? "" : ` de ${esc(c.author)}`}" aria-label="Apagar o comentário">${ICO.trash}</button>` : "");
+  return btns ? `<span class="cacts">${btns}</span>` : "";
+};
+const cEditForm = (c) => `<form class="c-edit" data-form="c-edit" data-id="${c.id}"><textarea class="field" name="body" rows="3" required maxlength="4000" aria-label="O comentário">${esc(c.body)}</textarea><span class="mat-row-btns"><button class="btn small primary">Salvar</button><button type="button" class="link" data-act="c-edit" data-id="${c.id}">Cancelar</button></span></form>`;
 function tcBlock(it, o, withList = true) {
   if (!o.mime.startsWith("video/")) return "";
   const cs = tcOf(o), d = (S.vdur || {})[o.id] || 0, now = (S.vtime || {})[o.id] || 0, at = (t) => (d ? `left:${Math.min(100, (t / d) * 100)}%` : "left:0");
@@ -3669,6 +3679,23 @@ const ACTS = {
     };
     await copy(false, TEAM ? { label: `Link ${DA_CL}`, fn: () => copy(true) } : null);
   },
+  "c-edit"(el) {
+    S.cEdit = S.cEdit === el.dataset.id ? null : el.dataset.id;
+    render(true);
+    if (S.cEdit) setTimeout(() => { const t = $app.querySelector(".c-edit textarea"); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } }, 0);
+  },
+  // a comment goes at once, with Desfazer in the toast: it stays in the database, and Desfazer brings it back from there
+  async "c-del"(el) {
+    const c = S.comments.find((x) => x.id === el.dataset.id);
+    if (!c || c.side !== SIDE) return;
+    const put = async (on) => { const { error } = await sb.rpc("delete_comment", { p_comment: c.id, p_on: on, p_who: myName() }); if (error) throw error; };
+    S.comments = S.comments.filter((x) => x.id !== c.id);
+    render(true);
+    try { await put(true); }
+    catch (e) { console.error(e); S.comments = [...S.comments, c]; render(true); return toast(`Não apagou: ${e.message || e}`, true); }
+    toast("Comentário apagado", false, { label: "Desfazer", fn: () => run(async () => { await put(false); await refresh(); }, "Comentário de volta") });
+    refresh();
+  },
   "note-edit"() { if (!S.lightbox) return; S.lightbox.edit = !S.lightbox.edit; render(true); if (S.lightbox.edit) setTimeout(() => $app.querySelector(".lb-edit .field")?.focus(), 0); },
   async "note-del"(el) {
     const n = S.notes.find((x) => x.id === el.dataset.id);
@@ -4055,10 +4082,10 @@ document.addEventListener("keydown", (e) => {
   const typing = t.matches?.("input, textarea, select");
   if (e.key === "Enter" && t.matches?.("input.inline, textarea.brief, textarea.ret-basenote, textarea.btask-text, input.cap-in, input.lb-capin, input.rv-note, input.note")) { e.preventDefault(); t.blur(); return; }
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && t.matches?.(".compose textarea")) { t.form.requestSubmit(); return; }
-  if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && t.matches?.(".mat-addf textarea, .lb-edit textarea")) { e.preventDefault(); t.form.requestSubmit(); return; }
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && t.matches?.(".mat-addf textarea, .lb-edit textarea, .c-edit textarea")) { e.preventDefault(); t.form.requestSubmit(); return; }
   if (S.lightbox) {
     // Esc leaves Ajustar first (without saving), then the lightbox; while adjusting, no other key acts
-    if (e.key === "Escape") { if (S.lbx) { S.lbx = null; return render(true); } if (S.lightbox.edit) { S.lightbox.edit = false; return render(true); } return ACTS["lb-close"](); }
+    if (e.key === "Escape") { if (S.lbx) { S.lbx = null; return render(true); } if (S.lightbox.edit || S.cEdit) { S.lightbox.edit = false; S.cEdit = null; return render(true); } return ACTS["lb-close"](); }
     if (typing || S.lbx) return;  // arrows and letters belong to the field being edited
     if (e.key === "ArrowRight") step(1);
     if (e.key === "ArrowLeft") step(-1);
@@ -4078,7 +4105,7 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "Escape") {
-    if (S.more || S.dl || S.filt || S.selMenu || S.matAdd || S.matNew) { S.more = null; S.dl = false; S.filt = false; S.selMenu = false; S.matAdd = null; S.matNew = false; render(true); }
+    if (S.more || S.dl || S.filt || S.selMenu || S.matAdd || S.matNew || S.cEdit) { S.more = null; S.dl = false; S.filt = false; S.selMenu = false; S.matAdd = null; S.matNew = false; S.cEdit = null; render(true); }
     else if (S.modal && S.modal !== "name") ACTS["modal-close"]();
     else if (S.sel.size) { S.sel.clear(); render(true); }
     else if (S.drawer) ACTS["drawer-close"]();
@@ -4191,6 +4218,19 @@ document.addEventListener("submit", async (e) => {
       await refresh();
       location.hash = `#/materiais/${id}`;
     }, "Pacote criado");
+    if (btn.isConnected) btn.disabled = false;
+    return;
+  }
+  if (f.dataset.form === "c-edit") {
+    const body = val(f, "body");
+    if (!body) return toast("Escreva o comentário.", true);
+    btn.disabled = true;
+    await run(async () => {
+      const { error } = await sb.rpc("edit_comment", { p_comment: f.dataset.id, p_body: body });
+      if (error) throw error;
+      S.cEdit = null;
+      await refresh();
+    }, "Comentário salvo");
     if (btn.isConnected) btn.disabled = false;
     return;
   }
