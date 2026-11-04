@@ -3330,13 +3330,27 @@ function lbHud(it, o, { del = false } = {}) {
     </span>
   </div>`;
 }
-// the reference images that went into this option (store photos, logo, products, cast, blocking, an earlier
-// generation) as small thumbnails; hovering one shows it larger with its name
+// the references that went into this option (store photos, logo, products, cast, blocking, an earlier generation, a
+// video, a voice) as small thumbnails; hovering one shows it larger with its name. A video shows its still (the room's,
+// when it is a card's or the client's file) or its first frame; a voice shows a wave and plays on a click
+const REF_WAVE = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M2.5 7v2M5 5v6M7.5 3v10M10 5.5v5M12.5 7v2"/></svg>';
+const refKind = (r) => r.kind || (/\.(mp4|mov|webm)$/i.test(r.path || "") ? "video" : /\.(mp3|m4a|wav|ogg|opus|aac)$/i.test(r.path || "") ? "audio" : "image");
+const refStill = (path) => { const x = S.options.find((o) => o.path === path) || S.files.find((f) => f.path === path); return x?.preview_path || x?.thumb_path || null; };
+let refAudio = null;
 function refsBlock(o) {
   const refs = Array.isArray(o.refs) ? o.refs : [];
   if (!refs.length) return "";
+  const tile = (r) => {
+    const k = refKind(r), still = k === "image" ? r.thumb || r.path : k === "video" ? r.thumb || refStill(r.path) : null;
+    const face = still ? `<img data-path="${esc(still)}" alt="" decoding="async"${srcAttr(still)}>`
+      : k === "video" ? `<video data-path="${esc(r.path)}" muted playsinline preload="metadata"${srcAttr(r.path)}></video>`
+      : `<i class="lb-ref-wave">${REF_WAVE}</i>`;
+    const big = k === "image" ? `<img data-path="${esc(r.path)}" alt="" decoding="async"${srcAttr(r.path)}>` : still ? `<img data-path="${esc(still)}" alt="" decoding="async"${srcAttr(still)}>` : "";
+    const say = k === "audio" ? `${r.label} · voz, clique pra ouvir` : k === "video" ? `${r.label} · vídeo` : r.label;
+    return `<span class="lb-ref ${k}" tabindex="0" aria-label="${esc(say)}"${k === "audio" ? ` data-act="ref-audio" data-path="${esc(r.path)}" role="button"` : ""}>${face}<span class="lb-ref-peek">${big}<small>${esc(say)}</small></span></span>`;
+  };
   return `<div class="lb-sec"><p class="side-label">Referências usadas · ${refs.length}</p>
-    <div class="lb-refs">${refs.map((r) => `<span class="lb-ref" tabindex="0" aria-label="${esc(r.label)}"><img data-path="${esc(r.thumb || r.path)}" alt="" decoding="async"${srcAttr(r.thumb || r.path)}><span class="lb-ref-peek"><img data-path="${esc(r.path)}" alt="" decoding="async"${srcAttr(r.path)}><small>${esc(r.label)}</small></span></span>`).join("")}</div>
+    <div class="lb-refs">${refs.map(tile).join("")}</div>
   </div>`;
 }
 function infoPanel(it, o, { note = "" } = {}) {
@@ -3784,6 +3798,19 @@ const ACTS = {
     if (!it || !opts.length) return;
     pickSel(it.id, opts[(shownAt(it, opts) + +el.dataset.v + opts.length) % opts.length]);
     render(true);
+  },
+  // a voice among an option's references plays on a click, and stops on the next one
+  async "ref-audio"(el) {
+    const path = el.dataset.path;
+    if (refAudio && refAudio.dataset.path === path && !refAudio.paused) { refAudio.pause(); el.classList.remove("on"); return; }
+    refAudio?.pause();
+    document.querySelectorAll(".lb-ref.audio.on").forEach((x) => x.classList.remove("on"));
+    await sign([path]);
+    refAudio = new Audio(urls.get(path) || "");
+    refAudio.dataset.path = path;
+    refAudio.onended = () => el.classList.remove("on");
+    el.classList.add("on");
+    refAudio.play().catch(() => el.classList.remove("on"));
   },
   "lb-compare"(el) { S.lightbox = { cmp: el.dataset.id, r: 0, i: S.lightbox.i, back: S.lightbox }; render(true); },
   mode(el) { const it = itemOf(el.dataset.id); patchItem(it.id, { mode: it.mode === "set" ? "choose" : "set" }, it.mode === "set" ? `${cap(A_CL)} vai escolher uma opção` : `${cap(A_CL)} vai aprovar o conjunto`); },
