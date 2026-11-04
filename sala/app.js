@@ -1479,27 +1479,30 @@ const boardTask = (t) => {
     <button class="tdel" data-act="task-del" data-id="${t.id}" title="Apagar a tarefa" aria-label="Apagar a tarefa">${ICO.trash}</button></div>`;
 };
 // A fazer's Filtros, the same icon as the cards' pages: the cards by etiqueta (the padrão one is on as the room opens) and
-// by type; the tasks by the version they belong to (the round's current one by default: what the client asked last; a
-// task on a card follows its card); and what is done, hidden unless Mostrar feitas e prontas. What is left out is counted
-// under the chips and comes back with Mostrar tudo
+// by type; the tasks by the version of the client's answer they came from (Atuais by default: the last version the client
+// answered and anything newer, like a task made by hand since; a task on a card follows its card); and what is done,
+// hidden unless Mostrar feitas e prontas. What is left out is counted under the chips and comes back with Mostrar tudo
 const boardDone = (i) => i.status === "ready" || i.visible;
 const boardCardOk = (i) => inLabels(i) && (!S.ov.kinds.size || S.ov.kinds.has(i.kind));
 function boardFilters(r, all, roundTasks) {
-  const V = r.version || 1, tv = S.bTasks === "now" ? V : S.bTasks === "all" ? null : +S.bTasks;
+  // the last version the client answered (the card page reads its tasks the same way: the feedback of V - 1)
+  const V = r.version || 1, cur = Math.min(V, fbVers(r.id)[0] || Math.max(1, V - 1));
+  const now = S.bTasks === "now", tv = now || S.bTasks === "all" ? null : +S.bTasks;
+  const vOk = (t) => (now ? (t.version || 1) >= cur : tv == null || (t.version || 1) === tv);
   const items = all.filter((i) => boardCardOk(i) && (S.bDone || !boardDone(i)));
-  const tasks = roundTasks.filter((t) => (S.bDone || !t.done) && (tv == null || (t.version || 1) === tv) && (!t.item_id || !itemOf(t.item_id) || boardCardOk(itemOf(t.item_id))));
+  const tasks = roundTasks.filter((t) => (S.bDone || !t.done) && vOk(t) && (!t.item_id || !itemOf(t.item_id) || boardCardOk(itemOf(t.item_id))));
   const opt = (act, v, label, on, t = "") => `<button class="fopt ${on ? "on" : ""}" data-act="${act}" data-v="${esc(v)}" aria-pressed="${on}"${t ? ` title="${t}"` : ""}>${label}</button>`;
   const group = (t, body) => `<section class="filt-group"><p class="filt-label">${t}</p><div class="filt-opts">${body}</div></section>`;
   const kinds = [...new Set(all.map((i) => i.kind))].filter((k) => KINDS[k]);
-  const vers = [...new Set([V, ...roundTasks.map((t) => t.version || 1)])].sort((a, b) => b - a);
+  const vers = [...new Set(roundTasks.map((t) => t.version || 1))].sort((a, b) => b - a);
   const pop = S.filt ? `<div class="filt-pop" role="dialog" aria-label="Filtros">
     ${S.labelsOn ? group("Etiquetas", labelOpts(r)) : ""}
     ${kinds.length > 1 ? group("Tipo", [["all", "Tudo"], ...kinds.map((k) => [k, KINDS[k]])].map(([k, l]) => opt("ov-kind", k, l, k === "all" ? !S.ov.kinds.size : S.ov.kinds.has(k))).join("")) : ""}
-    ${group("Tarefas", [...vers.map((v) => opt("b-tasks", v === V ? "now" : String(v), `Da v${v}${v === V ? " (atual)" : ""}`, v === tv, `As tarefas do que ${A_CL} pediu na v${v}`)), opt("b-tasks", "all", "Todas", tv == null, "As tarefas de todas as versões")].join(""))}
+    ${group("Tarefas", [opt("b-tasks", "now", "Atuais", now, `As do último retorno ${DA_CL} (v${cur}) e as que vieram depois`), ...(vers.length > 1 ? vers.map((v) => opt("b-tasks", String(v), `Da v${v}`, v === tv, `Só as tarefas do que ${A_CL} pediu na v${v}`)) : []), opt("b-tasks", "all", "Todas", !now && tv == null, "As tarefas de todas as versões")].join(""))}
     <section class="filt-group filt-togs"><button class="filt-tog ${S.bDone ? "on" : ""}" role="switch" aria-checked="${S.bDone}" data-act="b-done" title="As tarefas feitas e os cards prontos ou já mandados ${AO_CL}"><span class="filt-sw" aria-hidden="true"></span>Mostrar feitas e prontas</button></section>
   </div>` : "";
   const on = [...[...S.labelF].map((id) => labelById(id)).filter(Boolean).map((l) => [`label:${l.id}`, l.name]), ...[...S.ov.kinds].filter((k) => kinds.includes(k)).map((k) => [`kind:${k}`, KINDS[k]]),
-    tv == null ? null : ["tasks", `Tarefas da v${tv}`], S.bDone ? null : ["done", "Sem feitas e prontas"]].filter(Boolean);
+    now ? ["tasks", `Tarefas atuais (v${cur}${vers.some((v) => v > cur) ? " em diante" : ""})`] : tv == null ? null : ["tasks", `Tarefas da v${tv}`], S.bDone ? null : ["done", "Sem feitas e prontas"]].filter(Boolean);
   const hi = all.length - items.length, ht = roundTasks.length - tasks.length;
   const out = [hi ? plural(hi, "card", "cards") : "", ht ? plural(ht, "tarefa", "tarefas") : ""].filter(Boolean).join(" e ");
   const btn = `<span class="fbar-bare fbar-head"><button class="btn hico ${on.length ? "on" : ""}" data-act="filt" aria-haspopup="dialog" aria-expanded="${!!S.filt}" title="Filtros: etiqueta, tipo, tarefas de qual versão e o que está feito" aria-label="Filtros">${ICO.funnel}${on.length ? `<b class="badge">${on.length}</b>` : ""}</button>${pop}</span>`;
