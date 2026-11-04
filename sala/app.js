@@ -2797,16 +2797,17 @@ function matCard(r) {
   const tags = counts.length ? `<span class="hero-tags">${counts.map(([k, n]) => `<span class="hero-talk" title="${plural(n, MAT_ONE[k], MAT_KINDS[k].toLowerCase())}">${MAT_ICO[k]}${n}</span>`).join("")}</span>` : "";
   const up = S.uploading[r.id];
   return `<article class="hcard mat-card" data-drop-req="${r.id}">
-    <a class="hero mat-hero ${es.length ? "" : "hero-empty"}" href="#/materiais/${r.id}" title="${esc(r.detail || r.title)}" aria-label="Abrir ${esc(r.title)}">${es.length ? matCover(es) : `<span class="mat-empty">${ICON.up}<span>Arraste aqui</span></span>`}${tags}${cls || r.team_only ? "" : '<span class="mat-falta">Falta</span>'}${up ? `<span class="mat-up">${esc(up)}</span>` : ""}</a>
+    <a class="hero mat-hero ${es.length ? "" : "hero-empty"}" href="#/materiais/${r.id}" title="${esc(r.detail || r.title)}" aria-label="Abrir ${esc(r.title)}">${es.length ? matCover(es, r.team_only) : `<span class="mat-empty">${ICON.up}<span>Arraste aqui</span></span>`}${tags}${cls || r.team_only ? "" : '<span class="mat-falta">Falta</span>'}${up ? `<span class="mat-up">${esc(up)}</span>` : ""}</a>
     <footer class="hcard-foot"><span class="t">${r.team_only ? "" : `<i class="ovx-dot ${cls === "approved" ? "approved" : cls === "sent" ? "client" : "pending"}" title="${label}"></i>`}${esc(r.title)}</span></footer>
   </article>`;
 }
-function matCover(es) {
+// a scene's own package shows its first pictures (the animatic's frames); the client's, the last ones that came
+function matCover(es, first = false) {
   const of = (k) => es.filter((e) => kindOfEntry(e) === k);
   const img = (f) => { const p = f.thumb_path || f.preview_path || f.path; return `<img data-path="${esc(p)}" alt="" decoding="async"${srcAttr(p)}>`; };
   const pics = of("foto");
-  if (pics.length >= 4) return `<span class="mat-sheet">${pics.slice(-4).map(img).join("")}</span>`;
-  if (pics.length) return `<span class="mat-one">${img(pics.at(-1))}</span>`;
+  if (pics.length >= 4) return `<span class="mat-sheet">${(first ? pics.slice(0, 4) : pics.slice(-4)).map(img).join("")}</span>`;
+  if (pics.length) return `<span class="mat-one">${img(first ? pics[0] : pics.at(-1))}</span>`;
   const vid = of("video")[0];
   if (vid) return `<span class="mat-one">${media(vid, "thumb")}<span class="mat-play">${ICON.play}</span></span>`;
   if (of("voz").length) return matWave(of("voz"));
