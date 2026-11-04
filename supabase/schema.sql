@@ -529,8 +529,9 @@ create policy option_reviews_team on public.option_reviews for all to authentica
   using ((select is_team())) with check ((select is_team()));
 
 -- comments: each side writes as itself; the client only on sent items; nobody edits, only the team deletes
+-- (a deleted comment, deleted_at set, no longer reaches the client; the team still reads it)
 create policy comments_select on public.comments for select to authenticated
-  using ((select is_team()) or ((select is_client()) and exists (select 1 from public.items i where i.id = comments.item_id and i.visible)));
+  using ((select is_team()) or ((select is_client()) and deleted_at is null and exists (select 1 from public.items i where i.id = comments.item_id and i.visible)));
 create policy comments_insert on public.comments for insert to authenticated
   with check (side = (select public.side()) and ((select is_team()) or ((select is_client())
     and exists (select 1 from public.items i where i.id = comments.item_id and i.visible))));
