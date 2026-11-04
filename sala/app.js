@@ -98,6 +98,8 @@ const S = {
   page: { kind: "round", round: null, scene: null, item: null }, pageKey: "",
   me: store.get(`sala-name-${SIDE}`), drawer: null, mode: {}, uploading: {}, lightbox: null, lbx: null, modal: null,
   navOpen: false, pending: false, flash: null, cEdit: null,
+  // A fazer's Filtros: the tasks of which version ("now" = the round's current one, "all", or a number) and the done ones
+  bTasks: "now", bDone: false,
   // Materiais: the page's filters (state, kind), a package's tab and who-sent filter, the ＋ Adicionar popover, the new package card
   matState: "all", matType: "all", matTab: "all", matSide: "all", matAdd: null, matNew: false, notes: [], notesOn: false,
   ov: { kinds: new Set(), curate: false, dropped: store.get("sala-dropped") === "1", view: store.get("sala-ov-view2") === "grid" ? "grid" : "hero" }, ovList: [], ovSel: (() => { try { return JSON.parse(store.get(`sala-ovsel-${SIDE}`) || "{}") || {}; } catch { return {}; } })(),
@@ -1476,13 +1478,43 @@ const boardTask = (t) => {
       ${it ? `<a class="btask-it" href="${sceneHref(it.round_id, it.scene, it.id)}">${esc(it.title)}</a>` : ""}</div>
     <button class="tdel" data-act="task-del" data-id="${t.id}" title="Apagar a tarefa" aria-label="Apagar a tarefa">${ICO.trash}</button></div>`;
 };
+// A fazer's Filtros, the same icon as the cards' pages: the cards by etiqueta (the padrão one is on as the room opens) and
+// by type; the tasks by the version they belong to (the round's current one by default: what the client asked last; a
+// task on a card follows its card); and what is done, hidden unless Mostrar feitas e prontas. What is left out is counted
+// under the chips and comes back with Mostrar tudo
+const boardDone = (i) => i.status === "ready" || i.visible;
+const boardCardOk = (i) => inLabels(i) && (!S.ov.kinds.size || S.ov.kinds.has(i.kind));
+function boardFilters(r, all, roundTasks) {
+  const V = r.version || 1, tv = S.bTasks === "now" ? V : S.bTasks === "all" ? null : +S.bTasks;
+  const items = all.filter((i) => boardCardOk(i) && (S.bDone || !boardDone(i)));
+  const tasks = roundTasks.filter((t) => (S.bDone || !t.done) && (tv == null || (t.version || 1) === tv) && (!t.item_id || !itemOf(t.item_id) || boardCardOk(itemOf(t.item_id))));
+  const opt = (act, v, label, on, t = "") => `<button class="fopt ${on ? "on" : ""}" data-act="${act}" data-v="${esc(v)}" aria-pressed="${on}"${t ? ` title="${t}"` : ""}>${label}</button>`;
+  const group = (t, body) => `<section class="filt-group"><p class="filt-label">${t}</p><div class="filt-opts">${body}</div></section>`;
+  const kinds = [...new Set(all.map((i) => i.kind))].filter((k) => KINDS[k]);
+  const vers = [...new Set([V, ...roundTasks.map((t) => t.version || 1)])].sort((a, b) => b - a);
+  const pop = S.filt ? `<div class="filt-pop" role="dialog" aria-label="Filtros">
+    ${S.labelsOn ? group("Etiquetas", labelOpts(r)) : ""}
+    ${kinds.length > 1 ? group("Tipo", [["all", "Tudo"], ...kinds.map((k) => [k, KINDS[k]])].map(([k, l]) => opt("ov-kind", k, l, k === "all" ? !S.ov.kinds.size : S.ov.kinds.has(k))).join("")) : ""}
+    ${group("Tarefas", [...vers.map((v) => opt("b-tasks", v === V ? "now" : String(v), `Da v${v}${v === V ? " (atual)" : ""}`, v === tv, `As tarefas do que ${A_CL} pediu na v${v}`)), opt("b-tasks", "all", "Todas", tv == null, "As tarefas de todas as versões")].join(""))}
+    <section class="filt-group filt-togs"><button class="filt-tog ${S.bDone ? "on" : ""}" role="switch" aria-checked="${S.bDone}" data-act="b-done" title="As tarefas feitas e os cards prontos ou já mandados ${AO_CL}"><span class="filt-sw" aria-hidden="true"></span>Mostrar feitas e prontas</button></section>
+  </div>` : "";
+  const on = [...[...S.labelF].map((id) => labelById(id)).filter(Boolean).map((l) => [`label:${l.id}`, l.name]), ...[...S.ov.kinds].filter((k) => kinds.includes(k)).map((k) => [`kind:${k}`, KINDS[k]]),
+    tv == null ? null : ["tasks", `Tarefas da v${tv}`], S.bDone ? null : ["done", "Sem feitas e prontas"]].filter(Boolean);
+  const hi = all.length - items.length, ht = roundTasks.length - tasks.length;
+  const out = [hi ? plural(hi, "card", "cards") : "", ht ? plural(ht, "tarefa", "tarefas") : ""].filter(Boolean).join(" e ");
+  const btn = `<span class="fbar-bare fbar-head"><button class="btn hico ${on.length ? "on" : ""}" data-act="filt" aria-haspopup="dialog" aria-expanded="${!!S.filt}" title="Filtros: etiqueta, tipo, tarefas de qual versão e o que está feito" aria-label="Filtros">${ICO.funnel}${on.length ? `<b class="badge">${on.length}</b>` : ""}</button>${pop}</span>`;
+  const chips = `<div class="fchips bchips">${on.map(([k, l]) => `<button class="fchip" data-act="b-off" data-v="${esc(k)}" title="Tirar este filtro">${esc(l)}${ICO.drop}</button>`).join("")}${out ? `<span class="fchips-note">${out} fora do filtro · <button class="link" data-act="b-off" data-v="all">Mostrar tudo</button></span>` : ""}</div>`;
+  return { items, tasks, btn, chips };
+}
 // team: who does what. Each person is a column of items and tasks; dragging a card or a task to another column changes
 // who does it, and each column takes new tasks already assigned
 function boardPage(r) {
   const V = r.version || 1;
-  const all = itemsOf(r.id).sort((a, b) => a.scene - b.scene || a.sort - b.sort);
-  const tasks = S.tasks.filter((t) => t.round_id === r.id && (!t.done || (t.version || 1) === V)).sort((a, b) => a.done - b.done || a.sort - b.sort);
-  const ready = all.filter((i) => i.status === "ready" || i.visible).length;
+  const every = itemsOf(r.id).sort((a, b) => a.scene - b.scene || a.sort - b.sort);
+  const roundTasks = S.tasks.filter((t) => t.round_id === r.id);
+  const bf = boardFilters(r, every, roundTasks);
+  const all = bf.items, tasks = bf.tasks.sort((a, b) => a.done - b.done || a.sort - b.sort);
+  const ready = every.filter((i) => i.status === "ready" || i.visible).length;
   const keys = [...Object.keys(PEOPLE), ""];
   const cols = keys.map((k) => {
     const list = all.filter((i) => (i.assignee || "") === k);
@@ -1496,9 +1528,9 @@ function boardPage(r) {
       </div>
     </section>`;
   }).join("");
-  return head("A fazer", `${plural(all.length, "item", "itens")} · arraste um card ou uma tarefa para quem vai fazer`,
-    `${progress(ready, all.length, `${ready} de ${all.length} prontos`)}<button class="btn primary" data-act="task-new" data-who="${S.me && PEOPLE[S.me] ? S.me : ""}">${ICON.plus}<span>Nova tarefa</span></button>`, `${esc(r.code)} · v${V} · ${esc(r.title)}`) +
-    `<div class="main-body fill">${all.length || tasks.length ? `<div class="board" style="--cols:${keys.length}">${cols}</div>` : '<p class="empty">Nenhum item nesta rodada ainda. Use o + (Novo item), no alto, para começar.</p>'}</div>`;
+  return head("A fazer", `${plural(every.length, "item", "itens")} · arraste um card ou uma tarefa para quem vai fazer`,
+    `${progress(ready, every.length, `${ready} de ${every.length} prontos`)}${bf.btn}<button class="btn primary" data-act="task-new" data-who="${S.me && PEOPLE[S.me] ? S.me : ""}">${ICON.plus}<span>Nova tarefa</span></button>`, `${esc(r.code)} · v${V} · ${esc(r.title)}`) +
+    `<div class="main-body fill">${every.length || roundTasks.length ? `${bf.chips}<div class="board" style="--cols:${keys.length}">${cols}</div>` : '<p class="empty">Nenhum item nesta rodada ainda. Use o + (Novo item), no alto, para começar.</p>'}</div>`;
 }
 // how many options each person proposed for an item, most first
 function authorsOf(opts) {
@@ -3659,6 +3691,18 @@ const ACTS = {
   status(el) { patchItem(el.dataset.id, { status: el.dataset.v }); },
   review(el) { saveReview(el.dataset.id, { verdict: reviewOf(el.dataset.id)?.verdict === el.dataset.v ? null : el.dataset.v }); },
   "mat-tab"(el) { S.matTab = el.dataset.v; render(true); },
+  // A fazer's Filtros: the tasks of which version, the done ones, and the chips (Mostrar tudo takes every filter off)
+  "b-tasks"(el) { S.bTasks = el.dataset.v; render(true); },
+  "b-done"() { S.bDone = !S.bDone; render(true); },
+  "b-off"(el) {
+    const k = el.dataset.v;
+    if (k === "all") { S.labelF.clear(); S.ov.kinds.clear(); S.bTasks = "all"; S.bDone = true; }
+    else if (k.startsWith("label:")) S.labelF.delete(k.slice(6));
+    else if (k.startsWith("kind:")) S.ov.kinds.delete(k.slice(5));
+    else if (k === "tasks") S.bTasks = "all";
+    else if (k === "done") S.bDone = true;
+    S.peek.clear(); render(true);
+  },
   "mat-f"(el) { const k = el.dataset.k; if (["matState", "matType", "matSide"].includes(k)) { S[k] = el.dataset.v; render(true); } },
   "mat-off"(el) { const k = el.dataset.v; if (k === "all") S.matState = S.matType = S.matSide = "all"; else if (["matState", "matType", "matSide"].includes(k)) S[k] = "all"; render(true); },
   // ＋ Adicionar: the menu (files, a link, a text), then the link's or the text's form in its place
