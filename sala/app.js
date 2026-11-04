@@ -809,7 +809,25 @@ const drawsOf = (o) => S.annotations.filter((a) => a.option_id === o.id && !a.re
 // timecoded comments on a video (the animatic): each keeps its video (option_id) and the second it was written at (t_sec)
 const tcOf = (o) => S.comments.filter((c) => c.option_id === o.id && c.t_sec != null).sort((a, b) => a.t_sec - b.t_sec);
 const tcFmt = (t) => mmss(Math.floor(t || 0));
-const cBody = (c) => `${c.t_sec != null ? `<span class="tc-chip">${tcFmt(c.t_sec)}</span> ` : ""}${esc(c.body)}`;
+// a comment's text, its second first; on a video with versions the second also says which version ("v1 · 0:42")
+const cBody = (c, ver = "") => `${c.t_sec != null ? `<span class="tc-chip">${ver ? `${ver} · ` : ""}${tcFmt(c.t_sec)}</span> ` : ""}${esc(c.body)}`;
+// a card of videos only (the animatic and its new cuts): each video is a version of it, the newest first. The newest
+// is on screen unless another one was picked (S.vsel); the older ones stay to look back at, each with the comments made
+// on it, since a second of one cut is not the same moment in the next
+const vidVers = (it) => {
+  const all = optsOf(it.id).filter((o) => !isAngle(o) && !dropped(o));
+  return all.length && all.every((o) => o.mime.startsWith("video/")) ? [...all].sort((a, b) => b.created_at.localeCompare(a.created_at)) : [];
+};
+const vidOn = (it, vv = vidVers(it)) => vv.find((o) => o.id === S.vsel?.[it.id]) || vv[0];
+const vidName = (vv, o) => `Versão ${vv.length - vv.indexOf(o)}`;
+const vidShort = (vv, o) => `v${vv.length - vv.indexOf(o)}`;
+// the versions as pills over the video: the newest says "atual", an older one how many comments it got
+const vidPills = (it, vv, on) => vv.length < 2 ? "" : `<div class="vvers" role="tablist" aria-label="Versões do vídeo">${vv.map((o, i) => {
+  const n = tcOf(o).length;
+  return `<button class="${o === on ? "on" : ""}" data-act="vsel" data-id="${it.id}" data-opt="${o.id}" role="tab" aria-selected="${o === on}">${vidName(vv, o)}<small>${i === 0 ? "atual" : n ? plural(n, "comentário", "comentários") : "anterior"}</small></button>`;
+}).join("")}</div>`;
+// what was said about a version of an item: the comments on its videos or images (option_id) and the card's own ones
+const saidIn = (it, v) => commentsOf(it.id).filter((c) => { const o = v != null && c.option_id ? S.options.find((x) => x.id === c.option_id) : null; return !o || verOf(o) === v; });
 async function signed(path, name, download) {
   const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(path, 3600, download ? { download: name || true } : undefined);
   if (error) throw error;
@@ -1748,7 +1766,8 @@ function summaryPage(r) {
   const next = scenes.find(([, list]) => list.some((i) => i.decision === "pending"));
   const started = items.some((i) => i.decision !== "pending" || i.chosen_option);
   const cell = (it) => {
-    const opts = optsOf(it.id);
+    // a video's versions are one thing to approve: the one on screen (the newest) stands for the card
+    const vv = vidVers(it), opts = vv.length > 1 ? [vidOn(it, vv)] : optsOf(it.id);
     const [cls, label] = clientState(it);
     const href = sceneHref(r.id, it.scene, it.id);
     return `<div class="ovx"><div class="ovx-head"><i class="ovx-dot ${cls || "pending"}" title="${label}"></i><a class="ovx-title" href="${href}">${esc(it.title)}</a><span class="ovx-meta ${cls}">${label}</span></div>
@@ -1802,7 +1821,7 @@ function wkDid(r, it) {
   // the version the client answered: the current one once there is feedback on it, else the one before
   const seen = Math.min(r.version || 1, fbVers(r.id)[0] || Math.max(1, (r.version || 1) - 1));
   const f = fbOf(r.id, it.id, seen) || fbOf(r.id, it.id);
-  const room = commentsOf(it.id).filter((c) => c.side !== "time"), extra = f ? lines(f.client_extra) : [];
+  const room = saidIn(it, f?.version ?? seen).filter((c) => c.side !== "time"), extra = f ? lines(f.client_extra) : [];
   const said = { f, room, extra };
   const chosen = optsOf(it.id).find((o) => isPick(it, o));
   // approved as a whole: the ✓ among what the client saw in that version, else the first of what it saw
@@ -1925,7 +1944,6 @@ function focusPage(r, n, items, it) {
   const stepper = `<a class="btn hico" href="${sceneHref(r.id, n)}" title="Todos os cards de ${esc(sceneName(n))}" aria-label="Todos os cards da página">${ICON.grid}</a>`
     + arrow(prev, -1, ICON.prev, "Card anterior") + arrow(next, 1, ICON.next, "Próximo card");
   const tabsOf = TEAM && it.kind === "locacao" ? { ...ITEM_TABS, cena3d: "Cena 3D" } : ITEM_TABS; // Cena 3D: team, locations only
-  const tab = tabsOf[S.page.tab] ? S.page.tab : tabsOf[S.itemTab] ? S.itemTab : "versoes";
   const V = r.version || 1;
   const f = fbOf(r.id, it.id, V - 1) || fbOf(r.id, it.id);
   const ts = f ? tasksOf(r.id, it.id, f.version) : [];
@@ -1933,6 +1951,9 @@ function focusPage(r, n, items, it) {
   const sub = [KINDS[it.kind] ? `<span class="ihead-kind">${KINDS[it.kind]}</span>` : "", st, f?.summary ? esc(f.summary) : it.brief ? esc(it.brief) : "", whoChip(it),
     ts.length ? `<span class="ihead-n" title="Tarefas feitas">${ts.filter((t) => t.done).length}/${ts.length} tarefas</span>` : ""].filter(Boolean).join(" ");
   const counts = { versoes: optsOf(it.id).filter((o) => !dropped(o) && !isAngle(o)).length, pedido: commentsOf(it.id).length + (f ? lines(f.client_extra).length : 0), refs: S.wkRefs.filter((x) => x.item_id === it.id).length + refsOf(it).length, cena3d: optsOf(it.id).filter((o) => isAngle(o) && !dropped(o)).length };
+  // the tab of the address, else the one last used on any card unless this card has nothing in it (an empty
+  // Referências in front of an animatic looked like the video was gone), else Versões
+  const tab = tabsOf[S.page.tab] ? S.page.tab : tabsOf[S.itemTab] && (S.itemTab === "versoes" || counts[S.itemTab]) ? S.itemTab : "versoes";
   const VIEW = { versoes: [ICON.grid, "Versões"], refs: [CLIP, "Referências"], cena3d: [CUBE, "Cena 3D"] };
   const views = `<span class="hgroup seg-ico">${Object.keys(tabsOf).filter((k2) => VIEW[k2]).map((k2) => `<a class="btn hico ${tab === k2 || (k2 === "versoes" && tab === "pedido") ? "on" : ""}" href="${sceneHref(r.id, n, it.id)}/${k2}" title="${VIEW[k2][1]}${counts[k2] ? ` · ${counts[k2]}` : ""}" aria-label="${VIEW[k2][1]}">${VIEW[k2][0]}</a>`).join("")}</span>`;
   // the request and the comments open in the panel, as from a card's yellow line
@@ -1962,7 +1983,7 @@ function compareButton(it) {
 // video replace the comments button
 const tcSideOn = () => (S.tcSide ??= store.get("sala-tcside") === "1");
 const tcSideButton = (o) => { const n = tcOf(o).length; return `<button class="btn hico ${tcSideOn() ? "on" : ""}" data-act="tc-side" aria-pressed="${tcSideOn()}" title="${tcSideOn() ? "Fechar" : "Abrir"} os comentários do vídeo" aria-label="Comentários do vídeo">${CHAT}${n ? `<span class="badge">${n}</span>` : ""}</button>`; };
-const videoHeadActions = (it) => (optsOf(it.id)[0] ? tcSideButton(optsOf(it.id)[0]) : "") + (it.decision !== "pending"
+const videoHeadActions = (it) => ((vidOn(it) || optsOf(it.id)[0]) ? tcSideButton(vidOn(it) || optsOf(it.id)[0]) : "") + (it.decision !== "pending"
   ? `<button class="btn" data-act="undo" data-id="${it.id}">Mudar decisão</button>`
   : `<button class="btn hico" data-act="ask-change" data-id="${it.id}" title="Pedir ajuste: escreva o que mudar" aria-label="Pedir ajuste">${ICO.redo}</button><button class="btn primary" data-act="approve" data-id="${it.id}">Aprovar</button>`)
   + (ADMIN ? `<button class="btn hico wk-rm-item" data-act="wk-item-off" data-id="${it.id}" title="Tirar o item: ${esc(A_CL)} deixa de ver o item inteiro. Só você vê este botão." aria-label="Tirar o item">${ICO.drop}</button>` : "");
@@ -1975,6 +1996,9 @@ function chatButton(it) {
 // approve, ask for a change, or undo: under the client's card, or in the page header for the video-only round
 function clientActions(it) {
   const opts = optsOf(it.id);
+  // the versions of a video are not options to choose from: the card is approved as it is now
+  if (vidVers(it).length > 1) return it.decision !== "pending" ? `<button class="btn" data-act="undo" data-id="${it.id}">Mudar decisão</button>`
+    : `<button class="btn primary" data-act="approve" data-id="${it.id}">Aprovar</button><button class="btn" data-act="ask-change" data-id="${it.id}">Pedir ajuste</button>`;
   const single = opts.length === 1 || it.mode === "set";
   const ci = opts.findIndex((o) => o.id === it.chosen_option);
   const L = ci >= 0 ? letter(ci) : "";
@@ -1990,12 +2014,13 @@ function clientRow(it, bare = false) {
   const decided = it.decision !== "pending";
   const canPick = !decided && !single;
   const [cls, label] = clientState(it);
-  const vid = opts.length === 1 && opts[0].mime.startsWith("video/") ? opts[0] : null;
+  // a card of videos plays the version on screen (the newest unless another was picked), its versions as pills over it
+  const vv = vidVers(it), vid = vv.length ? vidOn(it, vv) : null;
   const actions = clientActions(it);
   return `<article class="citem ${S.flash === it.id ? "flash" : ""}" id="item-${it.id}">
     ${bare ? "" : `<header class="citem-head"><span class="kind">${KINDS[it.kind] || ""}</span><h3>${esc(it.title)}</h3><span class="state ${cls}">${label}</span><span class="grow"></span>${compareButton(it)}${chatButton(it)}${itemOffButton(it)}</header>`}
     ${voicesLine(it)}
-    ${vid ? (() => { const side = !bare || tcSideOn(); return `<div class="cvideo cvsplit tcwrap ${side ? "side-on" : ""}"><div class="cv-left">${media(vid, "big").replace(" autoplay", "")}${tcBlock(it, vid, false)}</div>${side ? `<aside class="tc-side" aria-label="Comentários no vídeo"><p class="tc-side-head">Comentários no vídeo <small>${tcOf(vid).length || ""}</small></p>${tcList(vid)}</aside>` : ""}</div>`; })() : ""}
+    ${vid ? (() => { const side = !bare || tcSideOn(); return `<div class="cvideo cvsplit tcwrap ${side ? "side-on" : ""}"><div class="cv-left">${vidPills(it, vv, vid)}${media(vid, "big").replace(" autoplay", "")}${tcBlock(it, vid, false)}</div>${side ? `<aside class="tc-side" aria-label="Comentários no vídeo"><p class="tc-side-head">Comentários ${vv.length > 1 ? `na ${vidName(vv, vid).toLowerCase()}` : "no vídeo"} <small>${tcOf(vid).length || ""}</small></p>${tcList(vid)}</aside>` : ""}</div>`; })() : ""}
     <div class="ctiles n${Math.min(opts.length, 3)} ${canPick ? "pickable" : ""}" ${vid ? "hidden" : ""}>${opts.map((o, i) => `<figure class="ctile ${o.id === it.chosen_option ? "chosen" : ""}">
       <button class="ctile-img" data-act="${canPick ? "choose" : "zoom"}" data-id="${it.id}" data-opt="${o.id}" data-i="${i}" aria-label="${canPick ? (o.id === it.chosen_option ? "Desfazer a escolha" : `Escolher a opção ${letter(i)}`) : "Ver em tela cheia"}" ${canPick && o.id === it.chosen_option ? 'title="Clique de novo para desfazer"' : ""}>${media(o)}${vplayBtn(o)}</button>
       ${single ? "" : `<span class="lab">${letter(i)}</span>`}
@@ -2272,7 +2297,8 @@ function retPanel(r, it, f, o) {
   const pics = refs.filter((x) => x.kind === "image" || (x.kind === "link" && isImgUrl(x.url)));
   const vids = refs.filter((x) => x.kind === "video");
   const links = refs.filter((x) => x.kind === "link" && !isImgUrl(x.url));
-  const said = commentsOf(it.id).filter((c) => c.side === "cliente");
+  // what the client said about this version: a comment on a video of another version belongs to that one's Retorno
+  const said = saidIn(it, f.version).filter((c) => c.side === "cliente");
   const extra = lines(f.client_extra), notes = lines(f.notes);
   const saidOpen = !!S.ret.said[it.id], callOpen = !!S.ret.call[it.id];
   const nx = answerOpts(it, f.version), nv = f.version + 1;
@@ -2436,7 +2462,7 @@ function itemVersions(r, it, chips = null) {
 }
 // Pedido: what the client said (in the room and outside it), our notes, the tasks and what is still open
 function itemPedido(r, it, f) {
-  const comments = commentsOf(it.id);
+  const comments = saidIn(it, f?.version);
   const extra = f ? lines(f.client_extra) : [], notes = f ? lines(f.notes) : [];
   const ts = f ? tasksOf(r.id, it.id, f.version) : [];
   const ps = pendOf(r.id, it.id);
@@ -2546,9 +2572,17 @@ function drawer() {
     const o = S.options.find((x) => x.id === (f.base_option || it.chosen_option));
     return `<aside class="drawer wide" aria-label="Pedido">${headHtml}${tabs}<div class="drawer-body">${retPanel(roundOf(f.round_id), it, f, o)}</div></aside>`;
   }
+  // a video with versions: the comments of the version on screen (and the card's own) first; each older version's in a
+  // closed group under them, every second saying its version, so a note on the old cut never reads as one on the new
+  const vv = vidVers(it), on = vv.length > 1 ? vidOn(it, vv) : null;
+  const verOfC = (c) => (on && c.option_id ? vv.find((o) => o.id === c.option_id) : null);
+  const msg = (c) => { const o = verOfC(c); return `<div class="msg ${c.side}"><p class="meta"><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)} · ${fmtTime(c.created_at)}</p><p class="body">${cBody(c, o ? vidShort(vv, o) : "")}</p></div>`; };
+  const olds = on ? vv.filter((o) => o !== on).map((o) => [o, comments.filter((c) => c.option_id === o.id)]).filter(([, l]) => l.length) : [];
+  const here = on ? comments.filter((c) => !olds.some(([o]) => o.id === c.option_id)) : comments;
   return `<aside class="drawer" aria-label="Comentários">
     ${headHtml}${tabs}
-    <div class="msgs" data-keep="msgs">${comments.map((c) => `<div class="msg ${c.side}"><p class="meta"><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)} · ${fmtTime(c.created_at)}</p><p class="body">${cBody(c)}</p></div>`).join("") || '<p class="none">Nenhum comentário ainda.</p>'}</div>
+    <div class="msgs" data-keep="msgs">${here.map(msg).join("") || (olds.length ? `<p class="none">Nenhum comentário na ${vidName(vv, on).toLowerCase()} ainda.</p>` : '<p class="none">Nenhum comentário ainda.</p>')}
+      ${olds.map(([o, l]) => `<details class="msgs-old" data-k="${o.id}" ${S.oldOpen?.has(o.id) ? "open" : ""}><summary>${vidName(vv, o)} · ${plural(l.length, "comentário", "comentários")}</summary>${l.map(msg).join("")}</details>`).join("")}</div>
     <form class="compose" data-comment="${it.id}" data-mode="${changes ? "changes" : ""}">
       ${changes ? '<p class="hintline">Conte o que ajustar. O item fica marcado como “Ajuste pedido”.</p>' : ""}
       <textarea class="field" name="body" rows="3" placeholder="${changes ? "O que vocês querem ajustar?" : "Escreva um comentário"}" required maxlength="4000" aria-label="Comentário"></textarea>
@@ -2712,9 +2746,13 @@ const tcList = (o) => `<ol class="tc-list">${tcOf(o).map((c) => `<li class="${c.
 function tcBlock(it, o, withList = true) {
   if (!o.mime.startsWith("video/")) return "";
   const cs = tcOf(o), d = (S.vdur || {})[o.id] || 0, now = (S.vtime || {})[o.id] || 0, at = (t) => (d ? `left:${Math.min(100, (t / d) * 100)}%` : "left:0");
+  // an older version of the video is there to look back at: its marks and its list, no field, so a comment never lands
+  // on a cut that was replaced
+  const vv = vidVers(it), cur = vv.length > 1 && vv.includes(o) && o !== vv[0] ? vv[0] : null;
   return `<div class="tc" data-tc="${o.id}">
     <div class="tc-bar" data-act="tc-bar" title="Clique pra ir até esse ponto do vídeo">${cs.map((c) => `<button class="tc-mark ${c.side}" data-act="tc-seek" data-t="${c.t_sec}" style="${at(c.t_sec)}" title="${tcFmt(c.t_sec)} · ${esc(c.author)}: ${esc(c.body.slice(0, 90))}" aria-label="Ir pra ${tcFmt(c.t_sec)}"></button>`).join("")}<i class="tc-head" aria-hidden="true" style="${at(now)}"></i></div>
-    <form class="tc-form" data-tc-form="${it.id}" data-opt="${o.id}"><span class="tc-now" title="O comentário fica preso neste momento">${tcFmt(now)}</span><input class="tc-in" name="body" autocomplete="off" placeholder="Pause onde quiser e escreva o comentário deste momento…" aria-label="Comentário neste momento do vídeo"><button class="btn primary small">Comentar</button></form>
+    ${cur ? `<p class="tc-old"><span class="tc-now">${tcFmt(now)}</span><span>${vidName(vv, o)}, só pra consulta. Os comentários novos vão na <button class="link" data-act="vsel" data-id="${it.id}" data-opt="${cur.id}">${vidName(vv, cur).toLowerCase()}</button>.</span></p>`
+      : `<form class="tc-form" data-tc-form="${it.id}" data-opt="${o.id}"><span class="tc-now" title="O comentário fica preso neste momento">${tcFmt(now)}</span><input class="tc-in" name="body" autocomplete="off" placeholder="Pause onde quiser e escreva o comentário deste momento…" aria-label="Comentário neste momento do vídeo"><button class="btn primary small">Comentar</button></form>`}
     ${withList ? tcList(o) : ""}
   </div>`;
 }
@@ -2850,7 +2888,7 @@ function pedidoSec(it, o, vs) {
   const refs = fbRefsOf(f);
   const imgs = vsImgRefs(f);
   const other = refs.filter((x) => !imgs.includes(x));
-  const said = commentsOf(it.id).filter((c) => c.side === "cliente");
+  const said = saidIn(it, f.version).filter((c) => c.side === "cliente");
   const extra = lines(f.client_extra);
   const open = !!S.ret.said[it.id];
   return `<div class="lb-sec ped">
@@ -2869,7 +2907,10 @@ function teamLightbox(it, opts, card, i) {
   // card's own place (letter, position on the page) stays the card's
   const o = lbShown(card), root = stackRoot(card), hist = verList(root), vi = hist.indexOf(o), face = faceOf(root);
   const wk = wkOpts(it.id);
-  const lab = dropped(card) ? "descartada" : offWK(card) ? `fora ${DA_CL}` : it.mode === "set" ? `${wk.indexOf(card) + 1} de ${wk.length}` : `Opção ${letterOf(it, card)} de ${wk.length}`;
+  // a video's versions are not options: "Versão 1 de 2", and whether the client sees it
+  const vv = vidVers(it);
+  const lab = vv.length > 1 && vv.includes(card) ? `${vidName(vv, card)} de ${vv.length}${offWK(card) ? ` · fora ${DA_CL}` : ""}`
+    : dropped(card) ? "descartada" : offWK(card) ? `fora ${DA_CL}` : it.mode === "set" ? `${wk.indexOf(card) + 1} de ${wk.length}` : `Opção ${letterOf(it, card)} de ${wk.length}`;
   const pos = S.lightbox.ov ? S.ovList.findIndex((x) => x.id === it.id && x.i === i) : -1;
   const adj = !!S.lbx && S.lbx.id === o.id;
   const many = !adj && (S.lightbox.ov ? S.ovList.length > 1 : opts.length > 1);
@@ -2896,6 +2937,7 @@ function teamLightbox(it, opts, card, i) {
     <div class="lb-top"><span><b>${esc(it.title)}</b> · ${lab}${vers}${hist.length > 1 ? ` · versão ${vi + 1}/${hist.length}${o.id === face.id ? " (atual)" : ""}` : ""}${o.created_by ? ` · por ${esc(o.created_by)}` : ""}${pos >= 0 ? ` · ${pos + 1} de ${S.ovList.length} nesta página` : ""}</span>${tools}</div>
     <div class="lb-split ${S.infoOff ? "info-off" : ""}">
       <div class="lb-left">
+        ${vidPills(it, vidVers(it), o)}
         <div class="lb-stage">
           ${many ? `<button class="lb-nav prev" data-act="lb-step" data-v="-1" aria-label="Anterior">‹</button><button class="lb-nav next" data-act="lb-step" data-v="1" aria-label="Próxima">›</button>` : ""}
           ${frame}
@@ -3205,6 +3247,14 @@ const ACTS = {
   "cmp-opt"(el) { S.lightbox.i = +el.dataset.v; render(true); },
   "lb-bg"(el, e) { if (e.target === el || e.target.classList.contains("lb-stage")) ACTS["lb-close"](); },
   "tc-side"() { S.tcSide = !tcSideOn(); store.set("sala-tcside", S.tcSide ? "1" : "0"); render(true); },
+  // a version of a video card goes on screen: in the card, and in Ver grande when it is open on that card
+  vsel(el) {
+    const it = itemOf(el.dataset.id), o = S.options.find((x) => x.id === el.dataset.opt);
+    if (!it || !o) return;
+    (S.vsel ||= {})[it.id] = o.id;
+    if (S.lightbox?.id === it.id && !S.lightbox.ov) { const k = optsOf(it.id).indexOf(o); if (k >= 0) S.lightbox.i = k; }
+    render(true);
+  },
   // timecoded comments: a time or a mark jumps the video there and pauses; a click on the bar goes to that point
   "tc-seek"(el) { const v = el.closest(".tcwrap, .lb")?.querySelector("video"); if (!v) return; v.pause(); v.currentTime = +el.dataset.t; tcSync(v); },
   "tc-bar"(el, e) { const v = el.closest(".tcwrap, .lb")?.querySelector("video"); if (!v || !v.duration || e.target !== el) return; const r = el.getBoundingClientRect(); v.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * v.duration; tcSync(v); },
@@ -3943,6 +3993,8 @@ document.addEventListener("dragover", (e) => {
   d?.classList.add("over");
 });
 document.addEventListener("dragleave", (e) => { if (!e.relatedTarget || !$app.contains(e.relatedTarget)) document.querySelectorAll(".over").forEach((x) => x.classList.remove("over")); });
+// an older version's comments in the panel stay open (or closed) across the redraws
+document.addEventListener("toggle", (e) => { const d = e.target; if (!d.matches?.(".msgs-old")) return; S.oldOpen ||= new Set(); if (d.open) S.oldOpen.add(d.dataset.k); else S.oldOpen.delete(d.dataset.k); }, true);
 document.addEventListener("drop", (e) => {
   const inner = innerDrag;
   innerDrag = false;

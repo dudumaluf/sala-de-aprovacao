@@ -1430,6 +1430,8 @@ textarea.ret-notes { display: block; height: auto; min-height: 80px; margin-top:
 .fbar-end { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .fbar .seg button, .fbtn, .fopt, .fchip, .filt-tog, .fchips-clear, .mh-right .btn { white-space: nowrap; }
 .fbody { padding-top: 0; }
+/* the cards' rings (the yellow of an open request, the selection) sit just outside them: room for them at the top */
+.fbody > .scols:first-child { margin-top: 4px; }
 .fbody > .fchips + .scols, .fbody > .fchips + .empty { margin-top: 18px; }
 .fbody > .ov-bar + .scols, .fbody > .ov-bar + .empty { margin-top: 20px; }
 .seg-view button { width: 32px; padding: 0; justify-content: center; }
@@ -2083,6 +2085,23 @@ body.est-open .update-bar { bottom: auto; top: 6px; height: 40px; }
 .tc-side-head { margin: 0 0 10px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
 .tc-side-head small { margin-left: 4px; color: var(--dim); font-weight: 500; }
 .tc-side .tc-list { max-height: none; flex: 1; min-height: 0; gap: 12px; }
+/* the versions of a video as pills over it (newest first, "atual"); an older one is read-only, its comments apart */
+.vvers { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.vvers button { display: inline-flex; align-items: baseline; gap: 6px; height: 28px; padding: 0 12px; border: 1px solid var(--line2); border-radius: 999px; background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; transition: color 0.15s, border-color 0.15s; }
+.vvers button small { color: var(--dim); font-size: 11px; }
+.vvers button:hover { color: var(--text); border-color: var(--muted); }
+.vvers button.on { background: var(--raise2); border-color: var(--line2); color: var(--text); }
+.vvers button.on small { color: var(--accent); }
+.lb-left > .vvers { width: min(1100px, calc(100% - 48px)); margin: 4px auto 10px; }
+.tc-old { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--muted); font-size: 13px; }
+.tc-old .link { padding: 0; color: var(--text); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.tc-old .link:hover { color: var(--accent); }
+.msgs-old { margin-top: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
+.msgs-old > summary { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; cursor: pointer; }
+.msgs-old > summary:hover { color: var(--text); }
+.msgs-old[open] > summary { margin-bottom: 12px; }
+.msgs-old .msg { opacity: 0.85; }
+.msgs-old .msg + .msg { margin-top: 14px; }
 @media (max-width: 1000px) { .cvideo.cvsplit, .cvideo.cvsplit.side-on { grid-template-columns: 1fr; } .tc-side { position: static; max-height: none; padding: 12px 0 0; border-left: 0; border-top: 1px solid var(--line); } }
 
 /* ---------- etiquetas (team): a name and a color (--lc) on the cards, in Filtros, in the card's ⋯ and in the selection bar ---------- */
