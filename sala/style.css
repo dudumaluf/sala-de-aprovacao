@@ -2259,3 +2259,8 @@ a.mat-hero.hero-empty:hover .mat-empty { color: var(--text); }
 /* A fazer's Filtros: the chips and what is left out, over the columns */
 .bchips { flex: none; margin: 0 0 14px; }
 .bchips:empty { display: none; }
+
+/* the studio's Guardar no card, and a card whose ✦ opens its kit */
+.est-kit { color: var(--muted); }
+.est-kit:hover { color: var(--accent); border-color: var(--accent-edge); }
+.ibtn.on[data-act="estudio-kit"] { color: var(--accent); }

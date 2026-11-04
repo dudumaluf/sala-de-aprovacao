@@ -511,7 +511,7 @@ function parseMmss(v) {
 // past that comes in pages. When the options passed 1000, every newer one was saved but never reached the room (the
 // uploads looked lost). Each page is ordered by the column and then by the table's key, so no row is skipped or repeated
 const PAGE_ROWS = 1000;
-const KEY_OF = { option_reviews: ["option_id"], envio: ["option_id", "version"], item_feedback: ["round_id", "item_id", "version"], item_labels: ["item_id", "label_id"], option_labels: ["option_id", "label_id"], blocking_shots: ["option_id"], round_notes: ["round_id"] };
+const KEY_OF = { item_kits: ["item_id"], option_reviews: ["option_id"], envio: ["option_id", "version"], item_feedback: ["round_id", "item_id", "version"], item_labels: ["item_id", "label_id"], option_labels: ["option_id", "label_id"], blocking_shots: ["option_id"], round_notes: ["round_id"] };
 async function allRows(t, col, cols = "*") {
   const out = [];
   for (let from = 0; ; from += PAGE_ROWS) {
@@ -534,18 +534,19 @@ async function load(force = false) {
   // (and the marks on images, atualizar-2026-11f.sql, likewise)
   const labs = TEAM ? [q("labels", "sort"), q("item_labels", "added_at"), q("option_labels", "added_at")] : [];
   // (and a package's links and texts, atualizar-2026-11g.sql: without them its old note shows)
-  const got = await Promise.all([q("rounds", "sort"), q("items", "sort"), q("options", "sort"), q("comments", "created_at"), q("requests", "sort"), q("request_files", "created_at"), q("annotations", "created_at"), ...team, ...labs, q("request_notes", "created_at")]);
-  const nres = got.pop();
+  // (and the cards' kits for the studio, atualizar-2026-11j.sql, team only)
+  const got = await Promise.all([q("rounds", "sort"), q("items", "sort"), q("options", "sort"), q("comments", "created_at"), q("requests", "sort"), q("request_files", "created_at"), q("annotations", "created_at"), ...team, ...labs, q("request_notes", "created_at"), ...(TEAM ? [q("item_kits", "updated_at")] : [])]);
+  const kres = TEAM ? got.pop() : null, nres = got.pop();
   const res = got.slice(0, got.length - labs.length), lab = got.slice(res.length);
   const bad = res.find((r) => r.error);
   if (bad) throw bad.error;
-  const labelsOn = TEAM && !lab[0].error && !lab[1].error, imgMarks = labelsOn && !lab[2].error, notesOn = !nres.error;
-  const sig = JSON.stringify([...res, ...(labelsOn ? lab.slice(0, 2) : []), ...(imgMarks ? [lab[2]] : []), ...(notesOn ? [nres] : [])].map((r) => r.data));
+  const labelsOn = TEAM && !lab[0].error && !lab[1].error, imgMarks = labelsOn && !lab[2].error, notesOn = !nres.error, kitsOn = !!kres && !kres.error;
+  const sig = JSON.stringify([...res, ...(labelsOn ? lab.slice(0, 2) : []), ...(imgMarks ? [lab[2]] : []), ...(notesOn ? [nres] : []), ...(kitsOn ? [kres] : [])].map((r) => r.data));
   if (!force && sig === S.sig) return false;
   const [rounds, items, options, comments, requests, files, annotations, reviews = [], feedback = [], wkRefs = [], tasks = [], pendencias = [], roundNotes = [], envio = [], bshots = []] = res.map((r) => r.data);
   Object.assign(S, { rounds, items, options, comments: comments.filter((c) => !c.deleted_at), requests, files, annotations, reviews, feedback, wkRefs, tasks, pendencias, roundNotes, envio, bshots,
     labels: labelsOn ? lab[0].data : [], itemLabels: labelsOn ? lab[1].data : [], optLabels: imgMarks ? lab[2].data : [], labelsOn, imgMarks,
-    notes: notesOn ? nres.data : [], notesOn, sig });
+    notes: notesOn ? nres.data : [], notesOn, kits: new Map(kitsOn ? kres.data.map((k) => [k.item_id, k]) : []), kitsOn, sig });
   // the etiquetas marked padrão filter the room as it opens: once per tab, so a filter someone took off stays off
   if (labelsOn && !S.labelInit) { S.labelInit = true; if (!S.labelF.size) for (const l of S.labels) if (l.padrao) S.labelF.add(l.id); }
   // an etiqueta someone deleted leaves the filter, a card someone deleted leaves the selection
@@ -914,7 +915,16 @@ const estCtx = () => ({ sb, SIDE, TEAM, S, esc, itemOf, optsOf, letterOf, letter
   heldRender: () => Estudio.heldRender(), takeAngle: (id) => Estudio.takeAngle(estCtx(), id), dropHeld: () => Estudio.dropHeld(estCtx()),
   // a 3D opened from a shot's card: Renderizar sends the new angle's render to that card (how: its prompt box's text and
   // Fiel / Solto); ✕ and Esc go back (leave3d)
-  renderBlocking: (optionId, itemId, how = {}) => Estudio.renderBlocking(estCtx(), { optionId, itemId, ...how }), leave3d });
+  renderBlocking: (optionId, itemId, how = {}) => Estudio.renderBlocking(estCtx(), { optionId, itemId, ...how }), leave3d,
+  // a card's kit (Guardar no card): the studio reads it to open the card already set up, and writes it back
+  kitsOn: !!S.kitsOn, kitOf: (id) => S.kits?.get(id) || null, saveKit });
+async function saveKit(itemId, kit) {
+  const row = { item_id: itemId, kit, updated_by: myName(), updated_at: new Date().toISOString() };
+  const { error } = await sb.from("item_kits").upsert(row);
+  if (error) throw error;
+  S.kits.set(itemId, row);
+  render(true);
+}
 // Galeria (galeria.js): everything the room made or received, to filter, select and act on with the right click.
 // Team only, loaded on the first visit; it draws inside page() like any other page
 let Galeria = null;
@@ -2263,7 +2273,9 @@ const shotBtn = (it, o = null) => {
   if (!TEAM) return "";
   const l3d = shot3d(it), empty = !optsOf(it.id).length;
   const blk = empty ? blockOfShot(it) : null;
-  const ai = !AI ? "" : o && !o.mime.startsWith("video/") ? `<button class="ibtn" data-act="estudio" data-id="${o.id}" title="Editar esta imagem com IA: ela entra como base" aria-label="Editar esta imagem com IA">${Estudio.ICONS.spark}</button>`
+  // a card with a kit (Guardar no card, in the studio): its ✦ opens the studio with it, whatever the card shows
+  const ai = !AI ? "" : S.kits?.has(it.id) ? `<button class="ibtn on" data-act="estudio-kit" data-item="${it.id}" title="Criar com IA com o kit deste card: as referências, o prompt e o modelo guardados" aria-label="Criar com IA com o kit do card">${Estudio.ICONS.spark}</button>`
+    : o && !o.mime.startsWith("video/") ? `<button class="ibtn" data-act="estudio" data-id="${o.id}" title="Editar esta imagem com IA: ela entra como base" aria-label="Editar esta imagem com IA">${Estudio.ICONS.spark}</button>`
     : blk ? `<button class="ibtn" data-act="estudio" data-id="${blk.id}" title="Render do blocking deste plano: o blocking é a base (o ✕ dela vira Criar com o kit)" aria-label="Render do blocking">${Estudio.ICONS.spark}</button>`
     : empty ? `<button class="ibtn" data-act="estudio-criar" data-round="${it.round_id}" data-scene="${it.scene}" data-item="${it.id}" title="Criar com IA: já vem com o elenco, a locação e o produto aprovados da cena${it.kind === "plano" ? " e o texto deste plano" : ""}" aria-label="Criar com IA">${Estudio.ICONS.spark}</button>` : "";
   return ai + (l3d ? `<a class="ibtn ibtn-3d" href="${l3d}" title="Blocking 3D deste plano${it.variants?.shot ? ", já na câmera dele" : ""}" aria-label="Blocking 3D deste plano">3D</a>` : "");
@@ -3805,6 +3817,7 @@ const ACTS = {
   desenhar(el) { Estudio.openDraw(estCtx(), { optionId: el.dataset.id }); },
   estudio(el) { Estudio.openStudio(estCtx(), { optionId: el.dataset.id }); },
   "estudio-criar"(el) { Estudio.openCreate(estCtx(), { roundId: el.dataset.round, scene: +el.dataset.scene, itemId: el.dataset.item }); },
+  "estudio-kit"(el) { Estudio.openKit(estCtx(), { itemId: el.dataset.item }); },
   "add-item"(el) { S.modal = { add: el.dataset.scene !== undefined ? +el.dataset.scene : S.page.kind === "scene" ? S.page.scene : 0 }; render(true); $app.querySelector('[data-form="add-item"] [name="label"]')?.focus(); },
   motion(el) { openMotion(el.dataset.id, el.dataset.o || null); },
   // Virar card novo (one click): the image on the card becomes a card of

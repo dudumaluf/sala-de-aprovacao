@@ -2398,6 +2398,7 @@ function barHtml() {
       <button class="est-pill est-tog" data-k="sound" hidden></button>
       <button class="est-pill est-tog" data-k="dest" hidden></button>
       <span class="grow"></span>
+      <button class="est-pill est-kit" data-k="kit-save" hidden title="Guardar no card: as referências na ordem, o prompt, o modelo e a duração. O ✦ do card abre o estúdio assim"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 2.5h8v11l-4-3-4 3z" stroke-linejoin="round"/></svg><span>Guardar no card</span></button>
       <button class="est-pill est-enh" data-k="enhance" aria-label="Melhorar o prompt" hidden>${ICONS.wand}</button>
       <label class="est-pill est-n" title="Quantas gerar de uma vez"><select data-k="count">${[1, 2, 3, 4].map((n) => `<option value="${n}">×${n}</option>`).join("")}</select></label>
       <button class="est-go" data-k="go">${ICONS.spark}<span>Gerar</span></button>
@@ -2789,6 +2790,9 @@ function syncBar() {
   }
   const ap = $('select[data-k="aspect"]')?.closest(".est-pill");
   if (ap) ap.title = !video && E.aspect === "auto" ? `Proporção: Auto ${E.base ? "mantém a da imagem base" : "deixa o modelo escolher"}` : "Proporção";
+  // Guardar no card: any studio opened for a card (team, with the item_kits table)
+  const ks = $('[data-k="kit-save"]');
+  if (ks) ks.hidden = !E.item || E.mode === "draw" || !E.ctx.kitsOn;
   const snd = $('[data-k="sound"]');
   if (snd) {
     snd.hidden = !video || m.way === "guide";
@@ -3143,6 +3147,7 @@ async function onClick(e) {
   if (k === "mention-tab") { const m = E.mention; if (m) { m.tab = b.dataset.v; m.page = 1; m.i = 0; } return syncMention(); }
   if (k === "mention-more") { const m = E.mention; if (m) { m.page++; m.i = m.items.length; } return syncMention(); }
   if (k === "enhance") return enhance();
+  if (k === "kit-save") return saveKit();
   if (k === "save") return saveDrawing();
   if (k === "sound") { E.sound = !E.sound; return syncBar(); }
   if (k === "pick") { E.pick = !E.pick; E.pickBase = false; return syncPicker(); }
@@ -3548,7 +3553,43 @@ export async function openCreate(ctx, { roundId, scene, itemId }) {
   const item = (itemId && ctx.itemOf(itemId)) || items[0] || null, shot = item?.kind === "plano" ? item : null;
   const cast = subject || product ? `${subject}${product}.` : "";
   const prompt = !all.length && !shot ? "" : [shot ? `${shot.title}, cena ${name}: ${shot.brief}` : cast ? `Plano do filme, cena ${name}:` : "", cast, look ? `Luz: ${look}.` : ""].filter(Boolean).join("\n").replace(/:\n(?=@)/, ": ");
-  open(ctx, { mode: "create", round: roundId, scene, item, refs, prompt, aspect: "16:9" });
+  open(ctx, { mode: "create", round: roundId, scene, item, refs, prompt, aspect: "16:9", ...(item?.kind === "video" && { kind: "video", vmodel: VIDEO_MODELS[0].id, vaspect: "16:9" }) });
+}
+// team: a card's kit (item_kits: what Guardar no card saved) opens the studio already like that, its result landing on
+// the card. The references come back in their order, so @image1, @video1, @audio1… still name the same ones; a card
+// without a kit opens as Criar com IA does
+export async function openKit(ctx, { itemId }) {
+  E.ctx = ctx;
+  const it = ctx.itemOf(itemId), k = ctx.kitOf?.(itemId)?.kit;
+  if (!it) return;
+  if (!k) return openCreate(ctx, { roundId: it.round_id, scene: it.scene, itemId });
+  const list = Array.isArray(k.refs) ? k.refs : [];
+  await ctx.sign(list.map((r) => r.thumb_path).filter(Boolean)).catch(() => {});
+  const refs = list.map((r) => ({ path: r.path, preview: r.preview || null, thumb: r.thumb_path ? ctx.urls.get(r.thumb_path) || "" : "", label: r.label || "Referência", kind: r.kind || "image" }));
+  const video = k.kind !== "image";
+  const known = (list2, id) => (list2.some((m) => m.id === id) ? id : list2[0].id);
+  open(ctx, {
+    mode: "create", round: it.round_id, scene: it.scene, item: it, refs, prompt: k.prompt || "", kind: video ? "video" : "image",
+    ...(video ? { vmodel: known(VIDEO_MODELS, k.model), vaspect: k.vaspect || "16:9", vres: k.vres || "720p", dur: DURS.includes(k.dur) ? k.dur : 5, sound: k.sound ?? true }
+      : { model: known(MODELS, k.model), aspect: k.aspect || "16:9", res: k.res || "2k" }),
+  });
+}
+// Guardar no card: the studio as it is (the base, if any, first; then the references in their order, the prompt as
+// written with @Nome, the model, the duration, the resolution) becomes the card's kit
+async function saveKit() {
+  const { ctx } = E, it = E.item;
+  if (!it || !ctx.saveKit) return;
+  const { S } = ctx, video = isVideo();
+  // a room image or file is shown by its small copy; a file uploaded in the studio, by itself (an image) or by its icon
+  const thumbOf = (path, kind) => {
+    const x = S.options.find((o) => o.path === path) || S.files.find((f) => f.path === path);
+    return x ? x.thumb_path || x.preview_path || (kind === "image" ? x.path : null) : kind === "image" ? path : null;
+  };
+  const base = E.base ? [{ path: E.base.path, preview: E.base.preview_path || null, thumb_path: E.base.thumb_path || E.base.preview_path || E.base.path, label: "Base", kind: "image" }] : [];
+  const refs = [...base, ...E.refs.filter((r) => !r.wait).map((r) => ({ path: r.path, preview: r.preview || null, thumb_path: thumbOf(r.path, r.kind || "image"), label: r.label, kind: r.kind || "image" }))];
+  const kit = { kind: video ? "video" : "image", model: video ? E.vmodel : E.model, dur: E.dur, vres: E.vres, vaspect: E.vaspect, sound: !!E.sound, aspect: E.aspect, res: E.res, refs, prompt: promptText() };
+  try { await ctx.saveKit(it.id, kit); ctx.toast(`Kit guardado em ${it.title}: o ✦ do card abre assim`); }
+  catch (err) { console.error(err); ctx.toast(`Não guardou o kit: ${err.message || err}`, true); }
 }
 // both rooms: draw on an option and say what to change
 export function openDraw(ctx, { optionId }) {

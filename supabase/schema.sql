@@ -407,6 +407,13 @@ create table public.option_labels (
   added_at timestamptz not null default now(),
   primary key (option_id, label_id)
 );
+-- a card's kit for the studio (team): what Guardar no card saved, so the card's ✦ opens the studio already like that
+create table public.item_kits (
+  item_id uuid primary key references public.items (id) on delete cascade,
+  kit jsonb not null default '{}',   -- { kind, model, dur, vres, vaspect, sound, aspect, res, refs: [{ path, preview, thumb_path, label, kind }], prompt }
+  updated_by text not null default '',
+  updated_at timestamptz not null default now()
+);
 
 create index items_round_idx on public.items (round_id, scene, sort);
 create index items_chosen_idx on public.items (chosen_option);
@@ -499,6 +506,7 @@ alter table public.recipes enable row level security;
 alter table public.labels enable row level security;
 alter table public.item_labels enable row level security;
 alter table public.option_labels enable row level security;
+alter table public.item_kits enable row level security;
 
 -- rounds: both sides read; only the team writes (the client confirms through confirm_round())
 create policy rounds_select on public.rounds for select to authenticated using ((select is_team()) or (select is_client()));
@@ -593,6 +601,8 @@ create policy labels_team on public.labels for all to authenticated
 create policy item_labels_team on public.item_labels for all to authenticated
   using ((select is_team())) with check ((select is_team()));
 create policy option_labels_team on public.option_labels for all to authenticated
+  using ((select is_team())) with check ((select is_team()));
+create policy item_kits_team on public.item_kits for all to authenticated
   using ((select is_team())) with check ((select is_team()));
 
 -- annotations: the team reads and manages all of them and draws as itself. The client draws on the options it can
