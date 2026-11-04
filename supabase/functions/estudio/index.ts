@@ -1,6 +1,7 @@
-// Estúdio da sala: asks image and video models for the team, through two providers:
+// Estúdio da sala: asks image and video models for the team, through three providers:
 // - Magnific (Nano Banana 2.1), key in the Edge Function secret MAGNIFIC_KEY;
 // - Higgsfield (GPT Image 2.5, Grok, Qwen, Soul 2, Seedance, Genjutsu), key in HF_KEY or the Vault secret read by estudio_hf_key();
+// - fal (SAM 3D Body: the people of a shot as 3D bodies, with the camera that sees them), key in FAL_KEY;
 // and Claude, which looks at the images, the drawing and the notes and writes the prompt (ANTHROPIC_KEY).
 // The keys stay on the server and are never returned; only a caller signed in with the team login
 // (app_metadata.side = "time", or app_metadata.room = "time" in a job that shares the project) gets through. Inputs are
@@ -13,13 +14,25 @@
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 import Anthropic from "npm:@anthropic-ai/sdk@1.3.0";
 
-const BASE = { mg: "https://api.magnific.com", hf: "https://api.higgsfield.ai" };
+const BASE = { mg: "https://api.magnific.com", hf: "https://api.higgsfield.ai", fal: "https://queue.fal.run" };
 type Via = keyof typeof BASE;
-const NAME: Record<Via, string> = { mg: "o Magnific", hf: "a Higgsfield" };
+const NAME: Record<Via, string> = { mg: "o Magnific", hf: "a Higgsfield", fal: "a fal" };
 const NO_KEY: Record<Via, string> = {
   mg: "A chave do Magnific ainda não foi configurada no servidor.",
   hf: "A chave da Higgsfield ainda não foi configurada no servidor.",
+  fal: "A chave da fal ainda não foi configurada no servidor.",
 };
+// how each provider is named in check's answer (the studio's KEYS)
+const KEY_NAME: Record<Via, string> = { mg: "magnific", hf: "higgsfield", fal: "fal" };
+// fal's queue answers a request with the addresses to ask about it and to fetch its result: only ones on its own queue
+// host are used. Without them they are rebuilt from the app (the first two parts of the model's path): /requests/{id}
+const FAL_HOST = "https://queue.fal.run/";
+const falUrl = (u: unknown) => (typeof u === "string" && u.startsWith(FAL_HOST) ? u : "");
+const falPoll = (path: string, id: string, poll?: { status_url?: unknown; response_url?: unknown } | null) => {
+  const at = `${FAL_HOST}${path.split("/").slice(1, 3).join("/")}/requests/${encodeURIComponent(id)}`;
+  return { status_url: falUrl(poll?.status_url) || `${at}/status`, response_url: falUrl(poll?.response_url) || at };
+};
+const FAL_STATUS: Record<string, string> = { IN_QUEUE: "queued", IN_PROGRESS: "in_progress", COMPLETED: "completed" };
 // the room's sites (ALLOWED_ORIGINS); a copy running on this computer (localhost, any port) is always let through, for tests
 const ORIGINS = new Set((Deno.env.get("ALLOWED_ORIGINS") || "").split(",").map((s) => s.trim().replace(/\/+$/, "")).filter(Boolean));
 const LOCAL = /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/;
@@ -46,8 +59,12 @@ const MODELS: Record<string, { via: Via; path: string; fields: string[] }> = {
   // is as long as the video; resolution 480p, 720p or 1080p
   "higgsfield/genjutsu/motion-transfer/v1.0": { via: "hf", path: "/higgsfield/genjutsu/motion-transfer/v1.0", fields: ["prompt", "video_url", "image_urls", "resolution"] },
   "higgsfield/genjutsu/object-swap/v1.0": { via: "hf", path: "/higgsfield/genjutsu/object-swap/v1.0", fields: ["prompt", "video_url", "image_urls", "resolution"] },
+  // SAM 3D Body (fal, $0.02 a picture): finds the people in a picture and gives back their bodies as one GLB, in the
+  // camera's own space, plus the camera it estimated and each one's keypoints (metadata); mask_url (white = the person)
+  // skips its own detection. The room draws the bodies over the shot (sala/pessoa3d.js)
+  "fal-ai/sam-3/3d-body": { via: "fal", path: "/fal-ai/sam-3/3d-body", fields: ["image_url", "mask_url", "export_meshes", "include_3d_keypoints", "include_mhr_params"] },
 };
-const FILE_FIELDS = new Set(["image_urls", "video_urls", "audio_urls", "image_url", "end_image_url", "video_url"]);
+const FILE_FIELDS = new Set(["image_urls", "video_urls", "audio_urls", "image_url", "end_image_url", "video_url", "mask_url"]);
 const OPEN = new Set(["queued", "in_progress"]);
 // Magnific task states, in the studio's words
 const MG_STATUS: Record<string, string> = { CREATED: "queued", IN_PROGRESS: "in_progress", COMPLETED: "completed", FAILED: "failed" };
@@ -145,6 +162,7 @@ Deno.serve(async (req) => {
     // trimmed: a key pasted in the dashboard often brings a space or a line break along
     const keyOf = async (via: Via) => {
       if (via === "mg") return (Deno.env.get("MAGNIFIC_KEY") || "").trim();
+      if (via === "fal") return (Deno.env.get("FAL_KEY") || "").trim();
       const env = (Deno.env.get("HF_KEY") || "").trim();
       if (env) return env;
       const admin = createClient(url, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, { auth: { persistSession: false } });
@@ -169,13 +187,16 @@ Deno.serve(async (req) => {
     // only 401/403 mean a refused key (an empty list answers 404). It reports the provider's answer, never the key
     if (body.action === "check") {
       const keys: Record<string, boolean | null> = {}, answers: Record<string, string> = {};
-      for (const via of ["mg", "hf"] as Via[]) {
+      for (const via of ["mg", "hf", "fal"] as Via[]) {
         const key = await keyOf(via);
-        const name = via === "mg" ? "magnific" : "higgsfield";
+        const name = KEY_NAME[via];
         let ok: boolean | null = key ? true : null;
         if (key && body.verify) {
+          // fal: the status of a request that does not exist, on SAM 3D Body's queue
           const r = via === "mg"
             ? await api(via, key, MODELS["magnific/nano-banana-2-1"].path)
+            : via === "fal"
+            ? await fetch(falPoll(MODELS["fal-ai/sam-3/3d-body"].path, crypto.randomUUID()).status_url, { headers: { Authorization: `Key ${key}` } })
             : await api(via, key, `/requests/${crypto.randomUUID()}/status`);
           ok = r.status !== 401 && r.status !== 403;
           answers[name] = `${r.status} ${errOf(await r.json().catch(() => ({}))).slice(0, 160)}`.trim();
@@ -270,11 +291,13 @@ Deno.serve(async (req) => {
       const out = await r.json().catch(() => ({}));
       const id = m.via === "mg" ? out.data?.task_id || out.task_id : out.request_id;
       if (!r.ok || !id) return json({ error: errOf(out) || `${NAME[m.via]} respondeu ${r.status}` }, 400);
-      const status = m.via === "mg" ? MG_STATUS[out.data?.status || out.status] || "queued" : out.status || "queued";
+      const status = m.via === "mg" ? MG_STATUS[out.data?.status || out.status] || "queued" : m.via === "fal" ? FAL_STATUS[out.status] || "queued" : out.status || "queued";
+      // fal: where to ask about it and fetch it, kept with the job until it is done (status keeps them in its result)
+      const result = m.via === "fal" ? { poll: falPoll(m.path, String(id), out) } : null;
       const { data: job, error } = await db.from("estudio_jobs").insert({
         item_id: body.item_id, base_option: body.base_option || null, mode: body.mode || "edit", model: body.model,
         label: String(body.label || "").slice(0, 120), prompt: String(body.prompt || input.prompt || "").slice(0, 4000),
-        input, refs: body.refs || [], request_id: String(id), status,
+        input, refs: body.refs || [], request_id: String(id), status, result,
         created_by: String(body.created_by || "").slice(0, 60),
       }).select().single();
       if (error) throw error;
@@ -301,6 +324,31 @@ Deno.serve(async (req) => {
           if (!images.length) { status = "failed"; fail = "O Magnific terminou sem imagem."; }
         }
         if (status === "failed") fail = fail || errOf(d) || "O Magnific não conseguiu gerar.";
+      } else if (m.via === "fal") {
+        // fal: the queue says where the request is; once it is done, its result (or why it failed) is at response_url.
+        // The bodies come as one GLB, with the camera and the keypoints in metadata; the picture with the keypoints and
+        // the mesh drawn (visualization) is kept too
+        const poll = falPoll(m.path, job.request_id, job.result?.poll);
+        const auth = { headers: { Authorization: `Key ${key}` } };
+        const r = await fetch(poll.status_url, auth);
+        const s = await r.json().catch(() => ({}));
+        if (!r.ok) return json({ error: errOf(s) || `A fal respondeu ${r.status}` }, 400);
+        // a request that failed is COMPLETED with an error (and error_type)
+        status = FAL_STATUS[s.status] || job.status;
+        result = { ...(job.result || {}), poll };
+        if (status === "completed" && typeof s.error === "string" && s.error) { status = "failed"; fail = s.error; }
+        else if (status === "completed") {
+          const rr = await fetch(poll.response_url, auth);
+          const out = await rr.json().catch(() => ({}));
+          const file = (f: unknown) => (typeof f === "string" ? f : typeof (f as { url?: unknown })?.url === "string" ? (f as { url: string }).url : "");
+          if (!rr.ok) { status = "failed"; fail = errOf(out) || `A fal não conseguiu (${rr.status}).`; }
+          else {
+            result = { poll, images: [], video: null, glb: file(out.model_glb), vis: file(out.visualization), meta: out.metadata || null, expires_at: null };
+            if (!result.glb) { status = "failed"; fail = "A fal terminou sem o corpo em 3D."; }
+            else if (!out.metadata?.num_people && !out.metadata?.people?.length) { status = "failed"; fail = "A fal não achou ninguém na imagem."; }
+          }
+        }
+        if (status === "failed") fail = fail || "A fal não conseguiu.";
       } else {
         const r = await api("hf", key, `/requests/${job.request_id}/status`);
         const s = await r.json().catch(() => ({}));
@@ -319,10 +367,12 @@ Deno.serve(async (req) => {
       return json({ job: upd || job });
     }
 
-    // the finished file, streamed back so the browser can store it in the room (the CDNs do not allow cross-origin reads)
+    // the finished file, streamed back so the browser can store it in the room (the CDNs do not allow cross-origin reads):
+    // an image by its index, the video, or SAM 3D Body's GLB (glb) and its picture with the mesh drawn (vis)
     if (body.action === "file") {
       const { data: job } = await db.from("estudio_jobs").select("result").eq("id", body.job_id).single();
-      const src = body.kind === "video" ? job?.result?.video : job?.result?.images?.[Number(body.index) || 0];
+      const src = body.kind === "video" ? job?.result?.video : body.kind === "glb" ? job?.result?.glb : body.kind === "vis" ? job?.result?.vis
+        : job?.result?.images?.[Number(body.index) || 0];
       if (!src) return json({ error: "Esse pedido não tem arquivo." }, 404);
       const r = await fetch(src);
       if (!r.ok || !r.body) return json({ error: `O arquivo não baixou (${r.status}).` }, 502);

@@ -54,7 +54,9 @@ const ROLES = {
   image: [["first", "Primeiro quadro", "the first frame: the shot opens on this picture"], ["last", "Último quadro", "the last frame: the shot ends on this picture"],
     ["key", "Quadro-chave", "a keyframe of the shot, in the order the keyframes come"], ["face", "Personagem · rosto", "a character's face and likeness only"],
     ["costume", "Figurino", "a costume only"], ["place", "Locação", "the location only"], ["product", "Produto", "the product only: its look and its lights"],
-    ["style", "Estilo e luz", "the light and the color only"]],
+    ["style", "Estilo e luz", "the light and the color only"],
+    // Pessoa em 3D: the shot with each person as a colored mannequin (sala/pessoa3d.js)
+    ["pose", "Espaço e posição", "only the space, the camera and where each person stands and how they pose: each colored mannequin is one person, a placeholder, so nothing of anyone's face, hair or clothes comes from it"]],
   video: [["guide", "Guia de tempo e câmera", "only the timing, the camera moves and the cuts"],
     ["blocking", "Blocking (bonecos)", "only the camera position and moves; its figures are placeholders, so not their poses or body mechanics"],
     ["motion", "Movimento", "only how the subject moves"], ["product", "Produto", "only how the product looks and lights up"], ["style", "Estilo e luz", "only the light and the color"]],
@@ -176,6 +178,8 @@ let ticker = null;
 const listeners = new Set();
 // an edit of a reference (a click on its circle in another generation's bar): job id → the reference its result goes back into
 const SWAPS = new Map();
+// a Pessoa em 3D asked from a circle's menu: job id → the reference whose shot it is (its result comes in right after it)
+const ADDS = new Map();
 function track(job) {
   const was = JOBS.get(job.id)?.status;
   JOBS.set(job.id, { ...JOBS.get(job.id), ...job });
@@ -187,6 +191,12 @@ function track(job) {
     SWAPS.delete(job.id);
     ref.wait = Math.max(0, (ref.wait || 1) - 1);
     if (job.status === "imported" && job.imported?.length) swapRef(ref, job.imported.at(-1));
+    else if (E.root) syncChips();
+  }
+  const add = DONE.has(job.status) && ADDS.get(job.id);
+  if (add) {
+    ADDS.delete(job.id);
+    if (job.status === "imported" && job.imported?.length) addAfter(add, job.imported[0]);
     else if (E.root) syncChips();
   }
   listeners.forEach((f) => f());
@@ -224,6 +234,8 @@ async function tick() {
 async function importJob(job) {
   // the areas of one Gerar come back together, as one version
   if (job.input?.group) return importGroup(job);
+  // Pessoa em 3D: the bodies are drawn over the shot here, in the browser
+  if (job.model === P3D) return importBody(job);
   const { sb } = E.ctx;
   const { data: claimed } = await sb.from("estudio_jobs").update({ status: "importing", updated_at: new Date().toISOString() }).eq("id", job.id).eq("status", "completed").select().maybeSingle();
   if (!claimed) { track({ ...job, status: "importing" }); return; }
@@ -330,6 +342,64 @@ async function importGroup(job) {
     await sb.from("estudio_jobs").update({ status: e.final ? "failed" : "completed", error, updated_at: new Date().toISOString() }).in("id", ids);
     for (const s of mine) track({ ...s, status: e.final ? "failed" : "completed", error });
     E.ctx.toast(`Não consegui guardar as áreas: ${e.message || e}`, true);
+  }
+}
+// Pessoa em 3D: the first tab to take the job draws the bodies the fal found over the shot (sala/pessoa3d.js) and stores
+// that picture as a new card of the shot's item, based on it, with no ✓; the GLB is stored next to it and kept in the
+// job (result.glb_path, for Baixar o corpo 3D) with the camera used and the people's colors. The shot's own pixels are
+// read and saved with its color tags, as the areas are
+async function importBody(job) {
+  const { ctx } = E, { sb } = ctx;
+  const { data: claimed } = await sb.from("estudio_jobs").update({ status: "importing", updated_at: new Date().toISOString() }).eq("id", job.id).eq("status", "completed").select().maybeSingle();
+  if (!claimed) { track({ ...job, status: "importing" }); return; }
+  track(claimed);
+  const final = (note) => Object.assign(new Error(note), { final: true, note });
+  try {
+    const src = optOf(job.base_option), path = src?.path || job.input?.image_url, sent = job.input?.image_url || path;
+    if (!path) throw final("O shot não está mais na sala.");
+    const it = ctx.itemOf(job.item_id), version = ctx.roundOf(it?.round_id)?.version || 1;
+    await ctx.sign([path, sent]);
+    const file = await (await fetch(ctx.urls.get(path))).blob(), tags = await pngTags(file);
+    const photo = await createImageBitmap(file, readAs(tags));
+    // the size of the picture the model saw: the shot itself, or a smaller copy of it
+    let inW = photo.width, inH = photo.height;
+    if (sent !== path) { const b = await createImageBitmap(await (await fetch(ctx.urls.get(sent))).blob()); inW = b.width; inH = b.height; b.close?.(); }
+    const glb = await (await call("file", { job_id: job.id, kind: "glb" }, true)).arrayBuffer();
+    const { drawBodies, peopleLine } = await import("./pessoa3d.js");
+    const { canvas, people, camera } = await drawBodies({ glb, meta: job.result?.meta, inW, inH, W: photo.width, H: photo.height })
+      .catch((e) => { throw final(`Não deu pra desenhar os corpos: ${e.message || e}`); });
+    const c = canvasOf(photo.width, photo.height), g = c.getContext("2d");
+    g.drawImage(photo, 0, 0);
+    g.drawImage(canvas, 0, 0, photo.width, photo.height);
+    photo.close?.();
+    const blobOf = (type, q) => new Promise((ok, no) => c.toBlob((b) => (b ? ok(b) : no(new Error("a imagem saiu vazia"))), type, q));
+    let out = await withTags(await blobOf("image/png"), tags);
+    if (out.size > MAX_FILE) out = await blobOf("image/jpeg", 0.92);
+    const stem = `pessoa3d-${job.id.slice(0, 8)}`;
+    const m = await ctx.putFile(`items/${job.item_id}`, new File([out], `${stem}.${out.type === "image/png" ? "png" : "jpg"}`, { type: out.type }));
+    const gm = await ctx.putFile(`items/${job.item_id}`, new File([glb], `${stem}.glb`, { type: "model/gltf-binary" }));
+    const who = peopleLine(people), label = job.refs?.[0]?.label || src?.name || "o shot";
+    const { data: o, error } = await sb.from("options").insert({
+      item_id: job.item_id, path: m.path, preview_path: m.preview_path, thumb_path: m.thumb_path, mime: m.mime, name: m.name,
+      created_by: job.created_by || ctx.myName(), version, based_on: job.base_option || null, stack: null,
+      caption: "", model: job.label || P3D_LABEL,
+      prompt: `${P3D_LABEL} (fal · SAM 3D Body) de ${label}. ${people.length > 1 ? `${people.length} pessoas, da esquerda pra direita: ${who}` : `Boneco ${who}`}, no lugar e na pose de cada uma, desenhados por cima do shot com a câmera que o modelo estimou.`,
+      reasoning: "Referência de espaço e posição: com o papel Espaço e posição, o lugar, a câmera e a pose vêm daqui; o rosto vem das fotos e a roupa da ficha. O corpo em 3D (GLB) ficou guardado junto: no estúdio, botão direito na bolinha › Baixar o corpo 3D.",
+      refs: src ? [{ label, path: src.path, thumb: src.thumb_path || null }] : [],
+    }).select().single();
+    if (error) throw error;
+    const { data: done } = await sb.from("estudio_jobs").update({ status: "imported", imported: [o.id], result: { ...(job.result || {}), glb_path: gm.path, camera, people }, updated_at: new Date().toISOString() })
+      .eq("id", job.id).select().single();
+    await ctx.refresh();
+    track(done || { ...job, status: "imported", imported: [o.id] });
+    ctx.toast(`✦ ${P3D_LABEL} em ${it?.title || "item"}: ${people.length > 1 ? `${people.length} pessoas (${who})` : `boneco ${who}`}`);
+  } catch (e) {
+    console.error(e);
+    // what cannot work (no shot, nothing drawn) fails for good; anything else goes back to the queue for the next tick
+    const error = e.final ? e.note : null;
+    await sb.from("estudio_jobs").update({ status: e.final ? "failed" : "completed", error, updated_at: new Date().toISOString() }).eq("id", job.id);
+    track({ ...job, status: e.final ? "failed" : "completed", error });
+    ctx.toast(`Não consegui guardar a pessoa em 3D: ${e.message || e}`, true);
   }
 }
 const lostLine = (lost) => {
@@ -2570,6 +2640,10 @@ function cmOpen(i, x, y) {
   const out = [kind === "audio" ? it("cm-play", E.playing === r.path ? "Parar" : "Ouvir") : it("cm-big", "Ver grande"), it("cm-swap", "Substituir", { small: "abre o +" })];
   if (kind === "image") {
     out.push(it("cm-edit", "Editar com IA", { small: o ? "volta pra bolinha" : home ? "vira opção do card, fora do envio" : outside, dis: !o && !home }));
+    // the people of the shot as mannequins in the same place and pose (fal's SAM 3D Body), a new card
+    const busy = !!o && making3d(o.id), nokey = KEYS.fal === null ? "falta a chave da fal no servidor" : KEYS.fal === false ? "a chave da fal foi recusada" : "";
+    out.push(it("cm-p3d", P3D_LABEL, { small: busy ? "a caminho…" : nokey || (o ? "boneco no lugar e na pose · card novo" : home ? "vira opção do card antes" : outside), dis: busy || !!nokey || (!o && !home) }));
+    if (o?.model === P3D_LABEL) out.push(it("cm-glb", "Baixar o corpo 3D", { small: "GLB" }));
     const vers = o ? versionsOf(o) : [], vi = vers.findIndex((x) => x.id === o?.id);
     if (vers.length > 1 && vi >= 0) out.push(`<div class="est-cm-row"><span>Versão</span><span class="est-cm-step">${it("cm-ver", "‹", { v: vers[(vi - 1 + vers.length) % vers.length].id, cls: "mini" })}<small>${vi + 1}/${vers.length}</small>${it("cm-ver", "›", { v: vers[(vi + 1) % vers.length].id, cls: "mini" })}</span></div>`);
   }
@@ -2608,6 +2682,8 @@ async function cmAct(k, v) {
   if (k === "cm-play") return togglePlay(r.path);
   if (k === "cm-edit") return openRef(i);
   if (k === "cm-vedit") return openVideoRef(i, v);
+  if (k === "cm-p3d") return pessoa3d(i);
+  if (k === "cm-glb") return downloadGlb(r);
   if (k === "cm-ver") return swapRef(r, v);
   // Substituir: the + opens on the tab where a file like this one lives; what is picked there takes its place (swapIn)
   if (k === "cm-swap") {
@@ -2653,6 +2729,59 @@ async function openVideoRef(i, vm) {
   teardown();
   open(ctx, { mode: "create", kind: "video", vmodel: vm, item: it, round: it.round_id, scene: it.scene, base: null, blocking: false,
     refs: [{ path: o.path, preview: o.preview_path || null, thumb_path: o.thumb_path || null, thumb: thumbUrl(o), label: r.label, kind: "video" }], prompt: "", parent: { snap, ref: r, title } });
+}
+// ---------- Pessoa em 3D (an image circle's menu): fal's SAM 3D Body finds the people of the shot, their bodies and the
+// camera, and importBody draws each one over the shot as a mannequin in the Cena 3D's colors, in the same place and pose.
+// The picture becomes a new card of the shot's item (based on it, no ✓) with the GLB kept next to it, and comes into the
+// generation it was asked from right after the shot, as Espaço e posição. A file from outside the room becomes an option
+// of the card first (adoptRef) ----------
+const P3D = "fal-ai/sam-3/3d-body", P3D_LABEL = "Pessoa em 3D";
+const making3d = (id) => [...JOBS.values()].some((j) => j.model === P3D && j.base_option === id && !DONE.has(j.status));
+async function pessoa3d(i) {
+  const { ctx } = E, r = E.refs[i];
+  if (!r || (r.kind || "image") !== "image") return;
+  const o = refOpt(r) || (await adoptRef(r));
+  if (!o || !E.root) return;
+  if (making3d(o.id)) return ctx.toast(`${r.label}: a pessoa em 3D já está a caminho.`);
+  try {
+    const { job } = await call("submit", {
+      model: P3D, item_id: o.item_id, base_option: o.id, mode: "create", label: P3D_LABEL, prompt: `${P3D_LABEL} de ${r.label}`,
+      // the shot as it is; a GLB with the bodies only (no keypoint spheres, no .ply each), the lean metadata (keypoints, camera)
+      input: { image_url: o.path, include_3d_keypoints: false, export_meshes: false, include_mhr_params: false },
+      refs: [{ label: r.label, path: o.path, thumb: o.thumb_path || null }], created_by: ctx.myName(),
+    });
+    ADDS.set(job.id, r);
+    track(job);
+    ctx.toast(`✦ ${r.label}: a fal está montando os corpos. Vira um card novo em ${ctx.itemOf(o.item_id)?.title || "item"} e entra aqui logo depois desta bolinha.`);
+  } catch (e) { ctx.toast(`${P3D_LABEL}: ${e.message || e}`, true); }
+}
+// the new card comes into the generation right after the shot it came from (while that generation is the one open)
+async function addAfter(ref, id) {
+  const { ctx } = E;
+  let o = optOf(id);
+  if (!o) { await ctx.refresh(); o = optOf(id); }
+  if (!o || !E.root) return;
+  const at = E.refs.indexOf(ref);
+  if (at < 0 || E.refs.some((x) => x.path === o.path)) return syncChips();
+  await ctx.sign([o.thumb_path || o.preview_path || o.path]);
+  E.refs.splice(at + 1, 0, { path: o.path, preview: o.preview_path || null, thumb_path: o.thumb_path || null, thumb: thumbUrl(o), label: `${P3D_LABEL} · ${ref.label}`.slice(0, 48), kind: "image", role: "pose" });
+  syncChips();
+  ctx.toast(`✦ ${P3D_LABEL} entrou logo depois de ${ref.label}, com o papel Espaço e posição`);
+}
+// Baixar o corpo 3D: the GLB kept with a Pessoa em 3D card (its job's result.glb_path)
+async function downloadGlb(r) {
+  const { ctx } = E, o = refOpt(r);
+  if (!o) return;
+  let j = [...JOBS.values()].find((x) => (x.imported || []).includes(o.id));
+  if (!j?.result?.glb_path) j = (await ctx.sb.from("estudio_jobs").select("result").contains("imported", JSON.stringify([o.id])).limit(1).maybeSingle()).data;
+  const p = j?.result?.glb_path;
+  if (!p) return ctx.toast("Não achei o GLB deste card.", true);
+  const { data, error } = await ctx.sb.storage.from(ctx.bucket || "media").createSignedUrl(p, 600, { download: `${(o.name || "pessoa3d").replace(/\.[^.]+$/, "")}.glb` });
+  if (error || !data?.signedUrl) return ctx.toast("Não consegui abrir o GLB.", true);
+  const a = Object.assign(document.createElement("a"), { href: data.signedUrl, rel: "noopener" });
+  document.body.append(a);
+  a.click();
+  a.remove();
 }
 // Ver grande: the image, the video or the voice in a player over the studio (Esc or a click outside closes it). A video
 // can give the frame on screen as a new image reference, right after it
