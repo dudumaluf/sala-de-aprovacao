@@ -3194,8 +3194,12 @@ function vsAgainst(it, o) {
     if (x) return { key: w, duo: true, lab: `Aprovado · ${itemOf(x.item_id)?.title || ""}`, html: media(x, "big") };
   }
   if (w.startsWith("path:")) {
-    const path = w.slice(5), r = (jobRefsOf(o) || []).find((y) => y.path === path);
-    return { key: w, duo: true, lab: r?.label === "Base" ? "Base usada" : `Referência · ${r?.label || ""}`, html: `<img data-path="${esc(path)}" alt=""${srcAttr(path)}>` };
+    // a video or a voice among the references plays here, side by side with the option
+    const path = w.slice(5), r = (jobRefsOf(o) || []).find((y) => y.path === path), k = r ? refKind(r) : "image";
+    const html = k === "video" ? `<video data-path="${esc(path)}" controls autoplay muted loop playsinline${srcAttr(path)}></video>`
+      : k === "audio" ? `<div class="vs-audio"><i class="lb-ref-wave">${REF_WAVE}</i><audio data-path="${esc(path)}" controls autoplay${srcAttr(path)}></audio></div>`
+      : `<img data-path="${esc(path)}" alt=""${srcAttr(path)}>`;
+    return { key: w, duo: true, lab: r?.label === "Base" ? "Base usada" : `Referência · ${r?.label || ""}`, html };
   }
   if (w.startsWith("ref:")) {
     const x = S.wkRefs.find((y) => y.id === w.slice(4));
@@ -3235,7 +3239,7 @@ function refsSec(it, o, vs) {
   if (!used.length && !kit.length) return "";
   const th = (key, img, label) => `<button class="vs-th ${vs?.key === key ? "on" : ""}" data-act="${vs?.key === key ? "vs-toggle" : "vs-with"}" data-v="${key}" title="${vs?.key === key ? "Voltar" : `Comparar lado a lado: ${esc(label)}`}">${img}</button>`;
   return `<div class="lb-sec refs-sec">
-    ${used.length ? `<p class="side-label">Referências usadas</p><div class="ped-refs">${used.map((r) => th(`path:${r.path}`, `<img data-path="${esc(r.path)}" alt=""${srcAttr(r.path)}>`, r.label)).join("")}</div>` : ""}
+    ${used.length ? `<p class="side-label">Referências usadas</p><div class="ped-refs">${used.map((r) => th(`path:${r.path}`, refFace(r), r.label)).join("")}</div>` : ""}
     ${kit.length ? `<p class="side-label">${used.length ? "Aprovados da cena" : "Aprovados da cena · provável base"}</p><div class="ped-refs">${kit.map((x) => th(`kit:${x.id}`, media(x, "thumb"), itemOf(x.item_id)?.title || "")).join("")}</div>` : ""}
   </div>`;
 }
@@ -3337,6 +3341,11 @@ const REF_WAVE = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" str
 const refKind = (r) => r.kind || (/\.(mp4|mov|webm)$/i.test(r.path || "") ? "video" : /\.(mp3|m4a|wav|ogg|opus|aac)$/i.test(r.path || "") ? "audio" : "image");
 const refStill = (path) => { const x = S.options.find((o) => o.path === path) || S.files.find((f) => f.path === path); return x?.preview_path || x?.thumb_path || null; };
 let refAudio = null;
+// a reference's small face: an image itself, a video's still (or its first frame), a voice's wave
+const refFace = (r) => {
+  const k = refKind(r), still = k === "image" ? r.thumb || r.path : k === "video" ? r.thumb || refStill(r.path) : null;
+  return still ? `<img data-path="${esc(still)}" alt=""${srcAttr(still)}>` : k === "video" ? `<video data-path="${esc(r.path)}" muted playsinline preload="metadata"${srcAttr(r.path)}></video>` : `<i class="lb-ref-wave">${REF_WAVE}</i>`;
+};
 function refsBlock(o) {
   const refs = Array.isArray(o.refs) ? o.refs : [];
   if (!refs.length) return "";

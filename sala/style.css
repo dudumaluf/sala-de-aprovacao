@@ -1364,6 +1364,10 @@ textarea.ret-notes { display: block; height: auto; min-height: 80px; margin-top:
 .lb-ref-wave svg { width: 22px; height: 22px; }
 .lb-ref.audio { cursor: pointer; }
 .lb-ref.audio.on .lb-ref-wave { color: var(--accent); }
+.ped-refs .vs-th > video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.ped-refs .vs-th > .lb-ref-wave { background: var(--raise2); }
+.vs-audio { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; width: 100%; height: 100%; min-height: 200px; }
+.vs-audio .lb-ref-wave svg { width: 64px; height: 64px; }
 .lb-ref:hover, .lb-ref:focus-visible { outline: 2px solid var(--accent); }
 .lb-ref-peek { position: absolute; left: 0; right: 0; top: calc(100% + 8px); z-index: 4; display: none; padding: 6px; border-radius: 10px; background: var(--raise); border: 1px solid var(--line2); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55); pointer-events: none; }
 .lb-ref-peek img { display: block; width: 100%; max-height: 240px; object-fit: contain; border-radius: 6px; background: #000; }
