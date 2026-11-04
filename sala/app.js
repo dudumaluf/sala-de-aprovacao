@@ -467,10 +467,27 @@ function parseMmss(v) {
   return m ? (m[2] === undefined ? +m[1] : +m[1] * 60 + +m[2]) : null;
 }
 
+// every row of a table: PostgREST answers at most 1000 rows a request (the project's max rows), so a table that grows
+// past that comes in pages. When the options passed 1000, every newer one was saved but never reached the room (the
+// uploads looked lost). Each page is ordered by the column and then by the table's key, so no row is skipped or repeated
+const PAGE_ROWS = 1000;
+const KEY_OF = { option_reviews: ["option_id"], envio: ["option_id", "version"], item_feedback: ["round_id", "item_id", "version"], item_labels: ["item_id", "label_id"], blocking_shots: ["option_id"], round_notes: ["round_id"] };
+async function allRows(t, col, cols = "*") {
+  const out = [];
+  for (let from = 0; ; from += PAGE_ROWS) {
+    let q = sb.from(t).select(cols).order(col);
+    for (const k of KEY_OF[t] || ["id"]) if (k !== col) q = q.order(k);
+    const { data, error } = await q.range(from, from + PAGE_ROWS - 1);
+    if (error) return { data: null, error };
+    out.push(...data);
+    // a short page is the last one (and a long one means the server ignored the range: that was everything)
+    if (data.length !== PAGE_ROWS) return { data: out, error: null };
+  }
+}
 async function load(force = false) {
-  const q = (t, col) => sb.from(t).select("*").order(col);
+  const q = (t, col) => allRows(t, col);
   const team = TEAM ? [q("option_reviews", "updated_at"), q("item_feedback", "updated_at"), q("feedback_refs", "sort"), q("tasks", "sort"), q("pendencias", "sort"), q("round_notes", "updated_at"), q("envio", "updated_at"),
-    sb.from("blocking_shots").select("option_id, item_id, camera, created_at").order("created_at")] : [];
+    allRows("blocking_shots", "created_at", "option_id, item_id, camera, created_at")] : [];
   // drawings (estudio.js): the client gets its own, the team gets all of them
   // the cards' etiquetas (team) come apart: a room whose database has none yet (a job that did not run
   // atualizar-2026-11e.sql) just goes without them
