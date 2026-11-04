@@ -621,10 +621,12 @@ function applyLink(p) {
 function seekNow(n = 0) {
   const lit = S.litComment;
   if (!n && lit) {
-    // in the card's comments and in Ver grande's list under the video, whichever is on screen
-    document.querySelector(`.msg[data-c="${lit}"]`)?.scrollIntoView({ block: "center" });
-    document.querySelector(`.lb .tc-list li[data-c="${lit}"]`)?.scrollIntoView({ block: "nearest" });
-    setTimeout(() => { if (S.litComment !== lit) return; S.litComment = null; document.querySelectorAll(`.lit[data-c="${lit}"]`).forEach((e) => e.classList.remove("lit")); }, 4000);
+    // in the card's comments and in Ver grande's list under the video, whichever is on screen (the id comes from the
+    // link, so it is escaped before it goes into a selector)
+    const at = `[data-c="${CSS.escape(lit)}"]`;
+    document.querySelector(`.msg${at}`)?.scrollIntoView({ block: "center" });
+    document.querySelector(`.lb .tc-list li${at}`)?.scrollIntoView({ block: "nearest" });
+    setTimeout(() => { if (S.litComment !== lit) return; S.litComment = null; document.querySelectorAll(`.lit${at}`).forEach((e) => e.classList.remove("lit")); }, 4000);
   }
   const s = S.seekTo;
   if (!s) return;
