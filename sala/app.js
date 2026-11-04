@@ -326,6 +326,8 @@ function letterOf(it, o) {
   const i = wkOpts(it.id).indexOf(o);
   return i >= 0 ? letter(i) : "";
 }
+// every letter of an item at once, by option (the studio names hundreds of options when it makes a list)
+const lettersOf = (it) => new Map(wkOpts(it.id).map((o, i) => [o, letter(i)]));
 // dropped options stay hidden unless "Mostrar descartadas" is on (then last, dimmed, with the ✕ and the reason).
 // "Mostrar" on a card the filters hide (S.peek) shows that one card as if no filter were on, until a filter changes
 const peeked = (id) => TEAM && S.peek.has(id);
@@ -725,7 +727,7 @@ function openOption(id) {
 }
 // the AI studio (estudio.js) is optional: ESTUDIO.on in config.js turns on its ✦ buttons; drawing on an image works either way
 const AI = !!ESTUDIO?.on;
-const estCtx = () => ({ sb, SIDE, TEAM, S, esc, itemOf, optsOf, letterOf, roundOf, putFile, refresh, toast, myName, sign, urls, sceneName, openOption, sceneLook: (n) => lookOf(n)?.label || "",
+const estCtx = () => ({ sb, SIDE, TEAM, S, esc, itemOf, optsOf, letterOf, lettersOf, roundOf, putFile, refresh, toast, myName, sign, urls, sceneName, openOption, sceneLook: (n) => lookOf(n)?.label || "",
   fnUrl: `${SUPABASE_URL}/functions/v1/${ESTUDIO.fn || "estudio"}`, anonKey: SUPABASE_KEY, schema: SCHEMA, bucket: BUCKET, ai: AI,
   // the Galeria's Soul ID training (and the studio's Soul 2) go through their own edge function, named after the
   // studio's unless config.js says otherwise (estudio → souls, sala-estudio → sala-souls)

@@ -105,7 +105,13 @@ const model = () => MODELS.find((m) => m.id === E.model) || MODELS[0];
 const vmodel = () => VIDEO_MODELS.find((m) => m.id === E.vmodel) || VIDEO_MODELS[0];
 const isVideo = () => E.mode !== "draw" && E.kind === "video";
 const clamp = (v) => Math.max(0, Math.min(1, v));
-const optOf = (id) => E.ctx.S.options.find((o) => o.id === id);
+// an option by its id, from one index per list of options (the room swaps the list on every load; a push changes its length)
+let OPTS = null;
+const optOf = (id) => {
+  const all = E.ctx.S.options;
+  if (OPTS?.all !== all || OPTS.n !== all.length) OPTS = { all, n: all.length, by: new Map(all.map((o) => [o.id, o])) };
+  return OPTS.by.get(id);
+};
 const isImg = (o) => o && !o.mime.startsWith("video/");
 const ago = (ts) => { const s = Math.max(0, (Date.now() - new Date(ts)) / 1000); return s < 60 ? `${Math.round(s)}s` : s < 3600 ? `${Math.round(s / 60)} min` : new Date(ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" }); };
 const thumbUrl = (o) => E.ctx.urls.get(o.thumb_path || o.preview_path || o.path) || "";
@@ -114,7 +120,7 @@ const bigUrl = (o) => E.ctx.urls.get(o.preview_path || o.path) || "";
 // card). An edit's result joins the stack of the image it was made from, unless "Card novo" is picked in the bar.
 const rootOf = (o) => (o ? optOf(o.stack || o.id) || o : null);
 const membersOf = (root) => (root ? [root, ...E.ctx.S.options.filter((x) => x.stack === root.id).sort((a, b) => a.created_at.localeCompare(b.created_at))] : []);
-const faceIdOf = (root) => (root?.face && E.ctx.S.options.some((x) => x.id === root.face && x.stack === root.id) ? root.face : root?.id);
+const faceIdOf = (root) => (root?.face && optOf(root.face)?.stack === root.id ? root.face : root?.id);
 const stack = () => (E.mode === "edit" && E.base?.id && isImg(E.base) ? membersOf(rootOf(E.base)) : []);
 const shownOpt = () => (E.view ? optOf(E.view) : E.base);
 // the drawer (Versões, results, drawings) on the right: open or closed, remembered on this computer
@@ -1757,36 +1763,119 @@ function mentionAt() {
   const m = node.nodeValue.slice(0, off).match(/(^|\s)@([^\s@]{0,24})$/u);
   return m ? { node, start: off - m[2].length - 1, end: off, q: m[2] } : null;
 }
+// the @ list: what the + picker has (pickList), in the same tabs and order, as a small list over the caret. Tudo shows the
+// first few of each tab, this item's and this scene's first; a word after the @ narrows every tab (by name, group or scene,
+// as the picker's search); a tab (its chip, Tab and ⇧Tab, or Ver todas) lists all of it, a page at a time
+const MPAGE = 40;
 async function syncMention() {
   const box = $(".est-mention");
   if (!box) return;
+  const seq = (E.mseq = (E.mseq || 0) + 1); // only the latest call draws (each one waits for the thumbnails' links)
   const at = mentionAt();
   const hide = () => { E.mention = null; box.hidden = true; };
   if (!at) return hide();
-  // by group, as in the + picker; a few of each until a word narrows it down
-  const q = fold(at.q), seen = new Set();
-  const groups = pickables().map(([g, list]) => [g, (g === "Vozes"
-    ? list.map(({ f, i }) => ({ path: f.path, kind: "audio", label: voiceName(f, i) }))
-    : list.map((o) => ({ path: o.path, preview: o.preview_path || null, kind: isImg(o) ? "image" : "video", label: nameOf(o), o })))
-    .filter((x) => !seen.has(x.path) && seen.add(x.path) && (!q || fold(x.label).includes(q))).slice(0, q ? 20 : 6)]).filter(([, l]) => l.length);
-  const items = groups.flatMap(([, l]) => l);
-  if (!items.length) return hide();
-  await E.ctx.sign(items.filter((x) => x.o).map((x) => x.o.thumb_path || x.o.preview_path || x.o.path));
-  if (mentionAt()?.node !== at.node) return; // typed on meanwhile: the next input redraws it
-  E.mention = { at, items, i: Math.min(E.mention?.i || 0, items.length - 1) };
+  const { ctx } = E, it = E.item, here = it?.scene ?? E.scene ?? null;
+  // the same @ keeps its tab (and its page and line while the word stays) as it redraws; a new @ starts on Tudo
+  const was = E.mention?.at.node === at.node && E.mention.at.start === at.start ? E.mention : null;
+  const tabs = [["all", "Tudo"], ...pickTabs(isVideo())];
+  const tab = tabs.some(([k]) => k === was?.tab) ? was.tab : "all";
+  const still = !!was && was.tab === tab && was.q === at.q;
+  const page = still ? was.page || 1 : 1;
+  // the tabs' tiles (and, as a word asks, each one's search text) are made once per @, and again when the room reloads
+  const key = [ctx.S.options, ctx.S.files, ctx.S.items, ctx.S.wkRefs, ctx.S.reviews, isVideo(), here, it?.id];
+  let data = was?.data;
+  if (!data || data.key.some((v, n) => v !== key[n])) {
+    pickables(); // the names (E.names) the room's images go by
+    data = { key, lists: Object.fromEntries(tabs.slice(1).map(([k]) => [k, pickList(k, here)])) };
+  }
+  const q = fold(at.q);
+  const lists = Object.fromEntries(tabs.slice(1).map(([k]) => [k, data.lists[k].filter((x) => pickFind(x, q))]));
+  if (!Object.values(lists).some((l) => l.length)) return hide();
+  // a tile of the picker as a line of the list, and the token it puts in the text
+  const line = (x) => (x.v ? { path: x.v.f.path, kind: "audio", label: pickLabel(x), drop: false }
+    : { path: x.o.path, preview: x.o.preview_path || null, kind: isImg(x.o) ? "image" : "video", label: pickLabel(x), o: x.o, drop: x.drop, caption: x.o.caption || "" });
+  // what this item was made from or uses comes first, then this scene's
+  const mine = (x) => !!it && (x.v ? x.v.i.id === it.id : x.o.item_id === it.id || (it.refs || []).some((id) => x.o.id === `file:${id}`));
+  const near = (x) => (mine(x) ? 0 : x.scenes.includes(here) ? 1 : 2);
+  let parts, more = 0;
+  if (tab === "all") {
+    // a few of each tab, each image once
+    const seen = new Set(), n = q ? 5 : 3, pathOf = (x) => (x.v ? x.v.f.path : x.o.path);
+    parts = tabs.slice(1).map(([k, name]) => {
+      const list = [];
+      for (const [, , x] of lists[k].map((x, j) => [near(x), j, x]).sort((a, b) => a[0] - b[0] || a[1] - b[1])) {
+        if (list.length === n) break;
+        if (!seen.has(pathOf(x))) { seen.add(pathOf(x)); list.push(line(x)); }
+      }
+      return { k, name, count: lists[k].length, list };
+    }).filter((p) => p.list.length);
+  } else {
+    // the whole tab, by the picker's groups (this scene, then each scene; each request of the client)
+    const all = lists[tab], shown = all.slice(0, MPAGE * page);
+    more = all.length - shown.length;
+    parts = [];
+    for (const x of shown) { const p = parts.at(-1); if (p && p.group === x.group) p.list.push(line(x)); else parts.push({ group: x.group, list: [line(x)] }); }
+  }
+  const items = parts.flatMap((p) => p.list);
+  const hasStill = (x) => x.o && (x.kind === "image" || x.o.thumb_path || x.o.preview_path);
+  await ctx.sign(items.filter(hasStill).map((x) => x.o.thumb_path || x.o.preview_path || x.o.path));
+  if (seq !== E.mseq) return; // typed on meanwhile: the newer call draws
+  E.mention = { at, q: at.q, tab, page, more, items, data, i: still ? Math.min(was.i, items.length - 1) : 0,
+    tabs: tabs.filter(([k]) => k === "all" || lists[k].length).map(([k]) => k) };
   // "Ana · aprovada": the item in full, what sets it apart dimmed
   const name = (s) => { const k = s.indexOf(" · "); return k < 0 ? esc(s) : `${esc(s.slice(0, k))}<small>${esc(s.slice(k + 3))}</small>`; };
+  // already in: the base, or one of the references (a ✓ would read as the team's ✓ in the names)
+  const used = (p) => (E.base?.path === p ? "base" : E.refs.some((r) => r.path === p) ? "em uso" : "");
   let j = 0;
-  box.innerHTML = groups.map(([g, list]) => `<p class="est-mh">${esc(g)}</p>${list.map((x) => { const n = j++; return `<button class="${n === E.mention.i ? "on" : ""}" data-k="mention" data-i="${n}">${x.o && x.kind === "image" ? `<img src="${esc(thumbUrl(x.o))}" alt="">` : x.kind === "audio" ? ICONS.wave : ICONS.film}<span>${name(x.label)}</span></button>`; }).join("")}`).join("");
+  const row = (x) => {
+    const n = j++;
+    return `<button class="est-mrow ${n === E.mention.i ? "on" : ""} ${x.drop ? "discard" : ""}" data-k="mention" data-i="${n}" role="option" title="${esc(x.label)}${x.caption && !x.label.includes(x.caption) ? ` · ${esc(x.caption)}` : ""}${x.drop ? " · descartada (✕)" : ""}">${hasStill(x) ? `<img src="${esc(thumbUrl(x.o))}" alt="">` : x.kind === "audio" ? ICONS.wave : ICONS.film}<span>${name(x.label)}</span>${used(x.path) ? `<i class="est-mon" title="${used(x.path) === "base" ? "É a base desta edição" : "Já está nas referências"}">${used(x.path)}</i>` : ""}${x.kind === "audio" ? `<i class="est-mplay" data-k="play" data-path="${esc(x.path)}" title="Ouvir">${E.playing === x.path ? "■" : "▶"}</i>` : ""}</button>`;
+  };
+  const tabName = (k) => tabs.find(([t]) => t === k)[1];
+  const body = tab === "all"
+    ? parts.map((p) => `<p class="est-mh"><span>${esc(p.name)}</span><small>${p.count}</small>${p.count > p.list.length ? `<button data-k="mention-tab" data-v="${p.k}">Ver todas</button>` : ""}</p>${p.list.map(row).join("")}`).join("")
+    : !items.length ? `<p class="est-mnote">Nada em ${esc(tabName(tab))}${q ? ` com “${esc(at.q)}”` : ""}.</p>`
+    : parts.map((p) => `${p.group ? `<p class="est-mh"><span>${esc(p.group)}</span></p>` : ""}${p.list.map(row).join("")}`).join("")
+      + (more ? `<button class="est-mmore" data-k="mention-more">Mostrar mais · ${more}</button>` : "");
+  const chips = tabs.map(([k, n]) => `<button class="${k === tab ? "on" : ""} ${k !== "all" && !lists[k].length ? "zero" : ""}" data-k="mention-tab" data-v="${k}" role="tab" aria-selected="${k === tab}">${esc(n)}${k === tab && k !== "all" ? `<small>${lists[k].length}</small>` : ""}</button>`).join("");
+  // redrawn on every letter: the tabs keep their scroll, the list too while it is the same list
+  const top = still ? box.querySelector(".est-mlist")?.scrollTop || 0 : 0, left = box.querySelector(".est-mtabs")?.scrollLeft || 0;
+  box.innerHTML = `<div class="est-mtabs" role="tablist" aria-label="Material da sala">${chips}</div><div class="est-mlist" role="listbox" aria-label="Referências da sala">${body}</div>
+    <p class="est-mfoot"><span><kbd>↑</kbd><kbd>↓</kbd><kbd>↵</kbd> usar</span><span><kbd>Tab</kbd> próxima aba</span>${q ? "" : "<span>ou digite um nome</span>"}</p>`;
   box.hidden = false;
-  // above the caret, inside the card
+  // above the caret, inside the card, as tall as the room above it allows
   const r = document.createRange();
   r.setStart(at.node, at.start); r.collapse(true);
   const c = r.getBoundingClientRect(), card = $(".est-card").getBoundingClientRect();
+  box.style.maxHeight = `${Math.max(200, Math.min(420, c.top - 14))}px`;
   box.style.left = `${Math.max(8, Math.min(c.left - card.left, card.width - box.offsetWidth - 8))}px`;
   box.style.bottom = `${card.bottom - c.top + 6}px`;
+  box.querySelector(".est-mlist").scrollTop = top;
+  const tb = box.querySelector(".est-mtabs"), on = tb.querySelector(".on");
+  tb.scrollLeft = left;
+  if (on.offsetLeft < tb.scrollLeft) tb.scrollLeft = on.offsetLeft - 5;
+  else if (on.offsetLeft + on.offsetWidth > tb.scrollLeft + tb.clientWidth) tb.scrollLeft = on.offsetLeft + on.offsetWidth - tb.clientWidth + 5;
+  fadeTabs(tb);
+  markMention();
 }
-const markMention = () => $(".est-mention")?.querySelectorAll("button").forEach((b, j) => b.classList.toggle("on", j === E.mention?.i));
+// the tabs fade at an edge that has more of them past it
+const fadeTabs = (tb) => { tb.classList.toggle("fl", tb.scrollLeft > 1); tb.classList.toggle("fr", tb.scrollLeft + tb.clientWidth < tb.scrollWidth - 1); };
+// the chosen line, in view
+function markMention() {
+  $(".est-mention")?.querySelectorAll(".est-mrow").forEach((b) => {
+    const on = +b.dataset.i === E.mention?.i;
+    b.classList.toggle("on", on);
+    if (on) b.scrollIntoView({ block: "nearest" });
+  });
+}
+// Tab and ⇧Tab in the @ list: the next tab with something in it (Tudo is always there)
+function mentionTab(d) {
+  const m = E.mention;
+  if (!m) return;
+  const k = Math.max(0, m.tabs.indexOf(m.tab));
+  m.tab = m.tabs[(k + d + m.tabs.length) % m.tabs.length]; m.page = 1; m.i = 0;
+  return syncMention();
+}
 function pickMention(j) {
   const x = E.mention?.items[j];
   if (!x) return;
@@ -2298,7 +2387,7 @@ function barHtml() {
     <div class="est-field">
       <div class="est-prompt est-ed empty" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Prompt"></div>
     </div>
-    <div class="est-mention" role="listbox" aria-label="Referências da sala" hidden></div>
+    <div class="est-mention" hidden></div>
     <div class="est-ctl">
       <label class="est-pill est-model" title="Modelo: os de imagem e, embaixo, os de vídeo"><i class="est-ico"></i><select data-k="model"></select></label>
       <label class="est-pill" title="Proporção"><i>${ICONS.aspect}</i><select data-k="aspect"></select></label>
@@ -2420,19 +2509,23 @@ function open(ctx, init) {
   if (E.areas.length) loadOrig().catch(() => {});
   setTimeout(() => $(".est-prompt")?.focus(), 30);
 }
-// the prompt box's own keys: with the @ list open, ↑ ↓ choose and Enter or Tab puts the reference in; otherwise Enter is a
-// new line (⌘Enter generates, see onKey) and a paste comes in as plain text. The list keeps the focus in the text when clicked
+// the prompt box's own keys: with the @ list open, Tab and ⇧Tab go through its tabs, ↑ ↓ choose (↓ past the last line brings
+// the next page) and Enter puts the reference in; otherwise Enter is a new line (⌘Enter generates, see onKey) and a paste
+// comes in as plain text. The list keeps the focus in the text when clicked, and follows the caret (keys, clicks)
 function bindEditor() {
   const ed = editor();
   if (!ed) return;
   ed.addEventListener("keydown", (e) => {
-    if (E.mention && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    const m = E.mention;
+    if (m && e.key === "Tab") { e.preventDefault(); return mentionTab(e.shiftKey ? -1 : 1); }
+    if (m?.items.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
       e.preventDefault();
-      const n = E.mention.items.length;
-      E.mention.i = (E.mention.i + (e.key === "ArrowDown" ? 1 : -1) + n) % n;
+      const n = m.items.length;
+      if (e.key === "ArrowDown" && m.i === n - 1 && m.more) { m.page++; m.i = n; return syncMention(); }
+      m.i = (m.i + (e.key === "ArrowDown" ? 1 : -1) + n) % n;
       return markMention();
     }
-    if (E.mention && (e.key === "Enter" || e.key === "Tab")) { e.preventDefault(); return pickMention(E.mention.i); }
+    if (m?.items.length && e.key === "Enter" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); return pickMention(m.i); }
     if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); document.execCommand("insertText", false, "\n"); }
   });
   ed.addEventListener("paste", (e) => {
@@ -2442,9 +2535,19 @@ function bindEditor() {
     if (files.length && E.mode !== "draw") return addRefFiles(files, { inline: true });
     document.execCommand("insertText", false, e.clipboardData.getData("text/plain"));
   });
-  ed.addEventListener("keyup", (e) => { if (e.key.startsWith("Arrow") && !E.mention) syncMention(); });
+  ed.addEventListener("keyup", (e) => { if (/^(ArrowLeft|ArrowRight|Home|End)$/.test(e.key) || e.key.startsWith("Arrow") && !E.mention) syncMention(); });
+  ed.addEventListener("mouseup", () => setTimeout(syncMention));
   ed.addEventListener("blur", () => { E.mention = null; const box = $(".est-mention"); if (box) box.hidden = true; });
-  $(".est-mention")?.addEventListener("mousedown", (e) => e.preventDefault());
+  const mbox = $(".est-mention");
+  mbox?.addEventListener("mousedown", (e) => e.preventDefault());
+  // the tabs scroll sideways (a mouse wheel too) and fade where more of them hide
+  mbox?.addEventListener("scroll", (e) => { if (e.target.matches?.(".est-mtabs")) fadeTabs(e.target); }, true);
+  mbox?.addEventListener("wheel", (e) => {
+    const tb = e.target.closest?.(".est-mtabs");
+    if (!tb || Math.abs(e.deltaY) <= Math.abs(e.deltaX) || tb.scrollWidth <= tb.clientWidth) return;
+    e.preventDefault();
+    tb.scrollLeft += e.deltaY;
+  }, { passive: false });
 }
 async function loadKeys() {
   try { Object.assign(KEYS, (await call("check")).keys); } catch { /* unknown: Gerar shows the server's answer */ }
@@ -2835,12 +2938,43 @@ function refImgs(it) {
 // others; pickables() numbers the names that still repeat (E.names), so the prompt and Claude can tell them apart
 function refName(o) {
   if (o.ref) return o.label;
-  const { ctx } = E, it = ctx.itemOf(o.item_id), t = it?.title || "Imagem";
+  const { ctx } = E, now = pass(), it = now.itemBy.get(o.item_id) || ctx.itemOf(o.item_id), t = it?.title || "Imagem";
   if (o.model === "Blocking 3D") return `${t} · 3D${o.caption ? ` ${o.caption}` : ""}`;
-  if (it && rootOf(o).id === it.chosen_option) return `${t} · ${it.decision === "approved" ? "aprovada" : "escolhida"}`;
-  const L = it ? ctx.letterOf(it, o) : "";
-  const kept = (ctx.S.reviews || []).some((r) => r.option_id === o.id && r.verdict === "keep");
-  return `${t} · ${kept ? "✓ " : ""}v${o.version || 1}${L ? ` ${L}` : ""}`;
+  // a version its card doesn't show now (the Geradas tab lists them all) says which one it is, as the studio's title does
+  const v = verOf(o), vs = v && faceIdOf(rootOf(o)) !== o.id ? ` · versão ${v}` : "";
+  if (it && rootOf(o).id === it.chosen_option) return `${t} · ${it.decision === "approved" ? "aprovada" : "escolhida"}${vs}`;
+  const L = it ? letterNow(it, o) : "";
+  return `${t} · ${now.kept.has(o.id) ? "✓ " : ""}v${o.version || 1}${L ? ` ${L}` : ""}${vs}`;
+}
+// what naming needs, looked up once while a list is being made (it names hundreds of tiles) and forgotten right after, so
+// it is never older than the room: the items by id, the options with a ✓, each item's client letters
+let PASS = null;
+function pass() {
+  if (!PASS) {
+    const S = E.ctx.S;
+    PASS = { itemBy: new Map(S.items.map((i) => [i.id, i])), kept: new Set((S.reviews || []).filter((r) => r.verdict === "keep").map((r) => r.option_id)), letters: new Map() };
+    queueMicrotask(() => { PASS = null; });
+  }
+  return PASS;
+}
+function letterNow(it, o) {
+  const { ctx } = E, L = pass().letters;
+  if (!ctx.lettersOf) return ctx.letterOf(it, o);
+  if (!L.has(it.id)) L.set(it.id, ctx.lettersOf(it));
+  return L.get(it.id).get(o) || "";
+}
+// an image's place among its card's versions (the original is 1), 0 for a card with one; counted once per list of options
+let VERS = null;
+function verOf(o) {
+  const all = E.ctx.S.options;
+  if (VERS?.all !== all || VERS.n !== all.length) {
+    const by = new Map();
+    for (const x of all) if (x.stack) { if (!by.has(x.stack)) by.set(x.stack, []); by.get(x.stack).push(x); }
+    const at = new Map();
+    for (const [root, list] of by) { at.set(root, 1); list.sort((a, b) => a.created_at.localeCompare(b.created_at)).forEach((x, i) => at.set(x.id, i + 2)); }
+    VERS = { all, n: all.length, at };
+  }
+  return VERS.at.get(o.id) || 0;
 }
 const nameOf = (o) => E.names?.get(o.id) || refName(o);
 // the room's files to use as references: this scene's client picks and checked options first, then this item's other
@@ -2850,13 +2984,13 @@ function pickables() {
   const { ctx } = E, S = ctx.S;
   const it = E.item, scene = it?.scene ?? E.scene;
   const items = S.items; // every round: a shot of a later round is made from what an earlier one approved
-  const verdict = (o) => (S.reviews || []).find((r) => r.option_id === o.id)?.verdict;
-  const chosen = (o) => o.id === ctx.itemOf(o.item_id)?.chosen_option;
+  const { itemBy, verdict } = lookups(S);
+  const chosen = (o) => o.id === itemBy.get(o.item_id)?.chosen_option;
   const good = (o) => isImg(o) && (chosen(o) || verdict(o) === "keep");
   const seen = new Set(E.base ? [E.base.id] : []);
   const once = (list) => list.map(cardOf).filter((o) => isImg(o) && !seen.has(o.id) && seen.add(o.id));
   // the client's picks first, then the team's ✓
-  const picks = (inScene) => once(S.options.filter((o) => good(o) && items.some((i) => i.id === o.item_id && (i.scene === scene) === inScene)).sort((a, b) => chosen(b) - chosen(a)));
+  const picks = (inScene) => once(S.options.filter((o) => { const i = itemBy.get(o.item_id); return good(o) && !!i && (i.scene === scene) === inScene; }).sort((a, b) => chosen(b) - chosen(a)));
   const groups = [
     ["Desta cena · aprovadas e ✓", picks(true)],
     ["Deste item · geradas", it ? once(S.options.filter((o) => o.item_id === it.id && !good(o) && verdict(o) !== "drop").reverse()).slice(0, 12) : []],
@@ -2880,6 +3014,11 @@ function pickables() {
 // their returns); 3D: the blocking angles; a video also gets the videos and the voice takes ----------
 const PTABS = [["ok", "Aprovadas"], ["gen", "Geradas"], ["mat", "Material"], ["3d", "3D"], ["vid", "Vídeos"], ["voz", "Vozes"]];
 const PAGE = 60;
+// what the picker and the @ list share: the tabs (the videos and voices only for a video), what a tile is called, and
+// whether a word finds it (in its name, its group or its scenes' names; kept on the tile, which the @ list keeps while open)
+const pickTabs = (video) => PTABS.filter(([k]) => (k === "vid" || k === "voz" ? video : true));
+const pickLabel = (x) => (x.v ? voiceName(x.v.f, x.v.i) : x.o.ref ? x.o.label : nameOf(x.o));
+const pickFind = (x, q) => !q || (x.hay ??= fold(`${pickLabel(x)} ${x.group} ${x.scenes.map((n) => E.ctx.sceneName(n)).join(" ")}`)).includes(q);
 // a file the client sent as a tile: an image, or a video (its still, outside a video)
 function fileTile(f, video) {
   const vid = f.mime.startsWith("video/");
@@ -2893,13 +3032,20 @@ function pickOf(id) {
   if (id.startsWith("ref:")) { const x = (S.wkRefs || []).find((r) => `ref:${r.id}` === id); return x?.path ? { id, ref: true, item_id: x.item_id, path: x.path, mime: "image/jpeg", label: x.label || "Referência", name: x.label || "Referência" } : null; }
   return optOf(id);
 }
+// the room's items and ✓/✕ by id, made fresh for each list (a list sorts and names hundreds of tiles); the first review of
+// an option is its verdict, as a find() gives it
+function lookups(S) {
+  const itemBy = new Map(S.items.map((i) => [i.id, i])), rev = new Map();
+  for (const r of S.reviews || []) if (!rev.has(r.option_id)) rev.set(r.option_id, r.verdict);
+  return { itemBy, verdict: (o) => rev.get(o.id) };
+}
 // a tab's tiles, in order, each {o (or v: a voice), scenes, group, drop}. A file belongs to the scenes whose items use it
 function pickList(tab, here) {
   const { ctx } = E, S = ctx.S, video = isVideo() && !E.pickBase;
-  const sceneOf = (id) => S.items.find((i) => i.id === id)?.scene;
+  const { itemBy, verdict } = lookups(S);
+  const sceneOf = (id) => itemBy.get(id)?.scene;
   const usedIn = (f) => S.items.filter((i) => (i.refs || []).includes(f.id)).map((i) => i.scene);
-  const verdict = (o) => (S.reviews || []).find((r) => r.option_id === o.id)?.verdict;
-  const chosen = (o) => o.id === ctx.itemOf(o.item_id)?.chosen_option;
+  const chosen = (o) => o.id === itemBy.get(o.item_id)?.chosen_option;
   const newest = (a, b) => b.created_at.localeCompare(a.created_at);
   // this scene first, then the others in order
   const rank = (n) => (n === here ? -1 : n ?? 999);
@@ -2929,14 +3075,14 @@ async function syncPicker() {
   p.hidden = !E.pick;
   if (!E.pick) return;
   const { ctx } = E, S = ctx.S, video = isVideo() && !E.pickBase;
-  const tabs = PTABS.filter(([k]) => (k === "vid" || k === "voz" ? video : true));
+  const tabs = pickTabs(video);
   if (!tabs.some(([k]) => k === E.ptab)) E.ptab = "ok";
   pickables(); // the names (E.names) the chips, the @ list and the prompt give the room's images
   const here = E.item?.scene ?? E.scene ?? null;
   const scope = E.pscope === "all" || here == null && E.pscope === "here" ? null : E.pscope === "here" ? here : Number(E.pscope);
   const q = fold(E.pq || "").trim();
-  const label = (x) => (x.v ? voiceName(x.v.f, x.v.i) : x.o.ref ? x.o.label : nameOf(x.o));
-  const keep = (x) => (scope == null || x.scenes.includes(scope)) && (!q || fold(`${label(x)} ${x.group} ${x.scenes.map((n) => ctx.sceneName(n)).join(" ")}`).includes(q));
+  const label = pickLabel;
+  const keep = (x) => (scope == null || x.scenes.includes(scope)) && pickFind(x, q);
   const counts = Object.fromEntries(tabs.map(([k]) => [k, k === E.ptab ? 0 : pickList(k, here).filter(keep).length]));
   const all = pickList(E.ptab, here).filter(keep), shown = all.slice(0, PAGE * (E.pmore || 1));
   counts[E.ptab] = all.length;
@@ -2993,6 +3139,9 @@ async function onClick(e) {
   if (k === "clear") { if (hasDrawing() && confirm("Apagar o desenho?")) { E.strokes = []; E.notes = []; E.hist = []; E.sel = null; redraw(); syncChips(); syncTools(); } return; }
   if (k === "go") return generate();
   if (k === "mention") return pickMention(Number(b.dataset.i));
+  // the @ list's tabs (a chip, or Ver todas under Tudo) and the next page of a long tab, its first new line chosen
+  if (k === "mention-tab") { const m = E.mention; if (m) { m.tab = b.dataset.v; m.page = 1; m.i = 0; } return syncMention(); }
+  if (k === "mention-more") { const m = E.mention; if (m) { m.page++; m.i = m.items.length; } return syncMention(); }
   if (k === "enhance") return enhance();
   if (k === "save") return saveDrawing();
   if (k === "sound") { E.sound = !E.sound; return syncBar(); }
@@ -3047,14 +3196,16 @@ async function onClick(e) {
   }
   if (k === "play") {
     const path = b.dataset.path;
+    // the picker and the @ list both show which take is playing
+    const shown = () => { syncPicker(); $(".est-mention")?.querySelectorAll(".est-mplay").forEach((p) => { p.textContent = E.playing === p.dataset.path ? "■" : "▶"; }); };
     E.audio ||= new Audio();
-    E.audio.onended = () => { E.playing = null; syncPicker(); };
-    if (E.playing === path) { E.audio.pause(); E.playing = null; return syncPicker(); }
+    E.audio.onended = () => { E.playing = null; shown(); };
+    if (E.playing === path) { E.audio.pause(); E.playing = null; return shown(); }
     await ctx.sign([path]);
     E.audio.src = ctx.urls.get(path) || "";
     E.playing = path;
-    E.audio.play().catch(() => { E.playing = null; syncPicker(); });
-    return syncPicker();
+    E.audio.play().catch(() => { E.playing = null; shown(); });
+    return shown();
   }
   if (k === "view") { E.view = E.view === b.dataset.id ? null : b.dataset.id; syncStage(); return syncRail(); }
   if (k === "back") { E.view = null; syncStage(); return syncRail(); }
