@@ -1907,8 +1907,14 @@ function approvedPage() {
   return head("Aprovado", [plural(ok, "item aprovado", "itens aprovados"), asks ? `${plural(asks, "com pedido", "com pedido")} em amarelo` : "", "a versão atual de cada um"].filter(Boolean).join(" · "), dl, "Job") +
     `<div class="main-body ov-body" data-keep="main">${items.length ? cardGrid(items.map(card)) : '<p class="empty">Nada aprovado ainda.</p>'}</div>`;
 }
+// an empty card on the board shows what it will be made from: its kit's first image (Guardar no card), else the scene's
+// approved place, so the scenes of a new round can be told apart and split before anything is generated
+function boardStill(it) {
+  const ref = S.kits?.get(it.id)?.kit?.refs?.find((r) => (r.kind || "image") === "image");
+  return (ref && S.options.find((x) => x.path === ref.path)) || kitOfScene(it.scene).place[0] || null;
+}
 function boardCard(it) {
-  const o = optsOf(it.id)[0];
+  const o = optsOf(it.id)[0] || (TEAM && AI ? boardStill(it) : null);
   const authors = authorsOf(optsOf(it.id));
   const [cls, label] = stageOf(it);
   const n = commentsNow(it).length;
