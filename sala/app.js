@@ -1579,6 +1579,40 @@ const toCurate = (it) => it.mode !== "set" && keptOf(it).length > 3;
 // tools (✦, compare, ⤓). Top center its history, the sides the variations, the dots bottom center. The middle is the image:
 // a click opens it big. tools: false when the card puts its own tools bottom right (the scene page); quiet: no judgment
 // plain: no "–" on an option the client does not see (new work that has not gone yet)
+// what a file is, at a glance (team): the animatic's cut (options.role), a 3D blocking (an angle or its video), a video,
+// a voice, an image. Its icon goes in the corner tag with the letter; with no letter, a short word says it
+const fileType = (o) => (o.role === "animatic" ? "corte" : isAngle(o) ? "3d" : o.mime?.startsWith("video/") ? "video" : o.mime?.startsWith("audio/") ? "voz" : "image");
+const KIND_SAY = { corte: "Corte do animatic", "3d": "Blocking 3D", video: "Vídeo", voz: "Voz", image: "Imagem" };
+const KIND_WORD = { corte: "corte", "3d": "3D", voz: "voz", video: "", image: "" };
+const KIND_ICO = {
+  video: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="M6.8 6.2v3.6L9.9 8z" fill="currentColor" stroke="none"/></svg>',
+  image: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="6.6" r="1.2"/><path d="M2.6 11.6 6.4 8.2l2.9 2.5 1.9-1.4 2.2 1.9" stroke-linejoin="round"/></svg>',
+  "3d": '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 1.8 13.5 5v6L8 14.2 2.5 11V5zM2.5 5 8 8.2 13.5 5M8 8.2v6" stroke-linejoin="round"/></svg>',
+  corte: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 3v10M11 3v10M2 6.3h3M2 9.7h3M11 6.3h3M11 9.7h3"/></svg>',
+  voz: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="6" y="2" width="4" height="8" rx="2"/><path d="M3.6 8a4.4 4.4 0 0 0 8.8 0M8 12.4V14"/></svg>',
+};
+// a video's ✦ (its own tools, or the card's when it shows one): a menu of the models that edit a video, then the studio
+const veditBtn = (o, cls = "") => `<button ${cls ? `class="${cls}" ` : ""}data-act="vedit-menu" data-id="${o.id}" title="Editar este vídeo com IA: Seedance ou Genjutsu" aria-label="Editar este vídeo com IA" aria-haspopup="menu">${Estudio.ICONS.spark}</button>`;
+function veditMenu(btn, id) {
+  document.querySelector(".vm-pop")?.remove();
+  const models = Estudio.videoEditModels();
+  if (!models.length) return toast("Nenhum modelo de edição de vídeo está ligado na sala.", true);
+  const el = document.createElement("div");
+  el.className = "vm-pop";
+  el.setAttribute("role", "menu");
+  el.innerHTML = models.map((m) => `<button type="button" role="menuitem" data-vm="${esc(m.id)}"><b>${esc(m.name)}</b>${m.says ? `<small>${esc(m.says)}</small>` : ""}</button>`).join("");
+  document.body.append(el);
+  const r = btn.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+  el.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, r.right - w))}px`;
+  el.style.top = `${r.top - h - 8 >= 8 ? r.top - h - 8 : Math.min(innerHeight - h - 8, r.bottom + 8)}px`;
+  const close = () => { el.remove(); removeEventListener("pointerdown", away, true); removeEventListener("keydown", esc_, true); };
+  const away = (e) => { if (!el.contains(e.target) && e.target !== btn) close(); };
+  const esc_ = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+  addEventListener("pointerdown", away, true);
+  addEventListener("keydown", esc_, true);
+  el.onclick = (e) => { const b = e.target.closest("[data-vm]"); if (!b) return; close(); Estudio.openVideoEdit(estCtx(), { optionId: id, vm: b.dataset.vm }); };
+  el.querySelector("button")?.focus({ preventScroll: true });
+}
 function optFace(it, o, { size, by = false, act = "ov-open", del = false, plain = false, quiet = false, extra = null, tools = true } = {}) {
   const i = optsOf(it.id).indexOf(o);
   const rv = reviewOf(o.id) || {};
@@ -1587,13 +1621,19 @@ function optFace(it, o, { size, by = false, act = "ov-open", del = false, plain 
   const star = TEAM && clientOk(o);
   const state = star ? '<b class="hz-st wk" title="O cliente escolheu">★</b>'
     : rv.verdict ? `<b class="hz-st ${rv.verdict}" title="${rv.verdict === "drop" ? dropWhy(rv) : `${MARK[rv.verdict]}${rv.note ? ` · ${esc(rv.note)}` : ""}`}">${ICO[rv.verdict]}</b>` : "";
-  const tr = lab || state ? `<span class="hz-tr">${lab ? `<b class="hz-lab" title="${off ? "O cliente não vê esta imagem" : "A letra que o cliente vê"}">${lab}</b>` : ""}${state}</span>` : "";
+  // team: the corner tag also says what the file is (video, image, 3D, the animatic's cut, a voice), next to its letter
+  const kd = TEAM ? fileType(o) : null, word = kd && !lab ? KIND_WORD[kd] : "";
+  const tagTitle = `${kd ? KIND_SAY[kd] : ""}${kd && lab ? " · " : ""}${lab ? (off ? "o cliente não vê" : "a letra que o cliente vê") : ""}`;
+  const tag = kd ? `<b class="hz-lab hz-kind" title="${tagTitle}" aria-label="${tagTitle}">${KIND_ICO[kd]}${lab || word ? `<span>${lab || word}</span>` : ""}</b>`
+    : lab ? `<b class="hz-lab" title="${off ? "O cliente não vê esta imagem" : "A letra que o cliente vê"}">${lab}</b>` : "";
+  const tr = tag || state ? `<span class="hz-tr">${tag}${state}</span>` : "";
   const judge = TEAM && !quiet ? `<div class="hz-judge">${extra ? `${extra(o)}<span class="sep"></span>` : ""}${Object.keys(REVIEW).map((v) => `<button class="rv ${rv.verdict === v ? "on" : ""}" data-act="review" data-id="${o.id}" data-v="${v}" aria-pressed="${rv.verdict === v}" title="${REVIEW[v]}${v === "drop" ? " (o cliente não vê)" : ""}">${ICO[v]}</button>`).join("")}${del ? `<span class="sep"></span><button class="hz-del" data-act="opt-del" data-id="${o.id}" title="Apagar esta imagem">${ICO.trash}</button>` : ""}</div>`
     : extra ? `<div class="hz-judge">${extra(o)}</div>` : "";
   const nc = commentsNow(it).length, nd = TEAM ? drawsOf(o) : 0;
   const meta = [by && o.created_by ? esc(o.created_by.split(" ")[0]) : "", TEAM && roundVers(it.round_id).length > 1 ? `v${verOf(o)}` : ""].filter(Boolean).join(" · ");
   const bl = `<span class="hz-bl"><button class="hz-chip ${nc ? "" : "hz-hover"}" data-act="drawer" data-id="${it.id}" title="${nc ? plural(nc, "comentário", "comentários") : "Comentar"}" aria-label="Comentários">${CHAT}${nc || ""}</button>${nd ? `<b class="hz-chip" title="${plural(nd, "desenho", "desenhos")} em aberto">${Estudio.ICONS.pen}${nd}</b>` : ""}${meta ? `<span class="hz-meta" title="Quem fez · versão">${meta}</span>` : ""}${rv.verdict === "drop" && rv.note ? `<span class="hz-meta" title="${dropWhy(rv)}">${esc(rv.note)}</span>` : ""}</span>`;
-  const br = tools ? `<div class="hz-br">${TEAM && AI && !o.mime.startsWith("video/") ? `<button data-act="estudio" data-id="${o.id}" title="Editar com IA: esta imagem é a base" aria-label="Editar com IA">${Estudio.ICONS.spark}</button>` : ""}${vsCan(o) ? `<button data-act="vs-open" data-id="${it.id}" data-i="${i}" title="${blockOf(o) ? "Comparar com o blocking 3D" : "Comparar com a versão anterior"}" aria-label="Comparar">${ICON.vs}</button>` : ""}<button data-act="download" data-id="${o.id}" title="Baixar o original" aria-label="Baixar">${ICO.down}</button></div>` : "";
+  // each file's own ✦: an image goes into the studio as the base; a video opens the menu of the models that edit a video
+  const br = tools ? `<div class="hz-br">${TEAM && AI ? (o.mime.startsWith("video/") ? veditBtn(o) : `<button data-act="estudio" data-id="${o.id}" title="Editar com IA: esta imagem é a base" aria-label="Editar com IA">${Estudio.ICONS.spark}</button>`) : ""}${vsCan(o) ? `<button data-act="vs-open" data-id="${it.id}" data-i="${i}" title="${blockOf(o) ? "Comparar com o blocking 3D" : "Comparar com a versão anterior"}" aria-label="Comparar">${ICON.vs}</button>` : ""}<button data-act="download" data-id="${o.id}" title="Baixar o original" aria-label="Baixar">${ICO.down}</button></div>` : "";
   return `<button class="hero-img" data-act="${act}" data-id="${it.id}" data-i="${i}" aria-label="Abrir ${esc(it.title)} ${lab} grande"${off && !dropped(o) ? ' title="Fora do que o cliente vê nesta versão"' : ""}>${media(o, size)}${vplayBtn(o)}</button>
     ${tr}${judge}${bl}${br}${verPill(o)}`;
 }
@@ -2282,6 +2322,7 @@ const shotBtn = (it, o = null) => {
   // a card with a kit (Guardar no card, in the studio): its ✦ opens the studio with it, whatever the card shows
   const ai = !AI ? "" : S.kits?.has(it.id) ? `<button class="ibtn on" data-act="estudio-kit" data-item="${it.id}" title="Criar com IA com o kit deste card: as referências, o prompt e o modelo guardados" aria-label="Criar com IA com o kit do card">${Estudio.ICONS.spark}</button>`
     : o && !o.mime.startsWith("video/") ? `<button class="ibtn" data-act="estudio" data-id="${o.id}" title="Editar esta imagem com IA: ela entra como base" aria-label="Editar esta imagem com IA">${Estudio.ICONS.spark}</button>`
+    : o ? veditBtn(o, "ibtn")
     : blk ? `<button class="ibtn" data-act="estudio" data-id="${blk.id}" title="Render do blocking deste plano: o blocking é a base (o ✕ dela vira Criar com o kit)" aria-label="Render do blocking">${Estudio.ICONS.spark}</button>`
     : empty ? `<button class="ibtn" data-act="estudio-criar" data-round="${it.round_id}" data-scene="${it.scene}" data-item="${it.id}" title="Criar com IA: já vem com o elenco, a locação e o produto aprovados da cena${it.kind === "plano" ? " e o texto deste plano" : ""}" aria-label="Criar com IA">${Estudio.ICONS.spark}</button>` : "";
   return ai + (l3d ? `<a class="ibtn ibtn-3d" href="${l3d}" title="Blocking 3D deste plano${it.variants?.shot ? ", já na câmera dele" : ""}" aria-label="Blocking 3D deste plano">3D</a>` : "");
@@ -2306,6 +2347,8 @@ function teamRow(it, { scene = false, ov = false } = {}) {
   const pairs = !grid ? (S.vcmp[it.id] && vp.length ? vp : pairsOf(opts)) : [];
   const act = ov ? "ov-open" : "zoom";
   const h = opts.length && !grid && !pairs.length ? heroOf(it, opts, { act, del: true, tools: false }) : null;
+  // the grid of every file: the card's tools go to a bar of their own under it, so they never look like the last file's
+  const gridOn = !pairs.length && !h && all.length > 0 && sheet.length > 0;
   if (ov && !pairs.length) (h ? opts : sheet).forEach((o) => S.ovList.push({ id: it.id, i: all.indexOf(o) }));
   const upload = `<input type="file" multiple hidden accept="image/*,video/*" data-upload-item="${it.id}">`;
   const body = pairs.length ? wipeHero(it, pairs)
@@ -2318,13 +2361,13 @@ function teamRow(it, { scene = false, ov = false } = {}) {
   const mk = S.uploading[it.id] ? "" : makingOf(it.id);
   const pos = S.uploading[it.id] ? esc(S.uploading[it.id]) : mk;
   const ask = askOf(it);
-  return `<article class="hcard sitem ${h?.verdict ? `rv-${h.verdict}` : ""} ${ask ? "ask" : ""} ${S.flash === it.id ? "flash" : ""} ${S.sel.has(it.id) ? "sel" : ""}" id="item-${it.id}" data-drop="${it.id}"${orderOf(it)}>
+  return `<article class="hcard sitem ${gridOn ? "grid-on" : ""} ${h?.verdict ? `rv-${h.verdict}` : ""} ${ask ? "ask" : ""} ${S.flash === it.id ? "flash" : ""} ${S.sel.has(it.id) ? "sel" : ""}" id="item-${it.id}" data-drop="${it.id}"${orderOf(it)}>
     <div class="sitem-media">
     ${body}
     <span class="t sitem-pill sitem-title">${grip(cls, `${label}${it.assignee ? ` · ${esc(PEOPLE[it.assignee] || it.assignee)}` : ""}${it.visible ? ` · ${A_CL} vê` : ""}`)}${scene ? `<span class="num">${two(it.scene)}</span>` : ""}<span class="tfit" data-v="${esc(it.title)}"><input class="inline title" data-field="title" data-id="${it.id}" value="${esc(it.title)}" maxlength="120" size="1" aria-label="Título" title="${esc(it.brief || it.title)}"></span>${fb ? `<span class="sitem-fb" title="${fb}${fbBy}">${fb}</span>` : ""}${pos ? `<span class="pos${mk ? " mk" : ""}"${mk ? ' title="O estúdio está gerando pra este card: o resultado entra aqui sozinho"' : ""}>${pos}</span>` : ""}</span>
     ${labelRow(it)}${S.sel.has(it.id) ? `<span class="sitem-check" aria-hidden="true">${SEL_ICO}</span>` : ""}
     <footer class="hcard-foot sitem-foot ${open || S.drawer === it.id || (pos && !mk) ? "pin" : ""}">
-      <span class="sitem-tools sitem-pill">
+      ${gridOn ? '<span class="sitem-foot-lab">Do card</span>' : ""}<span class="sitem-tools sitem-pill">
         ${all.length > 1 ? `<button class="ibtn ${grid ? "on" : ""}" data-act="item-sheet" data-id="${it.id}" aria-pressed="${!!grid}" title="${grid ? "Voltar para a imagem grande" : "Ver todas as versões juntas"}" aria-label="Ver todas as versões juntas">${ICON.grid}</button>` : ""}
         ${vp.length ? `<button class="ibtn ${S.vcmp[it.id] ? "on" : ""}" data-act="ver-cmp" data-id="${it.id}" aria-pressed="${!!S.vcmp[it.id]}" title="${S.vcmp[it.id] ? "Voltar para as opções" : `Comparar ${vp[0].l} × ${vp[0].r}: cada versão nova com a imagem de onde saiu`}" aria-label="Comparar versões">${TYPE_ICON.compare}</button>` : ""}
         ${refsOf(it).length && all.length ? `<button class="ibtn" data-act="compare" data-id="${it.id}" title="Comparar com as fotos originais" aria-label="Comparar">${CMP}</button>` : ""}
@@ -3709,6 +3752,7 @@ const ACTS = {
   // the originals of an item (what the client sees on their side; the team gets everything but the dropped ones)
   "item-zip"(el) { const it = itemOf(el.dataset.id); if (it) zipDownload(optsOf(it.id).filter((o) => !dropped(o)).map((o) => [{ name: dlName(o), path: o.path }, ""]), it.title); },
   download(el) { const o = S.options.find((x) => x.id === el.dataset.id); if (o) openFile(o.path, dlName(o), true); },
+  "vedit-menu"(el) { veditMenu(el, el.dataset.id); },
   // Versões: the clock on a card opens or closes its list of versions; the one picked is the card from then on
   vlist(el) { S.vlist = S.vlist === el.dataset.id ? null : el.dataset.id; render(true); },
   async vpick(el) {

@@ -4103,6 +4103,17 @@ export async function openCreate(ctx, { roundId, scene, itemId }) {
   const prompt = !all.length && !shot ? "" : [shot ? `${shot.title}, cena ${name}: ${shot.brief}` : cast ? `Plano do filme, cena ${name}:` : "", cast, look ? `Luz: ${look}.` : ""].filter(Boolean).join("\n").replace(/:\n(?=@)/, ": ");
   open(ctx, { mode: "create", round: roundId, scene, item, refs, prompt, aspect: "16:9", ...(item?.kind === "video" && { kind: "video", vmodel: VIDEO_MODELS[0].id, vaspect: "16:9" }) });
 }
+// team, a video's ✦ on its card: the models that edit a video (Seedance's edit, the Genjutsu modes), as the circles'
+// Editar vídeo lists them; picking one opens the studio with that video as its master, the result landing on its card
+export const videoEditModels = () => VIDEO_MODELS.filter((m) => (m.way === "edit" || m.way === "guide") && ready(m)).map((m) => ({ id: m.id, name: m.name, says: EDIT_SAYS[m.id] || "" }));
+export async function openVideoEdit(ctx, { optionId, vm }) {
+  E.ctx = ctx;
+  const o = ctx.S.options.find((x) => x.id === optionId), it = o && ctx.itemOf(o.item_id);
+  if (!o || !it || !o.mime?.startsWith("video/") || !VIDEO_MODELS.some((m) => m.id === vm)) return;
+  await ctx.sign([o.thumb_path || o.preview_path || o.path]).catch(() => {});
+  open(ctx, { mode: "create", kind: "video", vmodel: vm, item: it, round: it.round_id, scene: it.scene, base: null, blocking: false, prompt: "",
+    refs: [{ path: o.path, preview: o.preview_path || null, thumb_path: o.thumb_path || null, thumb: thumbUrl(o), label: refName(o), kind: "video" }] });
+}
 // team: a card's kit (item_kits: what Guardar no card saved) opens the studio already like that, its result landing on
 // the card. The references come back in their order, so @image1, @video1, @audio1… still name the same ones; a card
 // without a kit opens as Criar com IA does
@@ -4136,8 +4147,19 @@ async function saveKit() {
   const base = E.base ? [{ path: E.base.path, preview: E.base.preview_path || null, thumb_path: E.base.thumb_path || E.base.preview_path || E.base.path, label: "Base", kind: "image" }] : [];
   const refs = [...base, ...E.refs.filter((r) => !r.wait).map((r) => ({ path: r.path, preview: r.preview || null, thumb_path: r.thumb_path || thumbOf(r.path, r.kind || "image"), label: r.label, kind: r.kind || "image", ...(r.role && { role: r.role }) }))];
   const kit = { kind: video ? "video" : "image", model: video ? E.vmodel : E.model, dur: E.dur, vres: E.vres, vaspect: E.vaspect, sound: !!E.sound, aspect: E.aspect, res: E.res, refs, prompt: promptText() };
-  try { await ctx.saveKit(it.id, kit); ctx.toast(`Kit guardado em ${it.title}: o ✦ do card abre assim`); }
-  catch (err) { console.error(err); ctx.toast(`Não guardou o kit: ${err.message || err}`, true); }
+  // the button itself says it: Guardando… while it goes, ✓ Guardado for a few seconds (a toast can hide behind another)
+  const btn = $('[data-k="kit-save"]'), say = (t, cls) => { const s = btn?.querySelector("span"); if (s) s.textContent = t; btn?.classList.toggle("done", cls === "done"); if (btn) btn.disabled = cls === "busy"; };
+  clearTimeout(E.kitTimer);
+  say("Guardando…", "busy");
+  try {
+    await ctx.saveKit(it.id, kit);
+    say("✓ Guardado no card", "done");
+    E.kitTimer = setTimeout(() => say("Guardar no card", ""), 3500);
+    ctx.toast(`Kit guardado em ${it.title}: o ✦ do card abre assim`);
+  } catch (err) {
+    console.error(err); say("Guardar no card", "");
+    ctx.toast(`Não guardou o kit: ${err.message || err}`, true);
+  }
 }
 // both rooms: draw on an option and say what to change
 export function openDraw(ctx, { optionId }) {
