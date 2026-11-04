@@ -2911,7 +2911,8 @@ function teamLightbox(it, opts, card, i) {
   const vv = vidVers(it);
   const lab = vv.length > 1 && vv.includes(card) ? `${vidName(vv, card)} de ${vv.length}${offWK(card) ? ` · fora ${DA_CL}` : ""}`
     : dropped(card) ? "descartada" : offWK(card) ? `fora ${DA_CL}` : it.mode === "set" ? `${wk.indexOf(card) + 1} de ${wk.length}` : `Opção ${letterOf(it, card)} de ${wk.length}`;
-  const pos = S.lightbox.ov ? S.ovList.findIndex((x) => x.id === it.id && x.i === i) : -1;
+  // its place among the Visão geral's cards (an older version of a video on screen counts as its card)
+  const pos = S.lightbox.ov ? Math.max(S.ovList.findIndex((x) => x.id === it.id && x.i === i), S.ovList.findIndex((x) => x.id === it.id)) : -1;
   const adj = !!S.lbx && S.lbx.id === o.id;
   const many = !adj && (S.lightbox.ov ? S.ovList.length > 1 : opts.length > 1);
   const can = !adj && (vsCan(o) || /^(ref|kit|path):/.test(S.lightbox.vsWith || ""));
@@ -3247,12 +3248,13 @@ const ACTS = {
   "cmp-opt"(el) { S.lightbox.i = +el.dataset.v; render(true); },
   "lb-bg"(el, e) { if (e.target === el || e.target.classList.contains("lb-stage")) ACTS["lb-close"](); },
   "tc-side"() { S.tcSide = !tcSideOn(); store.set("sala-tcside", S.tcSide ? "1" : "0"); render(true); },
-  // a version of a video card goes on screen: in the card, and in Ver grande when it is open on that card
+  // a version of a video card goes on screen: in the card, and in Ver grande when it is open on that card (from the
+  // Visão geral too: its arrows find the card by id when the version on screen is not the one in the list, see step)
   vsel(el) {
     const it = itemOf(el.dataset.id), o = S.options.find((x) => x.id === el.dataset.opt);
     if (!it || !o) return;
     (S.vsel ||= {})[it.id] = o.id;
-    if (S.lightbox?.id === it.id && !S.lightbox.ov) { const k = optsOf(it.id).indexOf(o); if (k >= 0) S.lightbox.i = k; }
+    if (S.lightbox?.id === it.id) { const k = optsOf(it.id).indexOf(o); if (k >= 0) S.lightbox.i = k; }
     render(true);
   },
   // timecoded comments: a time or a mark jumps the video there and pauses; a click on the bar goes to that point
@@ -3516,7 +3518,9 @@ function step(d) {
     return render(true);
   }
   if (S.lightbox.ov && S.ovList.length) {
-    const k = S.ovList.findIndex((x) => x.id === S.lightbox.id && x.i === S.lightbox.i);
+    // the card's place in the list; an older version of a video picked on screen is not in it, its card is
+    const at = (x) => x.id === S.lightbox.id;
+    const k = Math.max(S.ovList.findIndex((x) => at(x) && x.i === S.lightbox.i), S.ovList.findIndex(at));
     const next = S.ovList[(k + d + S.ovList.length) % S.ovList.length];
     Object.assign(S.lightbox, next);
     pickSel(next.id, optsOf(next.id)[next.i]);
