@@ -168,3 +168,68 @@
   .c3d.side-closed .c3d-side { left: auto; }
   .c3d-side-x svg { rotate: 90deg; }
 }
+
+/* the scene's timeline (timeline.js): under the 3D, in the cut's seconds. A head (play, loop, the second and the shot,
+   Keyframe, export), then a column of row names and the lane: the ruler, the shots with their in/out handles, a row of
+   keyframes per thing (camera, figures, product, the set's motion), the cut's sound, and the playhead. A key opens its
+   values in a small card above the timeline. Its height is part of --low, so the frame, dots and camera line sit above. */
+.c3d-time { position: absolute; left: 0; right: 0; bottom: 0; z-index: 4; display: flex; flex-direction: column; padding: 0 10px 8px; background: rgba(8, 10, 9, 0.94); box-shadow: inset 0 1px 0 var(--line2); border-radius: 0 0 10px 10px; user-select: none; -webkit-user-select: none; }
+.c3d.full .c3d-time { border-radius: 0; }
+.c3d-time[hidden] { display: none; }
+.c3d-thead { display: flex; align-items: center; gap: 8px; height: 40px; flex: none; }
+.c3d-tplay { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 999px; background: var(--accent); color: var(--ink); }
+.c3d-tplay svg { width: 13px; height: 13px; fill: currentColor; }
+.c3d-tchip { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 11px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, 0.06); color: rgba(255, 255, 255, 0.86); font-size: 12px; white-space: nowrap; }
+.c3d-tchip:hover:not([disabled]) { background: rgba(255, 255, 255, 0.12); color: #fff; }
+.c3d-tchip.on { background: var(--accent-soft); color: var(--accent); }
+.c3d-tchip.acc { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.c3d-tchip[disabled] { opacity: 0.45; cursor: default; }
+.c3d-tdia { width: 8px; height: 8px; background: currentColor; rotate: 45deg; border-radius: 1px; }
+.c3d-ttime { font-size: 12.5px; color: rgba(255, 255, 255, 0.86); white-space: nowrap; }
+.c3d-ttime b { font-variant-numeric: tabular-nums; color: #fff; }
+.c3d-tinfo { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c3d-tsp { flex: 1; }
+.c3d-tbody { display: flex; flex: 1; min-height: 0; }
+.c3d-tnames { width: 104px; flex: none; }
+.c3d-tn0 { height: 18px; }
+.c3d-tn { display: flex; align-items: center; padding-right: 8px; font-size: 12px; color: rgba(255, 255, 255, 0.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c3d-tn:first-of-type { color: #fff; font-weight: 600; }
+.c3d-tlane { position: relative; flex: 1; min-width: 0; cursor: text; }
+.c3d-truler { position: relative; height: 18px; }
+.c3d-truler i { position: absolute; bottom: 2px; width: 1px; height: 4px; background: rgba(255, 255, 255, 0.22); }
+.c3d-truler i.big { height: 8px; background: rgba(255, 255, 255, 0.35); }
+.c3d-truler span { position: absolute; top: 0; padding-left: 4px; font-size: 10.5px; color: var(--muted); }
+.c3d-trow { position: relative; border-top: 1px solid rgba(255, 255, 255, 0.05); }
+.c3d-tshot { position: absolute; top: 4px; bottom: 4px; display: flex; flex-direction: column; justify-content: center; padding: 0 10px; overflow: hidden; border-radius: 7px; background: rgba(255, 255, 255, 0.05); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1); cursor: pointer; }
+.c3d-tshot.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.c3d-tshot b { font-size: 11.5px; font-weight: 600; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.c3d-tshot small { font-size: 10px; color: var(--muted); white-space: nowrap; }
+.c3d-tedge { position: absolute; top: 5px; bottom: 5px; width: 5px; border-radius: 2px; background: rgba(255, 255, 255, 0.28); cursor: ew-resize; }
+.c3d-tedge.in { left: 2px; }
+.c3d-tedge.out { right: 2px; }
+.c3d-tshot.on .c3d-tedge { background: var(--accent); }
+.c3d-tedge:hover { background: #fff; }
+.c3d-tseg { position: absolute; top: 50%; height: 2px; margin-top: -1px; background: rgba(255, 255, 255, 0.28); pointer-events: none; }
+.c3d-tk { position: absolute; top: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px; rotate: 45deg; border-radius: 1.5px; background: #E8ECEA; box-shadow: 0 0 0 1.5px rgba(5, 7, 6, 0.9); cursor: grab; z-index: 2; }
+.c3d-tk:hover { scale: 1.25; }
+.c3d-tk.lit { background: #9BE7C2; }
+.c3d-tk.on { background: var(--accent); scale: 1.3; }
+.c3d-tkl { position: absolute; top: 50%; translate: 10px -50%; font-size: 10.5px; color: rgba(255, 255, 255, 0.62); white-space: nowrap; pointer-events: none; }
+.c3d-twave, .c3d-tsound { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.c3d-twave polyline { fill: none; stroke: rgba(255, 255, 255, 0.4); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.c3d-twave.dim polyline { stroke: rgba(255, 255, 255, 0.2); }
+.c3d-tsound rect { fill: rgba(255, 255, 255, 0.38); }
+.c3d-tph { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent); pointer-events: none; z-index: 3; }
+.c3d-tph::before { content: ""; position: absolute; top: 0; left: -5px; border: 6px solid transparent; border-top-color: var(--accent); }
+.c3d-tpop { position: absolute; bottom: calc(100% + 8px); width: 320px; padding: 10px 12px; border-radius: 14px; background: color-mix(in srgb, var(--raise) 92%, transparent); box-shadow: inset 0 0 0 1px var(--line2), 0 12px 30px rgba(0, 0, 0, 0.5); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); z-index: 6; }
+.c3d-tpop[hidden] { display: none; }
+.c3d-tptop { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 12.5px; color: #fff; }
+.c3d-tx { border: 0; background: none; color: var(--muted); font-size: 18px; line-height: 1; padding: 0 2px; }
+.c3d-tline { display: flex; align-items: center; gap: 8px; min-height: 30px; font-size: 12px; color: rgba(255, 255, 255, 0.86); }
+.c3d-tline label { width: 92px; flex: none; color: var(--muted); }
+.c3d-tline select { height: 26px; padding: 0 6px; border: 1px solid var(--line2); border-radius: 7px; background: var(--bg, #0B0B0C); color: var(--text); font-size: 12px; }
+.c3d-tline input[type=range] { flex: 1; accent-color: var(--accent); }
+.c3d-tline output { width: 40px; font-variant-numeric: tabular-nums; color: var(--muted); }
+.c3d-tline.end { justify-content: flex-end; min-height: 24px; }
+.c3d-tlink { border: 0; background: none; color: var(--muted); font-size: 12px; text-decoration: underline; padding: 0; }
+.c3d-tlink:hover { color: #fff; }

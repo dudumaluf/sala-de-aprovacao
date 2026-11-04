@@ -13,6 +13,7 @@ import { THREE, D2R } from "./kit.js";
 import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/OrbitControls.js/+esm";
 import { TransformControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/TransformControls.js/+esm";
 import { makeHuman, makeAnimal, applyPreset, poseOf, setPose, poseLabel, presetsOf, handlePoints, dragTo, rotateTo, handleQuat } from "./rig.js";
+import { createTimeline } from "./timeline.js"; // the scene's timeline (a set with a `cut`): shots, keyframes, playing
 // PRODUCT: the job's product ({ title }), or null when the film has none: then the stand-in stays hidden and out of the
 // panel. Its item in the room is the one titled like it (trimmed, any case, any kind), as in estudio.js.
 import { PROJECT, PRODUCT } from "../config.js";
@@ -28,7 +29,7 @@ const CL = PROJECT?.client;
 const ART = CL ? { a: ["a ", "da "], o: ["o ", "do "] }[PROJECT.clientArticle] || ["", "de "] : ["o ", "do "];
 const CLIENT = `${ART[0]}${CL || "cliente"}`, CLIENT_OF = `${ART[1]}${CL || "cliente"}`;
 const MODEL = "Blocking 3D";
-const CSS_V = 11; // bump when cena3d.css changes, so an open tab does not keep the old styles
+const CSS_V = 12; // bump when cena3d.css changes, so an open tab does not keep the old styles
 const LENSES = [14, 16, 18, 21, 24, 28, 32, 35, 40, 50, 65, 75, 85, 100, 135];
 // lens in mm on a full-frame (36 mm wide) sensor framed 16:9 ↔ vertical field of view
 const fovOf = (mm) => THREE.MathUtils.radToDeg(2 * Math.atan(36 / (16 / 9) / 2 / mm));
@@ -241,7 +242,7 @@ function build() {
   gizmo.addEventListener("dragging-changed", (e) => { orbit.enabled = !e.value; if (!e.value) commit(); });
   gizmo.addEventListener("objectChange", onGizmo);
   gizmo.addEventListener("change", () => (E.needs = true));
-  orbit.addEventListener("start", stopGlide);
+  orbit.addEventListener("start", () => { stopGlide(); E.tl?.release(); });
   orbit.addEventListener("change", () => {
     E.needs = true;
     if (E.quiet) track();
@@ -260,6 +261,8 @@ function build() {
   // before the canvas (and OrbitControls on it) sees the wheel
   $(".c3d-frame").addEventListener("wheel", onWheel, { capture: true, passive: false });
   bindUi();
+  E.tl = createTimeline({ E, esc, fovOf, lensOf, LENSES, commit, setLed, LED_STATES, PRODUCT, fitProps, updateHandles });
+  E.tl.mount();
   new ResizeObserver(() => fit()).observe(el);
   if (location.hostname === "localhost" || location.hostname === "127.0.0.1") { window.__c3d = E; E.dev = { stepGlide, draw }; } // local tuning only
 }
@@ -283,7 +286,7 @@ function fit() {
   if (W < 2 || H < 2) return;
   const sheet = matchMedia("(max-width: 860px)").matches;
   E.side = sheet ? 0 : Math.max(0, Math.round(mr.right - pr.left));
-  E.low = sheet ? Math.max(0, Math.round(mr.bottom - pr.top)) : 0;
+  E.low = (sheet ? Math.max(0, Math.round(mr.bottom - pr.top)) : 0) + (E.tl?.height() || 0); // the timeline sits under the frame
   E.el.style.setProperty("--side", `${E.side}px`);
   E.el.style.setProperty("--low", `${E.low}px`);
   trw();
@@ -309,6 +312,8 @@ function startLoop() {
     requestAnimationFrame(tick);
     if (!E.el.isConnected || document.hidden) return;
     if (E.glide) stepGlide(t);
+    else if (E.tl?.playing) E.tl.step(t);
+    else if (E.tl?.hold) { /* the timeline holds the camera (a ride on the set, a hand shake) until a drag takes it */ }
     else if (E.orbit.update()) E.needs = true;
     if (E.needs && E.ready) { E.needs = false; draw(); }
   };
@@ -357,11 +362,20 @@ async function openItem(id) {
   E.scene.add(E.root);
   E.set.build(E.root);
   E.root.traverse((o) => { if (o.isMesh) o.userData.set = true; });
+  // a set with `motion` (a boat) rocks as a whole: everything but what its build marked still (the sea) goes on a deck,
+  // with the cast, the product and the props; at rest it changes nothing, the timeline moves it
+  E.deck = null;
+  if (E.set.motion) {
+    E.deck = new THREE.Group();
+    E.deck.name = "deck";
+    for (const o of [...E.root.children]) if (!o.userData.still) E.deck.add(o);
+    E.root.add(E.deck);
+  }
   env(E.set.env);
   E.cells = cellsOf(E.set);
   E.reach = THREE.MathUtils.clamp(Math.max(...E.set.cams.map((c) => v3(c.pos).distanceTo(v3(c.target)))) * 1.5, 8, 90);
   E.device = makeDevice();
-  E.scene.add(E.device);
+  (E.deck || E.scene).add(E.device);
   applyState(E.saved?.state ? { ...E.saved.state, camera: settle(E.saved.state.camera) } : defaults());
   E.history = [JSON.stringify(state())]; E.future = [];
   E.ready = true;
@@ -381,6 +395,8 @@ function message(t) {
   $(".c3d-tl").innerHTML = $(".c3d-tr").innerHTML = $(".c3d-hud").innerHTML = "";
 }
 function clearScene() {
+  E.tl?.reset();
+  E.deck = null;
   deselect();
   for (const f of E.figs) f.root.removeFromParent();
   E.figs = [];
@@ -455,7 +471,7 @@ function addFigure(c) {
   fig.root.rotation.y = (c.ry || 0) * D2R;
   fig.root.scale.setScalar(c.scale || 1);
   fig.root.visible = fig.visible;
-  E.scene.add(fig.root);
+  (E.deck || E.scene).add(fig.root);
   fig.root.updateMatrixWorld(true);
   // a saved pose (every joint and target) or a preset by name
   if (c.pose && typeof c.pose === "object") setPose(fig, c.pose);
@@ -471,9 +487,9 @@ function applyState(st) {
   E.figs = [];
   for (const c of st.cast || []) addFigure(c);
   const d = st.device || {};
-  E.scene.attach(E.device);
+  (E.deck || E.scene).attach(E.device);
   const bone = d.attach && figOf(d.attach.key)?.bones?.[d.attach.bone];
-  (bone || E.scene).add(E.device);
+  (bone || E.deck || E.scene).add(E.device);
   E.device.position.set(...(d.pos || [0, 0, 0]));
   E.device.rotation.set(...(d.rot || [0, 0, 0]).map((a) => a * D2R));
   E.device.scale.setScalar(d.scale || 1);
@@ -483,6 +499,8 @@ function applyState(st) {
   buildProps(st);
   E.from = st.camera?.from || null;
   if (st.camera) setCam(st.camera, true);
+  E.tl?.apply(st.timeline); // the saved timeline, or the set's cut to start from
+  fit();
   E.needs = true;
 }
 // ---------- props (sets.js `props`): what the script puts in a hand, on a head or on a table ----------
@@ -508,7 +526,7 @@ function placeProp(p) {
   const f = a && figOf(castKey(a.cast));
   const b = f && (f.bones?.[a.bone] || f.joints?.[a.bone]);
   if (!b) {
-    E.scene.add(obj);
+    (E.deck || E.scene).add(obj);
     obj.position.set(...(spec.at || [0, 0, 0]));
     obj.rotation.set(...(spec.rot || [0, spec.ry || 0, 0]).map((x) => x * D2R));
     obj.scale.setScalar(1);
@@ -533,6 +551,7 @@ function state() {
     device: { visible: d.visible, attach: d.userData.attach, pos: arr(d.position, 4), rot: [d.rotation.x, d.rotation.y, d.rotation.z].map((a) => round(a / D2R, 2)), scale: round(d.scale.x), led: d.userData.led },
     props: Object.fromEntries((E.props || []).map((p) => [p.key, p.visible])),
     camera: { pos: arr(E.camera.position), target: arr(E.orbit.target), lens: round(lensOf(E.camera.fov), 1), preset: E.camPreset || null, from: E.from || null },
+    timeline: E.tl?.state(),
   };
 }
 
@@ -576,6 +595,7 @@ const savedLine = () => (E.saved?.updated_at ? `Salvo · ${E.saved.updated_by ||
 
 // ---------- camera ----------
 function setCam(c, instant = false) {
+  E.tl?.release(); // a camera stop chosen by hand: the timeline lets go of the camera
   const to = { pos: v3(c.pos), target: v3(c.target), fov: fovOf(c.lens || 35) };
   E.camPreset = c.preset || c.id || null;
   if (E.set?.cams.some((x) => x.id === E.camPreset)) E.from = E.camPreset; // the shot a saved angle will say it came from
@@ -757,6 +777,7 @@ function onWheel(e) {
   e.preventDefault();
   e.stopPropagation(); // OrbitControls, on the canvas inside this frame, never sees it
   if (!E.ready || !E.orbit.enabled || E.orbit.state !== -1) return;
+  E.tl?.release();
   let d = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1);
   if (e.ctrlKey) d *= 10; // a pinch on the trackpad comes as ctrl + wheel, in small steps
   if (!d || coasting(d, e.timeStamp)) return;
@@ -1030,6 +1051,7 @@ function onKey(e) {
   const take = () => { e.preventDefault(); e.stopImmediatePropagation(); };
   if (mod && k === "z") { take(); undo(e.shiftKey); return; }
   if (mod) return;
+  if (E.tl?.onKey(e, k, take)) return;
   // Esc goes one step back each time: the selection, the name box, the prompt box, a full window opened with ⤢ or F,
   // then out of the 3D as its ✕ does (a render waiting in the studio gets back its angle unchanged). The room's
   // popovers and panel first
@@ -1354,7 +1376,7 @@ function addExtra(title) {
 }
 function attachDevice(v) {
   const d = E.device;
-  if (!v) { E.scene.attach(d); d.userData.attach = null; }
+  if (!v) { (E.deck || E.scene).attach(d); d.userData.attach = null; }
   else {
     const [key, bone] = v.split("|");
     const f = figOf(key);
