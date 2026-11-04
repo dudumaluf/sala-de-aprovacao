@@ -233,3 +233,8 @@
 .c3d-tline.end { justify-content: flex-end; min-height: 24px; }
 .c3d-tlink { border: 0; background: none; color: var(--muted); font-size: 12px; text-decoration: underline; padding: 0; }
 .c3d-tlink:hover { color: #fff; }
+
+/* Exportar a cena: the button counts the frames; the 3D takes no clicks until the video is on its card */
+.c3d-tchip.busy, .c3d-tchip.busy[disabled] { opacity: 1; background: var(--accent-soft); color: var(--accent); cursor: progress; font-variant-numeric: tabular-nums; }
+.c3d.exporting .c3d-frame, .c3d.exporting .c3d-side, .c3d.exporting .c3d-tbody { pointer-events: none; }
+.c3d.exporting .c3d-frame { cursor: progress; }

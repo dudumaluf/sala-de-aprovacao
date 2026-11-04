@@ -14,6 +14,7 @@ import { OrbitControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/exampl
 import { TransformControls } from "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/controls/TransformControls.js/+esm";
 import { makeHuman, makeAnimal, applyPreset, poseOf, setPose, poseLabel, presetsOf, handlePoints, dragTo, rotateTo, handleQuat } from "./rig.js";
 import { createTimeline } from "./timeline.js"; // the scene's timeline (a set with a `cut`): shots, keyframes, playing
+import { exportScene } from "./video.js"; // the timeline as the scene's blocking video, on its card
 // PRODUCT: the job's product ({ title }), or null when the film has none: then the stand-in stays hidden and out of the
 // panel. Its item in the room is the one titled like it (trimmed, any case, any kind), as in estudio.js.
 import { PROJECT, PRODUCT } from "../config.js";
@@ -29,7 +30,7 @@ const CL = PROJECT?.client;
 const ART = CL ? { a: ["a ", "da "], o: ["o ", "do "] }[PROJECT.clientArticle] || ["", "de "] : ["o ", "do "];
 const CLIENT = `${ART[0]}${CL || "cliente"}`, CLIENT_OF = `${ART[1]}${CL || "cliente"}`;
 const MODEL = "Blocking 3D";
-const CSS_V = 12; // bump when cena3d.css changes, so an open tab does not keep the old styles
+const CSS_V = 13; // bump when cena3d.css changes, so an open tab does not keep the old styles
 const LENSES = [14, 16, 18, 21, 24, 28, 32, 35, 40, 50, 65, 75, 85, 100, 135];
 // lens in mm on a full-frame (36 mm wide) sensor framed 16:9 ↔ vertical field of view
 const fovOf = (mm) => THREE.MathUtils.radToDeg(2 * Math.atan(36 / (16 / 9) / 2 / mm));
@@ -261,7 +262,7 @@ function build() {
   // before the canvas (and OrbitControls on it) sees the wheel
   $(".c3d-frame").addEventListener("wheel", onWheel, { capture: true, passive: false });
   bindUi();
-  E.tl = createTimeline({ E, esc, fovOf, lensOf, LENSES, commit, setLed, LED_STATES, PRODUCT, fitProps, updateHandles });
+  E.tl = createTimeline({ E, esc, fovOf, lensOf, LENSES, commit, setLed, LED_STATES, PRODUCT, fitProps, updateHandles, exportScene: runExport, exportTo: exportCard });
   E.tl.mount();
   new ResizeObserver(() => fit()).observe(el);
   if (location.hostname === "localhost" || location.hostname === "127.0.0.1") { window.__c3d = E; E.dev = { stepGlide, draw }; } // local tuning only
@@ -1049,6 +1050,7 @@ function onKey(e) {
   if (!inside) return;
   const mod = e.metaKey || e.ctrlKey;
   const take = () => { e.preventDefault(); e.stopImmediatePropagation(); };
+  if (E.tl?.busy != null) { take(); return; } // the scene's video is being made: nothing changes meanwhile
   if (mod && k === "z") { take(); undo(e.shiftKey); return; }
   if (mod) return;
   if (E.tl?.onKey(e, k, take)) return;
@@ -1527,6 +1529,27 @@ async function doSave(to = null) {
   } finally {
     E.busy = false;
     E.el.querySelectorAll(".c3d-save.busy").forEach((b) => b.classList.remove("busy"));
+  }
+}
+// the timeline's Exportar a cena: the scene's blocking video (video.js) goes to the scene's card in the animation round
+// (the set's cut.card), else to this location's card; the 3D does not take clicks or keys until it is done
+const exportCard = () => (E.set?.cut?.card && E.ctx.itemOf(E.set.cut.card)) || E.item;
+async function runExport() {
+  if (E.busy || !E.tl?.has()) return;
+  E.busy = true;
+  E.el.classList.add("exporting");
+  E.tl.progress(0);
+  try {
+    const r = await exportScene(E, { SHOT, MODEL, PRODUCT, LED_STATES, slug, card: exportCard }, (p) => E.tl.progress(p));
+    if (location.hostname === "localhost" || location.hostname === "127.0.0.1") E.lastExport = r; // local checks only
+    E.ctx.toast(`O vídeo da cena entrou no card ${r.card.title} (Blocking 3D, sem ✓: ${CLIENT} não vê)`);
+  } catch (e) {
+    console.error(e);
+    E.ctx.toast(`O vídeo da cena não saiu${e?.message ? `: ${e.message}` : ""}.`, true);
+  } finally {
+    E.busy = false;
+    E.el.classList.remove("exporting");
+    E.tl.progress(null);
   }
 }
 // the 3D over the whole window (⤢, or F with nothing selected); Esc or ⤡ puts it back in the page. user: opened with

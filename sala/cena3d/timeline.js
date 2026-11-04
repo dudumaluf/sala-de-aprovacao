@@ -101,6 +101,34 @@ export function createTimeline(H) {
     if (T.touched) T.seek(T.t);
   };
   T.reset = () => { T.pause(); T.data = null; T.sel = null; T.touched = false; T.hold = false; T.render(); };
+  // the scene's frames for a video (video.js): from the first shot's in to the last one's out on the fps grid, each frame
+  // sampled at its middle (so a cut lands between two frames), with its shot, the shot's first and middle frames marked;
+  // and each shot with its camera keys and its frames in the video
+  T.plan = (fps) => {
+    if (!T.data) return null;
+    const S = shots(), [a, b] = span(), F0 = Math.round(a * fps), F1 = Math.round(b * fps), frames = [];
+    for (let f = F0; f < F1; f++) {
+      const t = clamp((f + 0.5) / fps, a, b - 1e-4), s = S.indexOf(shotAt(t));
+      frames.push({ t, s, first: !frames.length || frames[frames.length - 1].s !== s, mid: false });
+    }
+    const list = S.map((x, i) => {
+      const own = frames.reduce((m, fr, k) => (fr.s === i ? [m[0] ?? k, k] : m), [null, null]);
+      if (own[0] != null) frames[Math.floor((own[0] + own[1]) / 2)].mid = true;
+      return { ...x, i, f0: own[0], f1: own[1] == null ? null : own[1] + 1, keys: camKeys(x) };
+    });
+    return { fps, a, b, F0, frames, shots: list, dev: sorted(T.data.dev || []) };
+  };
+  // Exportar a cena: video.js renders and saves it; the button shows how far it got (0–1; null when it is over)
+  T.busy = null;
+  T.progress = (p) => {
+    T.busy = p;
+    const b = $('[data-tk="export"]');
+    if (!b) return;
+    b.disabled = p != null;
+    b.classList.toggle("busy", p != null);
+    b.textContent = p != null ? `Exportando… ${Math.round(p * 100)}%` : exportLabel();
+  };
+  const exportLabel = () => { const [a, b] = span(); return `Exportar a cena (${fmt(b - a)})`; };
 
   // ---------- the scene at a second ----------
   T.seek = (t, keepCam = false) => {
@@ -343,7 +371,13 @@ export function createTimeline(H) {
       <span class="c3d-tinfo">${esc(c?.name || "Corte")} · ${fmt(a).replace(" s", "")}–${fmt(b)}</span>
       <span class="c3d-tsp"></span>
       <button class="c3d-tchip acc" data-tk="key" title="Gravar um keyframe no segundo da agulha: do que estiver selecionado (uma pessoa, o produto) ou, sem seleção, da câmera (K)"><i class="c3d-tdia"></i>Keyframe</button>
-      <button class="c3d-tchip" disabled title="O vídeo do blocking da cena inteira, com os cortes: o próximo passo">Exportar a cena (${fmt(b - a)})</button>`;
+      ${H.exportScene ? exportButton(s) : ""}`;
+  }
+  function exportButton() {
+    const to = H.exportTo?.(), n = shots().length;
+    const title = `O vídeo do blocking da cena inteira como a timeline está agora (${n} ${n === 1 ? "plano" : `planos, com os cortes`}), 1920×1080 a 24 fps, sem som: entra ${to ? `no card ${to.title}` : "no card"} como Blocking 3D, sem ✓, com o resumo dos planos pro prompt`;
+    const busy = T.busy != null;
+    return `<button class="c3d-tchip${busy ? " busy" : ""}" data-tk="export" title="${esc(title)}"${busy ? " disabled" : ""}>${busy ? `Exportando… ${Math.round(T.busy * 100)}%` : exportLabel()}</button>`;
   }
   function lane() {
     const D = T.data, rs = rows(), [ra, rb] = range();
@@ -440,7 +474,7 @@ export function createTimeline(H) {
   function bind() {
     const el = T.el;
     el.addEventListener("pointerdown", (e) => {
-      if (e.button !== 0 || !T.data) return;
+      if (e.button !== 0 || !T.data || T.busy != null) return;
       const k = e.target.closest("[data-tk]")?.dataset.tk;
       const inLane = e.target.closest(".c3d-tlane");
       if (!inLane || (k && !["k", "edge", "shot"].includes(k))) return;
@@ -475,9 +509,10 @@ export function createTimeline(H) {
     });
     el.addEventListener("click", (e) => {
       const b = e.target.closest("[data-tk]");
-      if (!b || !T.data) return;
+      if (!b || !T.data || T.busy != null) return;
       const k = b.dataset.tk;
       if (k === "play") T.playing ? T.pause() : T.play();
+      else if (k === "export") H.exportScene?.();
       else if (k === "loop") { T.loop = !T.loop; head(); }
       else if (k === "key") T.addKey();
       else if (k === "close") { T.sel = null; T.render(); }
@@ -519,6 +554,7 @@ export function createTimeline(H) {
   // from the editor's key handler: true when the timeline took the key
   T.onKey = (e, k, take) => {
     if (!T.shown()) return false;
+    if (T.busy != null) { take(); return true; } // nothing moves while the video is being made
     if (k === " ") { take(); T.playing ? T.pause() : T.play(); return true; }
     if (k === "k") { take(); T.addKey(); return true; }
     if ((k === "delete" || k === "backspace") && T.sel) { take(); delKey(); return true; }
