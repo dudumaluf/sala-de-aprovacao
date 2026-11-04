@@ -567,8 +567,11 @@ function defaultRound() {
 }
 
 // ---------- routing: #/r/a1 · #/r/a1/visao · #/r/a1/s/7[/itemId] · #/r/a1/retorno[/itemId] · #/apresentacao · #/materiais · #/galeria ----------
+// a direct link adds ?v=2 (a video's version), &t=42 (its second), &o=<option> (an image in Ver grande, in its version),
+// &c=<comment> (that comment, lit in the panel): see applyLink
 function resolvePage() {
-  const h = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean);
+  const [path, qs = ""] = location.hash.replace(/^#\/?/, "").split("?");
+  const h = path.split("/").filter(Boolean);
   let p;
   if (h[0] === "materiais") p = { kind: "materiais" };
   else if (h[0] === "aprovado" && TEAM) p = { kind: "aprovado", round: S.page.round };
@@ -586,7 +589,66 @@ function resolvePage() {
     p = r ? { kind: "round", round: r } : { kind: "materiais" };
   }
   if (p.kind === "scene" && !TEAM && !itemsOf(p.round).some((i) => i.scene === p.scene)) p = { kind: "round", round: p.round };
+  p.q = Object.fromEntries(new URLSearchParams(qs));
   S.page = p;
+}
+// ---------- direct links: what a link's ?v= &t= &o= &c= open, once, when it is followed (not again on every reload of
+// the data). The card is the link's, else the round's one video (the animatic's page) ----------
+function applyLink(p) {
+  const q = p.q || {};
+  if (!q.v && !q.t && !q.o && !q.c) return;
+  const opt = q.o ? S.options.find((x) => x.id === q.o) : null;
+  const vids = (rid) => itemsOf(rid).filter((i) => i.kind === "video" && (TEAM || i.visible));
+  const it = (opt && itemOf(opt.item_id)) || (p.item && itemOf(p.item)) || (p.round && vids(p.round).length === 1 ? vids(p.round)[0] : null);
+  if (!it) return;
+  const vv = vidVers(it);
+  // the video's version: v1 is the first cut (or the version a link names by its id)
+  const v = q.v ? vv[vv.length - +q.v] : opt && vv.includes(opt) ? opt : null;
+  if (v) (S.vsel ||= {})[it.id] = v.id;
+  const shown = opt || v || (vv.length ? vidOn(it, vv) : null);
+  // Ver grande: on the team side every image and video opens there (an image in its version of the stack); on the
+  // client's, an image (a video plays on its card)
+  if (shown && (TEAM || !shown.mime.startsWith("video/"))) {
+    const all = optsOf(it.id), i = all.findIndex((x) => x.id === shown.id || stackRoot(x).id === stackRoot(shown).id);
+    if (i >= 0) S.lightbox = { id: it.id, i, ...(TEAM && all[i].id !== shown.id ? { ver: shown.id } : {}) };
+  }
+  // the second: the video waits there, paused, with the comments panel open (the link's comment lit in it)
+  if (q.t && shown?.mime.startsWith("video/")) S.seekTo = { opt: shown.id, t: Math.max(0, +q.t || 0) };
+  if (q.c || q.t) { S.drawer = it.id; S.drawerTab = "comentarios"; S.litComment = q.c || null; }
+}
+// after the page is drawn: the link's comment in view, lit for a few seconds; and the second the link asked for, once
+// its video is on the page and knows its length (looked for a few times, then let go)
+function seekNow(n = 0) {
+  const lit = S.litComment;
+  if (!n && lit) {
+    // in the card's comments and in Ver grande's list under the video, whichever is on screen
+    document.querySelector(`.msg[data-c="${lit}"]`)?.scrollIntoView({ block: "center" });
+    document.querySelector(`.lb .tc-list li[data-c="${lit}"]`)?.scrollIntoView({ block: "nearest" });
+    setTimeout(() => { if (S.litComment !== lit) return; S.litComment = null; document.querySelectorAll(`.lit[data-c="${lit}"]`).forEach((e) => e.classList.remove("lit")); }, 4000);
+  }
+  const s = S.seekTo;
+  if (!s) return;
+  const o = S.options.find((x) => x.id === s.opt);
+  const v = o && [...document.querySelectorAll(".lb video, .tcwrap video")].find((x) => x.dataset.path === o.path);
+  if (!v) { if (n < 20) setTimeout(() => seekNow(n + 1), 150); else S.seekTo = null; return; }
+  S.seekTo = null;
+  const go = () => { v.pause(); v.currentTime = Math.min(s.t, (v.duration || s.t + 1) - 0.05); tcSync(v); };
+  if (v.readyState >= 1) go(); else v.addEventListener("loadedmetadata", go, { once: true });
+}
+// a link to a card, an image or a video in a version and at a second, in this room or the client's
+function linkTo({ item, opt = null, v = null, t = null, c = null, client = false }) {
+  const it = itemOf(item);
+  if (!it) return "";
+  // the client's room as a folder (…/aprovacao/), the way its links have always gone out
+  const cl = CLIENT_URL || new URL("../aprovacao/", location.href).href;
+  const base = client ? (/\/$|\.html?$/.test(cl) ? cl : `${cl}/`) : location.href.split("#")[0];
+  const q = new URLSearchParams();
+  if (opt) q.set("o", opt);
+  if (v) q.set("v", v);
+  if (t != null && t > 0.4) q.set("t", String(Math.round(t * 10) / 10));
+  if (c) q.set("c", c);
+  const s = q.toString();
+  return `${base}${sceneHref(it.round_id, it.scene, it.id)}${s ? `?${s}` : ""}`;
 }
 function onRoute() {
   resolvePage();
@@ -602,7 +664,10 @@ function onRoute() {
   if (S.page.kind === "scene" && S.page.item && S.page.tab === "pedido") { S.drawer = S.page.item; S.drawerTab = lastFbOf(S.page.item) ? "pedido" : "comentarios"; }
   // the team opens a card on its own page (no flash); the Retorno, O que vai pra the client and the client still scroll to the item and flash it
   S.flash = TEAM && !["retorno", "envio"].includes(S.page.kind) ? null : S.page.item || null;
+  // a direct link's version, second, image or comment
+  applyLink(S.page);
   render(true, changed);
+  if (S.seekTo || S.litComment) setTimeout(seekNow, 0);
   if (S.flash) {
     const el = document.getElementById(`item-${S.flash}`);
     // a long page jumps (a smooth scroll is cut short by the renders that follow the first load)
@@ -1198,6 +1263,7 @@ function filtersOn(ctx) {
 // moves it to the next color), its name, rename and delete as small icons; the pencil again (lit) ends it
 const PEN_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M10.6 2.9l2.5 2.5-7.4 7.4-3.1.6.6-3.1z" stroke-linejoin="round"/><path d="M9.2 4.3l2.5 2.5"/></svg>';
 const PIN_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M5.8 2.5h4.4l-.7 3.5 2.4 2.6H4.1l2.4-2.6z" stroke-linejoin="round"/><path d="M8 8.6v5"/></svg>';
+const LINK_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.9.9"/><path d="M9.2 6.8a2.6 2.6 0 0 0-3.7 0L3.3 9a2.6 2.6 0 0 0 3.7 3.7l.9-.9"/></svg>';
 function labelOpts(r) {
   // the cards of this round with the etiqueta, on the card or on one of its images
   const count = (l) => itemsOf(r.id).filter((it) => labelIdsOf(it.id).has(l.id) || cardImgLabelIds(it.id).has(l.id)).length;
@@ -2231,6 +2297,8 @@ function morePop(it) {
     <input class="field mp-brief" data-field="brief" data-id="${it.id}" value="${esc(it.brief)}" placeholder="Briefing para o time" maxlength="400" aria-label="Briefing">
     <hr class="mp-sep">
     ${it.visible && it.decision !== "pending" ? `<button class="mp-act" data-act="reopen" data-id="${it.id}">${ICO.redo}<span>Reabrir a decisão</span></button>` : ""}
+    <button class="mp-act" data-act="copy-link" data-id="${it.id}">${LINK_ICO}<span>Copiar o link do card</span></button>
+    ${it.visible ? `<button class="mp-act" data-act="copy-link" data-id="${it.id}" data-client="1">${LINK_ICO}<span>Copiar o link ${DA_CL}</span></button>` : ""}
     <button class="mp-act danger" data-act="item-del" data-id="${it.id}">${ICO.trash}<span>Apagar o card</span></button>
   </div>`;
 }
@@ -2638,13 +2706,13 @@ function drawer() {
   // closed group under them, every second saying its version, so a note on the old cut never reads as one on the new.
   // A second of the video on screen is a button: it takes the video there
   const verOfC = (c) => (on && c.option_id ? vv.find((o) => o.id === c.option_id) : null);
-  const msg = (c) => { const o = verOfC(c); return `<div class="msg ${c.side}"><p class="meta"><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)} · ${fmtTime(c.created_at)}</p><p class="body">${cBody(c, o ? vidShort(vv, o) : "", !!shown && c.option_id === shown.id)}</p></div>`; };
+  const msg = (c) => { const o = verOfC(c); return `<div class="msg ${c.side}${S.litComment === c.id ? " lit" : ""}" data-c="${c.id}"><p class="meta"><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)} · ${fmtTime(c.created_at)}${clink(c)}</p><p class="body">${cBody(c, o ? vidShort(vv, o) : "", !!shown && c.option_id === shown.id)}</p></div>`; };
   const olds = on ? vv.filter((o) => o !== on).map((o) => [o, comments.filter((c) => c.option_id === o.id)]).filter(([, l]) => l.length) : [];
   const here = on ? comments.filter((c) => !olds.some(([o]) => o.id === c.option_id)) : comments;
   return `<aside class="drawer" aria-label="Comentários">
     ${headHtml}${tabs}
     <div class="msgs" data-keep="msgs">${here.map(msg).join("") || (olds.length ? `<p class="none">Nenhum comentário na ${vidName(vv, on).toLowerCase()} ainda.</p>` : '<p class="none">Nenhum comentário ainda.</p>')}
-      ${olds.map(([o, l]) => `<details class="msgs-old" data-k="${o.id}" ${S.oldOpen?.has(o.id) ? "open" : ""}><summary title="${vidName(vv, o)}, a versão anterior: ${plural(l.length, "comentário", "comentários")}">${vidShort(vv, o)} · ${l.length}</summary>${l.map(msg).join("")}</details>`).join("")}</div>
+      ${olds.map(([o, l]) => `<details class="msgs-old" data-k="${o.id}" ${S.oldOpen?.has(o.id) || l.some((c) => c.id === S.litComment) ? "open" : ""}><summary title="${vidName(vv, o)}, a versão anterior: ${plural(l.length, "comentário", "comentários")}">${vidShort(vv, o)} · ${l.length}</summary>${l.map(msg).join("")}</details>`).join("")}</div>
     <form class="compose" data-comment="${it.id}" data-mode="${changes ? "changes" : ""}">
       ${changes ? '<p class="hintline">Conte o que ajustar. O item fica marcado como “Ajuste pedido”.</p>' : ""}
       <textarea class="field" name="body" rows="3" placeholder="${changes ? "O que vocês querem ajustar?" : "Escreva um comentário"}" required maxlength="4000" aria-label="Comentário"></textarea>
@@ -2804,7 +2872,10 @@ function lbxOp(k, shift) {
 }
 // under a video in Ver grande (both sides): pause anywhere and write, and the comment keeps that second. Its marks sit on
 // the bar and its time in the list; either jumps the video there. They also show in the card's comments with the time.
-const tcList = (o) => `<ol class="tc-list">${tcOf(o).map((c) => `<li class="${c.side}"><button class="tc-t" data-act="tc-seek" data-t="${c.t_sec}" title="Ir pra esse momento">${tcFmt(c.t_sec)}</button><p><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)}<span>${esc(c.body)}</span></p></li>`).join("") || '<li class="none">Nenhum comentário ainda. Pause o vídeo no momento que quiser comentar e escreva aqui.</li>'}</ol>`;
+const tcList = (o) => `<ol class="tc-list">${tcOf(o).map((c) => `<li class="${c.side}${S.litComment === c.id ? " lit" : ""}" data-c="${c.id}"><button class="tc-t" data-act="tc-seek" data-t="${c.t_sec}" title="Ir pra esse momento">${tcFmt(c.t_sec)}</button><p><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)}<span>${esc(c.body)}</span></p>${clink(c)}</li>`).join("") || '<li class="none">Nenhum comentário ainda. Pause o vídeo no momento que quiser comentar e escreva aqui.</li>'}</ol>`;
+// a comment at a second of the video has its own link (the video waits there, paused, with this comment lit), copied
+// from the small icon its row shows on hover, in the card's comments and in Ver grande's list
+const clink = (c) => (c.t_sec == null ? "" : `<button class="clink" data-act="copy-link" data-id="${c.item_id}"${c.option_id ? ` data-opt="${c.option_id}"` : ""} data-t="${c.t_sec}" data-c="${c.id}" title="Copiar o link deste comentário" aria-label="Copiar o link deste comentário">${LINK_ICO}</button>`);
 function tcBlock(it, o, withList = true) {
   if (!o.mime.startsWith("video/")) return "";
   const cs = tcOf(o), d = (S.vdur || {})[o.id] || 0, now = (S.vtime || {})[o.id] || 0, at = (t) => (d ? `left:${Math.min(100, (t / d) * 100)}%` : "left:0");
@@ -2834,7 +2905,7 @@ function lightbox() {
   const canPick = !TEAM && it.decision === "pending" && opts.length > 1 && it.mode !== "set";
   if (TEAM) return teamLightbox(it, opts, o, i);
   return `<div class="lb" data-act="lb-bg" role="dialog" aria-modal="true" aria-label="${esc(it.title)}">
-    <div class="lb-top"><span><b>${esc(it.title)}</b>${opts.length > 1 ? (it.mode === "set" ? ` · ${i + 1} de ${opts.length}` : ` · Opção ${letter(i)} de ${opts.length}`) : ""}${o.caption ? ` · ${esc(o.caption)}` : ""}</span><button class="link" data-act="lb-close">Fechar ✕</button></div>
+    <div class="lb-top"><span><b>${esc(it.title)}</b>${opts.length > 1 ? (it.mode === "set" ? ` · ${i + 1} de ${opts.length}` : ` · Opção ${letter(i)} de ${opts.length}`) : ""}${o.caption ? ` · ${esc(o.caption)}` : ""}</span><span class="lb-tools"><button class="lb-info" data-act="copy-link" data-id="${it.id}" data-opt="${o.id}" title="Copiar o link ${o.mime.startsWith("video/") ? "deste vídeo, neste segundo" : "desta imagem"}" aria-label="Copiar o link">${LINK_ICO}</button><button class="link" data-act="lb-close">Fechar ✕</button></span></div>
     <div class="lb-stage">${media(o, "big")}
       ${opts.length > 1 ? `<button class="lb-nav prev" data-act="lb-step" data-v="-1" aria-label="Anterior">‹</button><button class="lb-nav next" data-act="lb-step" data-v="1" aria-label="Próxima">›</button>` : ""}
     </div>
@@ -2994,7 +3065,8 @@ function teamLightbox(it, opts, card, i) {
   // top right: make the version shown the card's, Ajustar (sem IA), compare, info, close
   const more = `${hist.length > 1 && o.id !== face.id && !adj ? `<button class="btn small" data-act="vpick" data-id="${root.id}" data-v="${o.id}" title="O card passa a mostrar esta versão">Tornar atual</button>` : ""}`
     + `${o.mime.startsWith("video/") ? "" : `<button class="lb-info ${adj ? "on" : ""}" data-act="lbx" aria-pressed="${adj}" title="${adj ? "Sair do ajuste sem salvar (Esc)" : "Ajustar sem IA: espelhar, girar ou mudar a escala, e salvar como versão nova"}" aria-label="Ajustar">${Estudio.ICONS.crop}</button>`}`
-    + `${can ? `<button class="lb-info ${vs ? "on" : ""}" data-act="vs-toggle" aria-pressed="${!!vs}" title="${vs ? "Sair da comparação" : "Comparar com a versão anterior"} (C)" aria-label="Comparar com a versão anterior">${ICON.vs}</button>` : ""}`;
+    + `${can ? `<button class="lb-info ${vs ? "on" : ""}" data-act="vs-toggle" aria-pressed="${!!vs}" title="${vs ? "Sair da comparação" : "Comparar com a versão anterior"} (C)" aria-label="Comparar com a versão anterior">${ICON.vs}</button>` : ""}`
+    + `${adj ? "" : `<button class="lb-info" data-act="copy-link" data-id="${it.id}" data-opt="${o.id}" title="Copiar o link ${o.mime.startsWith("video/") ? "deste vídeo, nesta versão e neste segundo" : "desta imagem, nesta versão"}" aria-label="Copiar o link">${LINK_ICO}</button>`}`;
   const tools = lbTools().replace('<span class="lb-tools">', `<span class="lb-tools">${more}`);
   return `<div class="lb lb-team" data-act="lb-bg" role="dialog" aria-modal="true" aria-label="${esc(it.title)}">
     <div class="lb-top"><span><b>${esc(it.title)}</b> · ${lab}${vers}${hist.length > 1 ? ` · versão ${vi + 1}/${hist.length}${o.id === face.id ? " (atual)" : ""}` : ""}${o.created_by ? ` · por ${esc(o.created_by)}` : ""}${pos >= 0 ? ` · ${pos + 1} de ${S.ovList.length} nesta página` : ""}</span>${tools}</div>
@@ -3214,6 +3286,24 @@ const ACTS = {
     render(true);
     const { error } = await sb.from("labels").update({ color }).eq("id", l.id);
     if (error) { S.labels = S.labels.map((x) => (x.id === l.id ? l : x)); render(true); toast(`Não trocou a cor: ${error.message}`, true); }
+  },
+  // a direct link to a card, an image (in its version) or a video (in its version, at the second it is paused at) or a
+  // comment. The team copies its own room's link and, when the client sees what it points at, the toast offers the
+  // client's too; data-client (the card's ⋯) copies the client's straight away
+  async "copy-link"(el) {
+    const d = el.dataset, it = itemOf(d.id);
+    if (!it) return;
+    const o = d.opt ? S.options.find((x) => x.id === d.opt) : null, vv = vidVers(it), isVer = !!o && vv.includes(o);
+    // a video's versions go by v (v1 is the first cut) and play on the card; any other image or video, by its id
+    const v = isVer && vv.length > 1 ? String(vv.length - vv.indexOf(o)) : null;
+    const t = d.t ? +d.t : o?.mime.startsWith("video/") ? (S.vtime || {})[o.id] || null : null;
+    const url = (client) => linkTo({ item: it.id, opt: o && !isVer ? o.id : null, v, t, c: d.c || null, client });
+    const copy = async (client, act = null) => {
+      try { await navigator.clipboard.writeText(url(client)); toast(client && TEAM ? `Link da sala ${DA_CL} copiado` : "Link copiado", false, act); }
+      catch { window.prompt("Copie o link:", url(client)); }
+    };
+    const forCl = TEAM && !d.client && it.visible && (!o || !offWK(o));
+    await copy(!!d.client, forCl ? { label: `Link ${DA_CL}`, fn: () => copy(true) } : null);
   },
   // the pin: a padrão etiqueta is the filter the room opens with; turning it on here also turns its filter on now
   async "label-pad"(el) {

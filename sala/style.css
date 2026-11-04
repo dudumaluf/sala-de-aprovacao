@@ -319,6 +319,18 @@ textarea.field { height: auto; padding: 10px 12px; resize: none; }
 .msg .meta b { color: var(--muted); font-weight: 600; }
 .msg.time .meta b { color: var(--accent); }
 .msg .body { margin-top: 2px; white-space: pre-wrap; }
+/* a direct link's comment, lit for a few seconds (in the card's comments and in Ver grande's list); a comment at a second
+   of the video copies its own link from the icon its row shows on hover */
+.msgs .msg, .tc-list li { border-radius: 6px; transition: background-color 0.8s, box-shadow 0.8s; }
+.msgs .msg { position: relative; }
+.msgs .msg.lit, .tc-list li.lit { background: var(--accent-soft); box-shadow: 0 0 0 6px var(--accent-soft); }
+.clink { width: 22px; height: 22px; display: grid; place-items: center; flex: none; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--dim); opacity: 0; transition: opacity 0.15s; }
+.clink svg { width: 13px; height: 13px; }
+.clink:hover { color: var(--text); background: var(--raise2); }
+.msg:hover .clink, .tc-list li:hover .clink, .clink:focus-visible { opacity: 1; }
+@media (hover: none) { .clink { opacity: 0.7; } }
+.msg .clink { position: absolute; top: -4px; right: 0; }
+.tc-list .clink { margin-left: auto; }
 .compose { display: flex; flex-direction: column; gap: 10px; padding: 16px 20px 20px; border-top: 1px solid var(--line); }
 .compose .hintline { color: var(--amber); font-size: 12px; }
 .compose .row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
