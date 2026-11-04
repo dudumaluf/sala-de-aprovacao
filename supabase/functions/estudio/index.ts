@@ -38,6 +38,9 @@ const MODELS: Record<string, { via: Via; path: string; fields: string[] }> = {
   "bytedance/seedance-2.5/text-to-video": { via: "hf", path: "/bytedance/seedance-2.5/text-to-video", fields: ["prompt", "duration", "resolution", "aspect_ratio", "generate_audio"] },
   "bytedance/seedance-2.5/image-to-video": { via: "hf", path: "/bytedance/seedance-2.5/image-to-video", fields: ["prompt", "image_url", "end_image_url", "duration", "resolution", "generate_audio"] },
   "bytedance/seedance-2.5/reference-to-video": { via: "hf", path: "/bytedance/seedance-2.5/reference-to-video", fields: ["prompt", "image_urls", "video_urls", "audio_urls", "duration", "resolution", "aspect_ratio", "generate_audio"] },
+  // Seedance edits one video (video_url, @video1 in the prompt) with images, more videos and voices; the result keeps the
+  // video's length and aspect, so it takes no duration or aspect ratio
+  "bytedance/seedance-2.5/video-edit": { via: "hf", path: "/bytedance/seedance-2.5/video-edit", fields: ["prompt", "video_url", "video_urls", "image_urls", "audio_urls", "resolution", "generate_audio"] },
   // Genjutsu on a guide video (4 to 30 s) and up to 8 images: motion transfer rebuilds the scene from the images with the
   // video's motion and camera; object swap keeps the video and swaps in the images' people, things or places. The result
   // is as long as the video; resolution 480p, 720p or 1080p
@@ -85,6 +88,10 @@ Answer with the prompt only, in plain prose, in at most 180 words.`,
   video: `You write prompts for Seedance 2.5, a video model, in the AI studio of a film production. References are tagged in load order: @image1, @image2… for images, @video1… for videos, @audio1… for voice takes the model lip-syncs to. You see the images; videos and audio are only named.
 Write one prompt in English for a single shot of the given duration, in these blocks, using only the ones the shot needs: SCENE CONTEXT, ACTIVE REFERENCES (each tag with a minimal anchor and "100% matches the reference"), LOCATION MAP, FIRST FRAME / BLOCKING, FORMAT MODE ("One continuous shot, the camera does not cut on its own." unless cuts are asked for), CAMERA (field of view in degrees, one of 107°, 84°, 63°, 47°, 29°, 18°, 12°, 8°, or 180° for a fisheye; height; movement), ACTION, PERFORMANCE, LIGHTING (source, direction, white balance in Kelvin), AUDIO, POSITIVE LOCKS.
 Write what can be seen and measured, in positive phrasing only; left and right are from the camera; speeds in km/h; no director, film or equipment names. When a voice is attached, say who speaks the line from which @audio tag, lips in sync. ${PLACES} ${LOOK}
+Answer with the prompt only.`,
+  // Seedance video edit: the first video is the one it edits; what it keeps and what changes are said plainly
+  vedit: `You write prompts for Seedance 2.5 video edit, in the AI studio of a film production. It edits one source video, @video1, the editing master: the result keeps its length, its framing and its timing. References are tagged in load order: @image1, @image2… for images (up to 5), @video2… for more videos, @audio1… for voice takes. You see the images; videos and audio are only named.
+Read the director's request (often in Portuguese) and write one prompt in English, in this order: the goal of the edit in one sentence; @video1 as the sole editing master and what it keeps (camera, framing, cuts, timing and motion, and its sound unless the director asks otherwise); each reference tag with only what it supplies, and what not to take from it (its background, its light, its framing); the scope of the edit (what changes, where, and from which second when it matters); and what stays exactly as in @video1. Dialogue goes in curly braces with the language and the speaker before it, as in: Brazilian Portuguese, Ana: {Bom dia}. Write what can be seen; left and right are from the camera; no director, film or equipment names. ${PLACES} ${LOOK}
 Answer with the prompt only.`,
   // Genjutsu on a guide video: the images come numbered as the model gets them; the video is only named
   motion: `You write prompts for Genjutsu motion transfer, a video model, in the AI studio of a film production. It takes only the motion and the camera of a guide video (a previz, a 3D blocking, a take) and rebuilds the whole scene from up to 8 reference images, Image 1, Image 2… in the order the model gets them: nothing of the video's own people or place stays. Image 1 leads, as the first frame: the whole clip keeps its look. You see the images; the video is only named.
@@ -203,7 +210,7 @@ Deno.serve(async (req) => {
       const content: Anthropic.Beta.BetaContentBlockParam[] = [];
       const images = (Array.isArray(body.images) ? body.images : []).slice(0, 12);
       for (const [i, im] of images.entries()) {
-        content.push({ type: "text", text: `${kind === "video" ? `@image${i + 1}` : `Image ${i + 1}`}: ${String(im?.label || "").slice(0, 160)}` });
+        content.push({ type: "text", text: `${kind === "video" || kind === "vedit" ? `@image${i + 1}` : `Image ${i + 1}`}: ${String(im?.label || "").slice(0, 160)}` });
         content.push({ type: "image", source: { type: "url", url: await sign(im?.path) } });
       }
       const notes = (Array.isArray(body.notes) ? body.notes : []).slice(0, 12).map((n: unknown) => String(n).slice(0, 200));
