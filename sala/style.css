@@ -2059,3 +2059,38 @@ body.est-open .update-bar { bottom: auto; top: 6px; height: 40px; }
 .tc-side-head small { margin-left: 4px; color: var(--dim); font-weight: 500; }
 .tc-side .tc-list { max-height: none; flex: 1; min-height: 0; gap: 12px; }
 @media (max-width: 1000px) { .cvideo.cvsplit, .cvideo.cvsplit.side-on { grid-template-columns: 1fr; } .tc-side { position: static; max-height: none; padding: 12px 0 0; border-left: 0; border-top: 1px solid var(--line); } }
+
+/* ---------- etiquetas (team): a name and a color (--lc) on the cards, in Filtros, in the card's ⋯ and in the selection bar ---------- */
+.etq { display: inline-flex; align-items: center; height: 20px; max-width: 160px; padding: 0 8px; border-radius: 999px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; font-weight: 500; line-height: 1;
+  color: color-mix(in srgb, var(--lc) 62%, white); background: color-mix(in srgb, var(--lc) 24%, rgba(5, 7, 6, 0.86)); }
+/* on the card: small, right under the title pill (the bottom edge has the comments and, on hover, the tools) */
+.sitem-labs { position: absolute; left: 10px; top: 52px; z-index: 2; display: flex; flex-wrap: wrap; gap: 4px; max-width: calc(100% - 20px); pointer-events: none; }
+.csh-head .t .etq { margin-left: 6px; }
+/* Filtros › Etiquetas */
+.lab-opt { display: inline-flex; align-items: center; gap: 6px; padding-left: 4px; }
+.lab-opt small { color: var(--dim); font-size: 11px; }
+.lab-editbtn { margin-left: 4px; }
+.lab-edit { display: inline-flex; align-items: center; gap: 8px; width: 100%; }
+.lab-edit .etq { margin-right: auto; }
+/* the card's ⋯: every etiqueta, lit where the card has it */
+.mp-labs { align-items: flex-start; padding-top: 5px; padding-bottom: 5px; }
+.mp-labs > span:first-child { padding-top: 3px; }
+.mp-labs .labs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.mp-labs .link { font-size: 11px; }
+.lab-tog { padding: 0; border: 0; background: none; cursor: pointer; opacity: 0.4; transition: opacity 0.15s; }
+.lab-tog:hover { opacity: 0.75; }
+.lab-tog.on { opacity: 1; }
+/* selected cards: an outline and a check; the bar at the bottom puts an etiqueta on all of them at once */
+.sitem.sel { box-shadow: 0 0 0 2px var(--accent); }
+.sitem-check { position: absolute; top: 10px; right: 10px; z-index: 4; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: var(--accent); color: var(--ink); pointer-events: none; }
+.sitem-check svg { width: 18px; height: 18px; }
+.selbar { position: fixed; left: 50%; bottom: 20px; z-index: 45; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; padding: 6px 8px 6px 16px; border: 1px solid var(--line2); border-radius: 999px; background: rgba(11, 11, 12, 0.94); backdrop-filter: blur(8px); font-size: 13px; white-space: nowrap; }
+.selbar .btn { height: 32px; padding: 0 14px; }
+.selbar .btn svg { width: 15px; height: 15px; }
+.sel-wrap { position: relative; }
+.sel-pop { position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%); min-width: 220px; max-height: 50vh; overflow: auto; display: flex; flex-direction: column; gap: 1px; padding: 5px; border: 1px solid var(--line2); border-radius: 12px; background: var(--raise); }
+.sel-lab { display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 8px; border: 0; border-radius: 8px; background: none; color: var(--text); font-size: 12px; text-align: left; cursor: pointer; }
+.sel-lab:hover { background: var(--raise2); }
+.sel-lab i { width: 14px; flex: none; color: var(--accent); font-style: normal; text-align: center; }
+.sel-lab.some i { color: var(--muted); }
+.sel-new { color: var(--muted); }

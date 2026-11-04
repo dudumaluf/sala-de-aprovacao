@@ -8,8 +8,8 @@
 -- What the client reads: the rounds, the items the team sent that have something to show, the options of each item
 -- that the per-version rule lets through (option_dropped below), the comments on sent items, the requests and their
 -- files, and its own drawings. Everything else here (reviews, the team's reading of the client's answers, tasks,
--- open questions, round notes, what goes in each delivery, studio jobs, 3D sets, the Galeria's groups, Soul IDs and
--- recipes) is team only.
+-- open questions, round notes, what goes in each delivery, studio jobs, 3D sets, the Galeria's groups, Soul IDs,
+-- recipes and the cards' etiquetas) is team only.
 
 -- ---------- who is signed in ----------
 create or replace function public.side() returns text
@@ -362,6 +362,25 @@ create table public.recipes (
   updated_at timestamptz not null default now()
 );
 
+-- An etiqueta: a name and a color anyone on the team makes; it shows on the cards that have it and becomes a filter
+-- (Filtros › Etiquetas). item_labels says which card (item) has which; deleting an etiqueta or a card takes its marks
+-- along, never the other one.
+create table public.labels (
+  id uuid primary key default gen_random_uuid(),
+  name text not null check (char_length(btrim(name)) between 1 and 40),
+  color text not null default 'teal' check (color in ('teal', 'violet', 'coral', 'amber', 'pink', 'blue', 'green', 'gray')),
+  sort double precision not null default extract(epoch from now()),
+  created_by text not null default '',
+  created_at timestamptz not null default now()
+);
+create table public.item_labels (
+  item_id uuid not null references public.items (id) on delete cascade,
+  label_id uuid not null references public.labels (id) on delete cascade,
+  added_by text not null default '',
+  added_at timestamptz not null default now(),
+  primary key (item_id, label_id)
+);
+
 create index items_round_idx on public.items (round_id, scene, sort);
 create index items_chosen_idx on public.items (chosen_option);
 create index options_item_idx on public.options (item_id);
@@ -379,6 +398,7 @@ create index estudio_jobs_item_idx on public.estudio_jobs (item_id, created_at d
 create index blocking_shots_item_idx on public.blocking_shots (item_id, created_at desc);
 create index gallery_group_items_option_idx on public.gallery_group_items (option_id);
 create index gallery_group_items_file_idx on public.gallery_group_items (file_id);
+create index item_labels_label_idx on public.item_labels (label_id);
 
 -- ---------- what the client must not see ----------
 -- true when the client does not see the option. Per version of the round (rounds.version):
@@ -446,6 +466,8 @@ alter table public.gallery_groups enable row level security;
 alter table public.gallery_group_items enable row level security;
 alter table public.souls enable row level security;
 alter table public.recipes enable row level security;
+alter table public.labels enable row level security;
+alter table public.item_labels enable row level security;
 
 -- rounds: both sides read; only the team writes (the client confirms through confirm_round())
 create policy rounds_select on public.rounds for select to authenticated using ((select is_team()) or (select is_client()));
@@ -497,7 +519,7 @@ create policy request_files_delete on public.request_files for delete to authent
   using ((select is_team()) or ((select is_client()) and side = 'cliente'));
 
 -- the team's reading of the client's answers, tasks, open questions, round notes, deliveries, studio jobs, 3D sets, and
--- the Galeria's groups, Soul IDs and recipes: team only, the client gets no rows and cannot write
+-- the Galeria's groups, Soul IDs, recipes and the cards' etiquetas: team only, the client gets no rows and cannot write
 create policy item_feedback_team on public.item_feedback for all to authenticated
   using ((select is_team())) with check ((select is_team()));
 create policy feedback_refs_team on public.feedback_refs for all to authenticated
@@ -523,6 +545,10 @@ create policy gallery_group_items_team on public.gallery_group_items for all to 
 create policy souls_team on public.souls for all to authenticated
   using ((select is_team())) with check ((select is_team()));
 create policy recipes_team on public.recipes for all to authenticated
+  using ((select is_team())) with check ((select is_team()));
+create policy labels_team on public.labels for all to authenticated
+  using ((select is_team())) with check ((select is_team()));
+create policy item_labels_team on public.item_labels for all to authenticated
   using ((select is_team())) with check ((select is_team()));
 
 -- annotations: the team reads and manages all of them and draws as itself. The client draws on the options it can

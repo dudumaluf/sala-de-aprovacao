@@ -106,6 +106,9 @@ const S = {
   // load, like the version: a filter left on from yesterday never hides work
   appr: "all",
   authors: new Set(), itemTab: store.get("sala-item-tab") || "versoes",
+  // the cards' etiquetas (team): labelF is the Filtros › Etiquetas pick (starts empty, like the author filter), sel the
+  // cards picked to put an etiqueta on many at once
+  labels: [], itemLabels: [], labelsOn: false, labelF: new Set(), labelEdit: false, sel: new Set(), selMenu: false,
 };
 
 // ---------- helpers ----------
@@ -359,9 +362,34 @@ const inAuthor = (o) => !TEAM || !S.authors.size || peeked(o.item_id) || S.autho
 // with an approval or author filter on "Atual", every version counts (what matches may be an older one)
 const toggleIn = (set, v) => (v === "all" ? set.clear() : set.has(v) ? set.delete(v) : set.add(v));
 const filtering = () => TEAM && (S.appr !== "all" || S.authors.size > 0);
+// ---------- etiquetas (team): a name and a color anyone on the team makes and puts on cards; each one is also a filter.
+// The client never sees them. labels and item_labels (atualizar-2026-11e.sql); a card with any of the picked ones shows
+const LABEL_COLORS = { teal: "#2FBFA0", violet: "#8F80F2", coral: "#EE7A57", amber: "#E3AE3C", pink: "#E477A8", blue: "#4F9BE8", green: "#7CC35A", gray: "#A3A39B" };
+const NO_LABELS = new Set();
+let labMemo = { k: null, m: new Map() };
+// a card's etiquetas, as the Set of their ids
+function labelIdsOf(id) {
+  if (labMemo.k !== S.itemLabels) {
+    const m = new Map();
+    for (const x of S.itemLabels) (m.get(x.item_id) || m.set(x.item_id, new Set()).get(x.item_id)).add(x.label_id);
+    labMemo = { k: S.itemLabels, m };
+  }
+  return labMemo.m.get(id) || NO_LABELS;
+}
+const labelsOf = (id) => S.labels.filter((l) => labelIdsOf(id).has(l.id));
+const labelById = (id) => S.labels.find((l) => l.id === id);
+const labelChip = (l) => `<span class="etq" style="--lc:${LABEL_COLORS[l.color] || LABEL_COLORS.gray}">${esc(l.name)}</span>`;
+const inLabels = (it) => !TEAM || !S.labelF.size || peeked(it.id) || [...labelIdsOf(it.id)].some((id) => S.labelF.has(id));
+// "sem a etiqueta Seedance", "sem as etiquetas Seedance ou Yan": what a card the etiquetas filter hides lacks
+function labelsTxt() {
+  const names = [...S.labelF].map((id) => labelById(id)?.name).filter(Boolean);
+  return names.length ? `sem ${names.length > 1 ? "as etiquetas" : "a etiqueta"} ${names.join(" ou ")}` : "";
+}
+// any filter that can leave a card out: approval, author or etiqueta
+const anyFilter = () => filtering() || (TEAM && S.labelF.size > 0);
 const inView = (o) => (filtering() && S.ver === "now" && !peeked(o.item_id) ? true : inVer(o)) && inAppr(o) && inAuthor(o);
 // a card is on screen when something of it passes the filters (an item with no options yet, unless a filter is on)
-const hasView = (it) => !TEAM || (optsOf(it.id).length ? shownOpts(it.id).length > 0 : !filtering());
+const hasView = (it) => !TEAM || (inLabels(it) && (optsOf(it.id).length ? shownOpts(it.id).length > 0 : !filtering()));
 // "Ver todas juntas" and the Versões groups: every version (or the one picked), with the same approval, author and dropped filters
 const sheetOpts = (it) => optsOf(it.id).filter((o) => !isAngle(o) && (showDrop(o) || !dropped(o)) && inAppr(o) && inAuthor(o) && (S.ver === "now" || S.ver === "all" || peeked(it.id) || verOf(o) === +S.ver));
 // a card the filters hide stays in its place as one slim line: why it is hidden, what is new in it, Mostrar (just this
@@ -369,7 +397,7 @@ const sheetOpts = (it) => optsOf(it.id).filter((o) => !isAngle(o) && (showDrop(o
 function hiddenRow(r, it, { page = false } = {}) {
   const opts = optsOf(it.id);
   const why = [S.ver !== "now" && S.ver !== "all" ? `v${esc(S.ver)}` : "", S.appr !== "all" ? APPR[S.appr] : "", S.authors.size ? esc([...S.authors].join(", ")) : "",
-    !S.ov.dropped && opts.some((o) => dropped(o) && inView(o)) ? "sem descartadas" : ""].filter(Boolean).join(", ");
+    !S.ov.dropped && opts.some((o) => dropped(o) && inView(o)) ? "sem descartadas" : "", !inLabels(it) ? esc(labelsTxt()) : ""].filter(Boolean).join(", ");
   const lv = latestVer(it.id), fresh = opts.filter((o) => verOf(o) === lv && !dropped(o)).length;
   const news = !opts.length ? "sem opções ainda" : fresh && lv > 1 ? `${fresh} ${fresh === 1 ? "nova" : "novas"} na v${lv}` : fresh ? plural(fresh, "opção", "opções") : "";
   const parts = [page ? "" : `<span class="hrow-kind">${KINDS[it.kind] || ""}</span><a class="hrow-title" href="${sceneHref(r.id, it.scene, it.id)}" title="Abrir o item">${esc(it.title)}</a>`,
@@ -384,7 +412,9 @@ function apprNote(n) {
   const what = S.appr === "team" ? " aprovado pela equipe" : S.appr === "client" ? " aprovado pelo cliente" : "";
   const who = S.authors.size ? ` de ${esc([...S.authors].join(" e "))}` : "";
   const ver = S.ver !== "now" ? ` na ${S.ver === "all" ? "rodada" : `v${S.ver}`}` : "";
-  return `${plural(n, "item", "itens")} sem nada${what}${who}${ver}`;
+  // only the etiquetas filter on: "12 itens sem a etiqueta Seedance"
+  if (!filtering()) return `${plural(n, "item", "itens")} ${esc(labelsTxt())}`;
+  return `${plural(n, "item", "itens")} sem nada${what}${who}${ver}${S.labelF.size ? ` ou ${esc(labelsTxt())}` : ""}`;
 }
 function verBase(o) {
   for (let b = o, n = 0; b?.based_on && n < 8; n++) {
@@ -438,13 +468,22 @@ async function load(force = false) {
   const team = TEAM ? [q("option_reviews", "updated_at"), q("item_feedback", "updated_at"), q("feedback_refs", "sort"), q("tasks", "sort"), q("pendencias", "sort"), q("round_notes", "updated_at"), q("envio", "updated_at"),
     sb.from("blocking_shots").select("option_id, item_id, camera, created_at").order("created_at")] : [];
   // drawings (estudio.js): the client gets its own, the team gets all of them
-  const res = await Promise.all([q("rounds", "sort"), q("items", "sort"), q("options", "sort"), q("comments", "created_at"), q("requests", "sort"), q("request_files", "created_at"), q("annotations", "created_at"), ...team]);
+  // the cards' etiquetas (team) come apart: a room whose database has none yet (a job that did not run
+  // atualizar-2026-11e.sql) just goes without them
+  const labs = TEAM ? [q("labels", "sort"), q("item_labels", "added_at")] : [];
+  const got = await Promise.all([q("rounds", "sort"), q("items", "sort"), q("options", "sort"), q("comments", "created_at"), q("requests", "sort"), q("request_files", "created_at"), q("annotations", "created_at"), ...team, ...labs]);
+  const res = got.slice(0, got.length - labs.length), lab = got.slice(res.length);
   const bad = res.find((r) => r.error);
   if (bad) throw bad.error;
-  const sig = JSON.stringify(res.map((r) => r.data));
+  const labelsOn = TEAM && lab.every((r) => !r.error);
+  const sig = JSON.stringify([...res, ...(labelsOn ? lab : [])].map((r) => r.data));
   if (!force && sig === S.sig) return false;
   const [rounds, items, options, comments, requests, files, annotations, reviews = [], feedback = [], wkRefs = [], tasks = [], pendencias = [], roundNotes = [], envio = [], bshots = []] = res.map((r) => r.data);
-  Object.assign(S, { rounds, items, options, comments, requests, files, annotations, reviews, feedback, wkRefs, tasks, pendencias, roundNotes, envio, bshots, sig });
+  Object.assign(S, { rounds, items, options, comments, requests, files, annotations, reviews, feedback, wkRefs, tasks, pendencias, roundNotes, envio, bshots,
+    labels: labelsOn ? lab[0].data : [], itemLabels: labelsOn ? lab[1].data : [], labelsOn, sig });
+  // an etiqueta someone deleted leaves the filter, a card someone deleted leaves the selection
+  for (const id of S.labelF) if (!S.labels.some((l) => l.id === id)) S.labelF.delete(id);
+  for (const id of S.sel) if (!S.items.some((it) => it.id === id)) S.sel.delete(id);
   return true;
 }
 async function refresh() { await loadNovas().catch(() => {}); await load(true); await warm().catch(() => {}); resolvePage(); render(true); }
@@ -867,7 +906,7 @@ function render(force = false, newPage = false) {
     (kept.get(k) || kept.set(k, []).get(k)).push(el);
   });
 
-  $app.innerHTML = `<div class="shell ${S.sideOff ? "side-off" : ""}">${sidebar()}<div class="main">${mobileBar()}${page()}${S.drawer ? drawer() : ""}</div></div>${S.navOpen ? '<div class="scrim" data-act="nav"></div>' : ""}${S.lightbox ? lightbox() : ""}${S.modal ? modal() : ""}`;
+  $app.innerHTML = `<div class="shell ${S.sideOff ? "side-off" : ""}">${sidebar()}<div class="main">${mobileBar()}${page()}${selBar()}${S.drawer ? drawer() : ""}</div></div>${S.navOpen ? '<div class="scrim" data-act="nav"></div>' : ""}${S.lightbox ? lightbox() : ""}${S.modal ? modal() : ""}`;
 
   $app.querySelectorAll("img[data-path], video[data-path], audio[data-path]").forEach((el) => {
     const old = kept.get(mediaKey(el))?.shift();
@@ -889,6 +928,26 @@ function render(force = false, newPage = false) {
   $app.querySelectorAll("textarea.brief, textarea.ret-notes, textarea.ret-basenote, textarea.btask-text").forEach(fit);
   $app.querySelectorAll(".tfit > input").forEach(fitTitle);
   hydrate();
+}
+// the selection bar (team): how many cards are picked, Etiquetar lists the etiquetas (✓ all of them have it, – some): a click
+// puts it on all of them or, when all have it, takes it off; Limpar (or Esc) ends the selection
+function selBar() {
+  if (!TEAM || !S.sel.size || !S.labelsOn) return "";
+  const ids = [...S.sel];
+  const state = (l) => { const n = ids.filter((id) => labelIdsOf(id).has(l.id)).length; return n === ids.length ? "all" : n ? "some" : "none"; };
+  const menu = S.selMenu ? `<div class="sel-pop" role="menu">${S.labels.map((l) => { const st = state(l); return `<button class="sel-lab ${st}" data-act="sel-label" data-v="${l.id}" role="menuitemcheckbox" aria-checked="${st === "all" ? "true" : st === "some" ? "mixed" : "false"}"><i aria-hidden="true">${st === "all" ? "✓" : st === "some" ? "–" : ""}</i>${labelChip(l)}</button>`; }).join("")}<button class="sel-lab sel-new" data-act="label-new" data-v="sel"><i aria-hidden="true">＋</i>Nova etiqueta</button></div>` : "";
+  return `<div class="selbar" role="region" aria-label="Seleção"><span>${plural(ids.length, "card selecionado", "cards selecionados")}</span><span class="sel-wrap"><button class="btn" data-act="sel-menu" aria-haspopup="menu" aria-expanded="${!!S.selMenu}">${TAG_ICO}Etiquetar</button>${menu}</span><button class="link" data-act="sel-clear">Limpar</button></div>`;
+}
+// the etiqueta goes on the cards (or comes off them): on screen first, then in the database
+async function setLabel(labelId, ids, on) {
+  const before = S.itemLabels, at = new Date().toISOString();
+  S.itemLabels = on ? [...before, ...ids.filter((id) => !labelIdsOf(id).has(labelId)).map((item_id) => ({ item_id, label_id: labelId, added_by: myName(), added_at: at }))]
+    : before.filter((x) => !(x.label_id === labelId && ids.includes(x.item_id)));
+  render(true);
+  const { error } = on
+    ? await sb.from("item_labels").upsert(ids.map((item_id) => ({ item_id, label_id: labelId, added_by: myName() })), { onConflict: "item_id,label_id", ignoreDuplicates: true })
+    : await sb.from("item_labels").delete().eq("label_id", labelId).in("item_id", ids);
+  if (error) { S.itemLabels = before; render(true); toast(`Não ${on ? "pôs" : "tirou"} a etiqueta: ${error.message}`, true); }
 }
 function fit(t) { t.style.height = "auto"; t.style.height = `${t.scrollHeight}px`; }
 const val = (f, n) => (f.elements.namedItem(n)?.value ?? "").trim();
@@ -1006,10 +1065,22 @@ function filtersOn(ctx) {
   if (S.ver !== "now") on.push(["ver", S.ver === "all" ? "Todas as rodadas" : `Só a v${S.ver}`]);
   if (S.appr !== "all") on.push(["appr", APPR[S.appr]]);
   for (const a of S.authors) on.push([`author:${a}`, a]);
+  for (const id of S.labelF) { const l = labelById(id); if (l) on.push([`label:${id}`, l.name]); }
   if (ctx.kinds?.length > 1) for (const k of S.ov.kinds) if (ctx.kinds.includes(k)) on.push([`kind:${k}`, KINDS[k]]);
   if (ctx.curate && S.ov.curate) on.push(["curate", "Só o que falta curar"]);
   if (ctx.dropped && S.ov.dropped) on.push(["dropped", "Com descartadas"]);
   return on;
+}
+// Filtros › Etiquetas: a chip per etiqueta with how many cards of the round have it (more than one picked: a card with any
+// of them shows), ＋ Nova makes one, Editar renames, recolors or deletes them
+function labelOpts(r) {
+  const here = new Set(itemsOf(r.id).map((it) => it.id));
+  const count = (l) => S.itemLabels.filter((x) => x.label_id === l.id && here.has(x.item_id)).length;
+  if (S.labelEdit && S.labels.length) return S.labels.map((l) => `<span class="lab-edit">${labelChip(l)}<button class="link" data-act="label-ren" data-id="${l.id}">Renomear</button><button class="link" data-act="label-color" data-id="${l.id}" title="Trocar a cor">Cor</button><button class="link danger" data-act="label-del" data-id="${l.id}">Apagar</button></span>`).join("")
+    + '<button class="link" data-act="label-edit">Pronto</button>';
+  return S.labels.map((l) => `<button class="fopt lab-opt ${S.labelF.has(l.id) ? "on" : ""}" data-act="label" data-v="${l.id}" aria-pressed="${S.labelF.has(l.id)}" title="Só os cards com ${esc(l.name)} (junta com as outras marcadas)">${labelChip(l)}<small>${count(l)}</small></button>`).join("")
+    + '<button class="fopt" data-act="label-new" title="Nova etiqueta: depois ponha nos cards pelo ⋯ ou selecionando vários">＋ Nova</button>'
+    + (S.labels.length ? '<button class="link lab-editbtn" data-act="label-edit">Editar</button>' : "");
 }
 function filterBar(r, ctx, note = "") {
   if (!TEAM) return "";
@@ -1029,6 +1100,7 @@ function filterBar(r, ctx, note = "") {
   const pop = S.filt ? `<div class="filt-pop" role="dialog" aria-label="Filtros">
     ${rodada}
     ${authors.length ? group("Autor", [["all", "Todos"], ...authors.map((k) => [k, esc(k)])].map(([k, l]) => opt("author", k, l, k === "all" ? !S.authors.size : S.authors.has(k), k === "all" ? "Opções de todo mundo" : `As opções de ${esc(k)} (junta com as outras marcadas)`)).join("")) : ""}
+    ${S.labelsOn ? group("Etiquetas", labelOpts(r)) : ""}
     ${ctx.kinds?.length > 1 ? group("Tipo", [["all", "Tudo"], ...ctx.kinds.map((k) => [k, KINDS[k]])].map(([k, l]) => opt("ov-kind", k, l, k === "all" ? !S.ov.kinds.size : S.ov.kinds.has(k))).join("")) : ""}
     ${togs ? `<section class="filt-group filt-togs">${togs}</section>` : ""}
   </div>` : "";
@@ -1429,7 +1501,7 @@ function trioOf(r, it) {
   };
 }
 // with the author filter on, an item shows only when that person made something new in it
-const trioShown = (r, it) => { const t = trioOf(r, it); return !S.authors.size || t.changes.length + t.fresh.length > 0; };
+const trioShown = (r, it) => { if (!inLabels(it)) return false; const t = trioOf(r, it); return !S.authors.size || t.changes.length + t.fresh.length > 0; };
 // tools: the scene page's comments, upload (also by dropping files on the row) and ⋯
 function trioRow(r, it, { tools = false } = {}) {
   const t = trioOf(r, it), f = fbNow(r, it);
@@ -1489,7 +1561,7 @@ function overviewPage(r) {
   S.ovList = [];
   const itemLine = (it, right) => {
     const [cls, label] = stageOf(it);
-    return `<span class="t">${grip(cls, label)}${typeBadge(it)}<small>${KINDS[it.kind] || ""}</small>${esc(it.title)}</span><span class="pos">${right}${toCurate(it) ? ' <b class="warn" title="Curar até 3 antes de enviar">→ 3</b>' : ""}</span>`;
+    return `<span class="t">${grip(cls, label)}${typeBadge(it)}<small>${KINDS[it.kind] || ""}</small>${esc(it.title)}${TEAM ? labelsOf(it.id).map(labelChip).join("") : ""}</span><span class="pos">${right}${toCurate(it) ? ' <b class="warn" title="Curar até 3 antes de enviar">→ 3</b>' : ""}</span>`;
   };
   const visibleOpts = (it) => {
     const opts = shownOpts(it.id);
@@ -1515,7 +1587,7 @@ function overviewPage(r) {
   const sub = [plural(all.length, "item", "itens"), `${images} imagens`, `${ready} prontos`].join(" · ") +
     (r.confirmed_at ? ` · <b class="ok">${esc(CL)} confirmou ${fmtTime(r.confirmed_at)}</b>` : "") +
     (owed ? ` · <a class="owed" href="#/materiais">${plural(owed, "material pendente", "materiais pendentes")} ${DA_CL}</a>` : "");
-  const bar = filterBar(r, { view: !trio, kinds, curate: true, dropped: true, ico: true }, apprNote(filtering() ? all.filter((it) => kindOk(it) && !(trio ? trioShown(r, it) : hasView(it))).length : 0)) || { btn: "", chips: "" };
+  const bar = filterBar(r, { view: !trio, kinds, curate: true, dropped: true, ico: true }, apprNote(anyFilter() ? all.filter((it) => kindOk(it) && !(trio ? trioShown(r, it) : hasView(it))).length : 0)) || { btn: "", chips: "" };
   return head("Visão geral", sub, bar.btn + dlButton() + sendButton(r), `${esc(r.code)} · ${esc(r.title)}`) +
     `<div class="main-body ov-body" data-keep="main">${bar.chips}${sections || `<p class="empty">${trio && f.curate ? "Nada pra curar: tudo o que é novo já tem ✓ ou ✕." : "Nada com esse filtro."}</p>`}</div>`;
 }
@@ -1750,12 +1822,12 @@ function sceneSteps(r, n) {
 // a scene's Filtros, as an icon for the page head (fb.btn) and the chips of what is on (fb.chips)
 function sceneFilter(r, items) {
   const trio = trioOn(r), list = items.filter((it) => (trio ? trioShown(r, it) : hasView(it)));
-  return filterBar(r, { dropped: items.some((x) => optsOf(x.id).some(dropped)), ico: true }, apprNote(filtering() ? items.length - list.length : 0)) || null;
+  return filterBar(r, { dropped: items.some((x) => optsOf(x.id).some(dropped)), ico: true }, apprNote(anyFilter() ? items.length - list.length : 0)) || null;
 }
 function sceneBody(r, items, fb = null) {
   const trio = trioOn(r);
   const list = items.filter((it) => (trio ? trioShown(r, it) : hasView(it)));
-  const bar = fb ? fb.chips : filterBar(r, { dropped: items.some((x) => optsOf(x.id).some(dropped)) }, apprNote(filtering() ? items.length - list.length : 0));
+  const bar = fb ? fb.chips : filterBar(r, { dropped: items.some((x) => optsOf(x.id).some(dropped)) }, apprNote(anyFilter() ? items.length - list.length : 0));
   if (!list.length) return `${bar}<p class="empty">Nada com esse filtro.</p>`;
   S.ovList = [];
   return bar + (trio ? `<div class="trio-list big">${list.map((it) => trioRow(r, it, { tools: true })).join("")}</div>` : splitCols(list, teamRow));
@@ -1966,10 +2038,11 @@ function teamRow(it, { scene = false, ov = false } = {}) {
   const mk = S.uploading[it.id] ? "" : makingOf(it.id);
   const pos = S.uploading[it.id] ? esc(S.uploading[it.id]) : mk;
   const ask = askOf(it);
-  return `<article class="hcard sitem ${h?.verdict ? `rv-${h.verdict}` : ""} ${ask ? "ask" : ""} ${S.flash === it.id ? "flash" : ""}" id="item-${it.id}" data-drop="${it.id}"${orderOf(it)}>
+  return `<article class="hcard sitem ${h?.verdict ? `rv-${h.verdict}` : ""} ${ask ? "ask" : ""} ${S.flash === it.id ? "flash" : ""} ${S.sel.has(it.id) ? "sel" : ""}" id="item-${it.id}" data-drop="${it.id}"${orderOf(it)}>
     <div class="sitem-media">
     ${body}
     <span class="t sitem-pill sitem-title">${grip(cls, `${label}${it.assignee ? ` · ${esc(PEOPLE[it.assignee] || it.assignee)}` : ""}${it.visible ? ` · ${A_CL} vê` : ""}`)}${scene ? `<span class="num">${two(it.scene)}</span>` : ""}<span class="tfit" data-v="${esc(it.title)}"><input class="inline title" data-field="title" data-id="${it.id}" value="${esc(it.title)}" maxlength="120" size="1" aria-label="Título" title="${esc(it.brief || it.title)}"></span>${fb ? `<span class="sitem-fb" title="${fb}${fbBy}">${fb}</span>` : ""}${pos ? `<span class="pos${mk ? " mk" : ""}"${mk ? ' title="O estúdio está gerando pra este card: o resultado entra aqui sozinho"' : ""}>${pos}</span>` : ""}</span>
+    ${labelRow(it)}${S.sel.has(it.id) ? `<span class="sitem-check" aria-hidden="true">${SEL_ICO}</span>` : ""}
     <footer class="hcard-foot sitem-foot ${open || S.drawer === it.id || (pos && !mk) ? "pin" : ""}">
       <span class="sitem-tools sitem-pill">
         ${all.length > 1 ? `<button class="ibtn ${grid ? "on" : ""}" data-act="item-sheet" data-id="${it.id}" aria-pressed="${!!grid}" title="${grid ? "Voltar para a imagem grande" : "Ver todas as versões juntas"}" aria-label="Ver todas as versões juntas">${ICON.grid}</button>` : ""}
@@ -1980,6 +2053,7 @@ function teamRow(it, { scene = false, ov = false } = {}) {
         ${h && canSplit(it, all[h.idx]) ? `<button class="ibtn" data-act="split" data-id="${all[h.idx].id}" title="Virar card novo: esta imagem sai deste card e vira um card logo ao lado" aria-label="Virar card novo">${SPLIT_ICO}</button>` : ""}
         ${h ? `<button class="ibtn" data-act="download" data-id="${all[h.idx].id}" title="Baixar o original" aria-label="Baixar">${ICO.down}</button>` : ""}
         ${all.length ? "" : `<button class="ibtn ${S.drawer === it.id ? "on" : ""} ${n ? "has" : ""}" data-act="drawer" data-id="${it.id}" title="Comentários" aria-label="Comentários">${CHAT}${n ? `<b>${n}</b>` : ""}</button>`}
+        ${S.labelsOn ? `<button class="ibtn ${S.sel.has(it.id) ? "on" : ""}" data-act="card-sel" data-id="${it.id}" aria-pressed="${S.sel.has(it.id)}" title="${S.sel.has(it.id) ? "Tirar da seleção" : "Selecionar: com vários cards selecionados, ponha ou tire uma etiqueta de todos de uma vez"}" aria-label="Selecionar">${SEL_ICO}</button>` : ""}
         <button class="ibtn ${open ? "on" : ""}" data-act="more" data-id="${it.id}" title="Subir imagens, dono, status, briefing, prompts, apagar o card" aria-label="Mais" aria-expanded="${open}">⋯</button>
         ${all.length ? "" : `<button class="ibtn ibtn-del" data-act="item-del" data-id="${it.id}" title="Apagar o card" aria-label="Apagar o card">${ICO.trash}</button>`}
         ${open ? morePop(it) : ""}
@@ -1994,6 +2068,10 @@ function teamRow(it, { scene = false, ov = false } = {}) {
 // or one of several images; never a Cena 3D angle, nor the one the client picked
 const canSplit = (it, o) => TEAM && !!o && !isAngle(o) && it.chosen_option !== o.id && (!!o.stack || optsOf(it.id).filter((x) => !isAngle(x)).length > 1);
 const SPLIT_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2.5" y="5.5" width="8" height="8" rx="1.3"/><path d="M8 8l5.5-5.5M9.5 2.5h4v4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+// a card's etiquetas, small, right under its title pill
+const labelRow = (it) => { const ls = TEAM ? labelsOf(it.id) : []; return ls.length ? `<span class="sitem-labs">${ls.map(labelChip).join("")}</span>` : ""; };
+const SEL_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2.5" y="2.5" width="11" height="11" rx="2.5"/><path d="M5.3 8.2l1.9 1.9 3.6-3.9" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const TAG_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M8.6 2.5H13.5v4.9L7.4 13.5 2.5 8.6z" stroke-linejoin="round"/><circle cx="10.8" cy="5.2" r="1"/></svg>';
 // the card's ⋯, a short context menu: actions as rows with an icon, the card's settings in compact rows between thin
 // lines. It opens above its button when the window ends first (S.moreUp, see fitMore)
 function morePop(it) {
@@ -2006,6 +2084,7 @@ function morePop(it) {
     <div class="mp-row"><span>Status</span><div class="seg" role="group" aria-label="Status">${Object.entries(STATUS).map(([k, n]) => `<button data-act="status" data-id="${it.id}" data-v="${k}" class="${it.status === k ? "on" : ""}" aria-pressed="${it.status === k}">${n}</button>`).join("")}</div></div>
     <div class="mp-row"><span>${esc(CL)}</span><button class="vis" data-act="mode" data-id="${it.id}" title="${it.mode === "set" ? `As opções são vistas de uma coisa só: ${A_CL} aprova o conjunto` : `${cap(A_CL)} escolhe uma das opções`}">${it.mode === "set" ? "Aprova o conjunto" : "Escolhe uma"}</button><button class="vis ${it.visible ? "on" : ""}" data-act="visible" data-id="${it.id}" title="${it.visible ? `${cap(A_CL)} está vendo. Clique para esconder.` : `Mostrar só este item ${AO_CL}`}">${it.visible ? "Já vê" : "Oculto"}</button></div>
     ${vars.length ? `<div class="mp-row"><span>Prompts</span><span class="vars" title="Prompt pronto de cada direção do briefing: clique para copiar e colar no gerador de imagens">${vars.map((k) => { const n = k.charCodeAt(0) - 64; return `<button class="link" data-act="copy-var" data-id="${it.id}" data-v="${k}" data-n="${n}" title="Copiar o prompt da direção ${n}: ${esc(variantPrompt(it, k))}">${n}</button>`; }).join("")}</span></div>` : ""}
+    ${S.labelsOn ? `<div class="mp-row mp-labs"><span>Etiquetas</span><span class="labs">${S.labels.map((l) => `<button class="lab-tog ${labelIdsOf(it.id).has(l.id) ? "on" : ""}" data-act="label-tog" data-id="${it.id}" data-v="${l.id}" aria-pressed="${labelIdsOf(it.id).has(l.id)}" title="${labelIdsOf(it.id).has(l.id) ? "Tirar" : "Pôr"} ${esc(l.name)}">${labelChip(l)}</button>`).join("")}<button class="link" data-act="label-new" data-id="${it.id}" title="Nova etiqueta, já neste card">＋ Nova</button></span></div>` : ""}
     <input class="field mp-brief" data-field="brief" data-id="${it.id}" value="${esc(it.brief)}" placeholder="Briefing para o time" maxlength="400" aria-label="Briefing">
     <hr class="mp-sep">
     ${it.visible && it.decision !== "pending" ? `<button class="mp-act" data-act="reopen" data-id="${it.id}">${ICO.redo}<span>Reabrir a decisão</span></button>` : ""}
@@ -2884,6 +2963,7 @@ function loginPage(err = "") {
 }
 
 // ---------- actions ----------
+function selToggle(id) { S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id); if (!S.sel.size) S.selMenu = false; render(true); }
 const ACTS = {
   // local only: everyone on a side shares one login, and a global sign-out would end every colleague's session too
   async logout() { await sb.auth.signOut({ scope: "local" }); location.reload(); },
@@ -2933,13 +3013,73 @@ const ACTS = {
   rest() { S.rest = { ...S.rest, [S.page.kind]: !S.rest?.[S.page.kind] }; render(true); },
   dl() { S.dl = !S.dl; render(true); },
   filt() { S.filt = !S.filt; render(true); },
+  // ---------- etiquetas: the filter, making, renaming, recoloring and deleting them, and putting them on cards ----------
+  label(el) { toggleIn(S.labelF, el.dataset.v); S.peek.clear(); render(true); },
+  "label-edit"() { S.labelEdit = !S.labelEdit; render(true); },
+  // from Filtros it is just made; from a card's ⋯ (data-id) or the selection bar (data-v="sel") it goes on those cards too
+  async "label-new"(el) {
+    const name = prompt("Nome da nova etiqueta")?.trim().slice(0, 40);
+    if (!name) return;
+    const used = new Set(S.labels.map((l) => l.color)), all = Object.keys(LABEL_COLORS);
+    const color = all.find((c) => !used.has(c)) || all[S.labels.length % all.length];
+    const to = el.dataset.v === "sel" ? [...S.sel] : el.dataset.id ? [el.dataset.id] : [];
+    await run(async () => {
+      const { data, error } = await sb.from("labels").insert({ name, color, created_by: myName() }).select().single();
+      if (error) throw error;
+      S.labels = [...S.labels, data];
+      S.selMenu = false;
+      if (to.length) await setLabel(data.id, to, true);
+      render(true);
+    }, to.length ? `${name}: ${plural(to.length, "card", "cards")}` : `Etiqueta ${name} criada`);
+  },
+  async "label-ren"(el) {
+    const l = labelById(el.dataset.id), name = l && prompt("Novo nome da etiqueta", l.name)?.trim().slice(0, 40);
+    if (!name || name === l.name) return;
+    await run(async () => {
+      const { error } = await sb.from("labels").update({ name }).eq("id", l.id);
+      if (error) throw error;
+      S.labels = S.labels.map((x) => (x.id === l.id ? { ...x, name } : x));
+      render(true);
+    }, "Etiqueta renomeada");
+  },
+  async "label-color"(el) {
+    const l = labelById(el.dataset.id), all = Object.keys(LABEL_COLORS);
+    if (!l) return;
+    const color = all[(all.indexOf(l.color) + 1) % all.length];
+    S.labels = S.labels.map((x) => (x.id === l.id ? { ...x, color } : x));
+    render(true);
+    const { error } = await sb.from("labels").update({ color }).eq("id", l.id);
+    if (error) { S.labels = S.labels.map((x) => (x.id === l.id ? l : x)); render(true); toast(`Não trocou a cor: ${error.message}`, true); }
+  },
+  // deleting an etiqueta takes it off its cards; the cards themselves never change
+  async "label-del"(el) {
+    const l = labelById(el.dataset.id);
+    if (!l) return;
+    const n = S.itemLabels.filter((x) => x.label_id === l.id).length;
+    if (!confirm(`Apagar a etiqueta ${l.name}?${n ? ` Ela sai de ${plural(n, "card", "cards")}; os cards não mudam.` : ""}`)) return;
+    await run(async () => {
+      const { error } = await sb.from("labels").delete().eq("id", l.id);
+      if (error) throw error;
+      S.labels = S.labels.filter((x) => x.id !== l.id);
+      S.itemLabels = S.itemLabels.filter((x) => x.label_id !== l.id);
+      S.labelF.delete(l.id);
+      if (!S.labels.length) S.labelEdit = false;
+      render(true);
+    }, `Etiqueta ${l.name} apagada`);
+  },
+  "label-tog"(el) { setLabel(el.dataset.v, [el.dataset.id], !labelIdsOf(el.dataset.id).has(el.dataset.v)); },
+  "card-sel"(el) { selToggle(el.dataset.id); },
+  "sel-menu"() { S.selMenu = !S.selMenu; render(true); },
+  "sel-clear"() { S.sel.clear(); S.selMenu = false; render(true); },
+  "sel-label"(el) { const ids = [...S.sel]; setLabel(el.dataset.v, ids, !ids.every((id) => labelIdsOf(id).has(el.dataset.v))); },
   // a chip's ×, or Limpar (all): back to showing everything
   "filt-off"(el) {
     const k = el.dataset.v, all = k === "all";
     if (all || k === "ver") S.ver = "now";
     if (all || k === "appr") { S.appr = "all"; store.set("sala-appr", "all"); }
-    if (all) { S.authors.clear(); S.ov.kinds.clear(); }
+    if (all) { S.authors.clear(); S.ov.kinds.clear(); S.labelF.clear(); }
     else if (k.startsWith("author:")) S.authors.delete(k.slice(7));
+    else if (k.startsWith("label:")) S.labelF.delete(k.slice(6));
     else if (k.startsWith("kind:")) S.ov.kinds.delete(k.slice(5));
     if (all || k === "curate") S.ov.curate = false;
     if (all || k === "dropped") { S.ov.dropped = false; store.set("sala-dropped", "0"); }
@@ -3322,6 +3462,10 @@ document.addEventListener("click", (e) => {
   if (S.more && !e.target.closest?.(".more-pop, [data-act=more]")) { S.more = null; if (!el) render(true); }
   if (S.dl && !e.target.closest?.(".dl-pop, [data-act=dl]")) { S.dl = false; if (!el) render(true); }
   if (S.filt && !e.target.closest?.(".filt-pop, [data-act=filt]")) { S.filt = false; if (!el) render(true); }
+  if (S.selMenu && !e.target.closest?.(".sel-wrap")) { S.selMenu = false; if (!el) render(true); }
+  // with cards selected, a click on a card's image adds it to the selection or takes it out, instead of opening it
+  const card = TEAM && S.sel.size && $app.contains(e.target) ? e.target.closest(".sitem[data-drop]") : null;
+  if (card && !e.target.closest(".sitem-foot, .sitem-title, .more-pop, input, select, textarea, label")) { e.preventDefault(); selToggle(card.dataset.drop); return; }
   if (!el || !$app.contains(el)) return;
   const fn = ACTS[el.dataset.act];
   if (fn) { if (el.tagName === "A") e.preventDefault(); fn(el, e); }
@@ -3444,8 +3588,9 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "Escape") {
-    if (S.more || S.dl || S.filt) { S.more = null; S.dl = false; S.filt = false; render(true); }
+    if (S.more || S.dl || S.filt || S.selMenu) { S.more = null; S.dl = false; S.filt = false; S.selMenu = false; render(true); }
     else if (S.modal && S.modal !== "name") ACTS["modal-close"]();
+    else if (S.sel.size) { S.sel.clear(); render(true); }
     else if (S.drawer) ACTS["drawer-close"]();
     return;
   }
