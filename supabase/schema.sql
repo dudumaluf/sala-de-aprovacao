@@ -128,7 +128,9 @@ create table public.requests (
   note text not null default '',       -- a link or a remark (older rooms; links and texts now live in request_notes)
   done boolean not null default false,
   sort integer not null default 0,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  team_only boolean not null default false,  -- the team's own package (a scene's materials): the client never receives it
+  scene integer                               -- the scene a package belongs to, for the studio's picker
 );
 
 create table public.request_files (
@@ -545,28 +547,38 @@ create policy comments_insert on public.comments for insert to authenticated
     and exists (select 1 from public.items i where i.id = comments.item_id and i.visible))));
 create policy comments_delete on public.comments for delete to authenticated using ((select is_team()));
 
--- requests: both read; the team asks, edits and deletes (the client fills the note through set_request_note())
-create policy requests_select on public.requests for select to authenticated using ((select is_team()) or (select is_client()));
+-- requests: both read (the client never a team_only package); the team asks, edits and deletes (the client fills the
+-- note through set_request_note())
+create policy requests_select on public.requests for select to authenticated using ((select is_team()) or ((select is_client()) and not team_only));
 create policy requests_insert on public.requests for insert to authenticated with check ((select is_team()));
 create policy requests_update on public.requests for update to authenticated using ((select is_team())) with check ((select is_team()));
 create policy requests_delete on public.requests for delete to authenticated using ((select is_team()));
 
--- request_files: both upload as themselves; the client can remove only what the client sent
-create policy request_files_select on public.request_files for select to authenticated using ((select is_team()) or (select is_client()));
+-- request_files: both upload as themselves; the client can remove only what the client sent, and none of it in a
+-- team_only package
+create policy request_files_select on public.request_files for select to authenticated
+  using ((select is_team()) or ((select is_client()) and exists (select 1 from public.requests r where r.id = request_files.request_id and not r.team_only)));
 create policy request_files_insert on public.request_files for insert to authenticated
-  with check (side = (select public.side()) and ((select is_team()) or (select is_client())));
+  with check (side = (select public.side()) and ((select is_team())
+    or ((select is_client()) and exists (select 1 from public.requests r where r.id = request_files.request_id and not r.team_only))));
 create policy request_files_delete on public.request_files for delete to authenticated
-  using ((select is_team()) or ((select is_client()) and side = 'cliente'));
+  using ((select is_team()) or ((select is_client()) and side = 'cliente'
+    and exists (select 1 from public.requests r where r.id = request_files.request_id and not r.team_only)));
 
 -- request_notes: the same, and each side edits only what it wrote (the team edits any)
-create policy request_notes_select on public.request_notes for select to authenticated using ((select is_team()) or (select is_client()));
+create policy request_notes_select on public.request_notes for select to authenticated
+  using ((select is_team()) or ((select is_client()) and exists (select 1 from public.requests r where r.id = request_notes.request_id and not r.team_only)));
 create policy request_notes_insert on public.request_notes for insert to authenticated
-  with check (side = (select public.side()) and ((select is_team()) or (select is_client())));
+  with check (side = (select public.side()) and ((select is_team())
+    or ((select is_client()) and exists (select 1 from public.requests r where r.id = request_notes.request_id and not r.team_only))));
 create policy request_notes_update on public.request_notes for update to authenticated
-  using ((select is_team()) or ((select is_client()) and side = 'cliente'))
-  with check ((select is_team()) or ((select is_client()) and side = 'cliente'));
+  using ((select is_team()) or ((select is_client()) and side = 'cliente'
+    and exists (select 1 from public.requests r where r.id = request_notes.request_id and not r.team_only)))
+  with check ((select is_team()) or ((select is_client()) and side = 'cliente'
+    and exists (select 1 from public.requests r where r.id = request_notes.request_id and not r.team_only)));
 create policy request_notes_delete on public.request_notes for delete to authenticated
-  using ((select is_team()) or ((select is_client()) and side = 'cliente'));
+  using ((select is_team()) or ((select is_client()) and side = 'cliente'
+    and exists (select 1 from public.requests r where r.id = request_notes.request_id and not r.team_only)));
 
 -- the team's reading of the client's answers, tasks, open questions, round notes, deliveries, studio jobs, 3D sets, and
 -- the Galeria's groups, Soul IDs, recipes and the cards' etiquetas: team only, the client gets no rows and cannot write
@@ -648,12 +660,12 @@ begin
   update public.rounds set confirmed_at = now(), confirmed_by = left(coalesce(nullif(trim(p_who), ''), 'Cliente'), 60) where id = p_round;
 end $$;
 
--- The link or remark on a request: the only column of requests the client may change.
+-- The link or remark on a request: the only column of requests the client may change (never on a team_only package).
 create or replace function public.set_request_note(p_request uuid, p_note text) returns void
 language plpgsql security definer set search_path = '' as $$
 begin
   if not (public.is_team() or public.is_client()) then raise exception 'not allowed'; end if;
-  update public.requests set note = left(coalesce(p_note, ''), 2000) where id = p_request;
+  update public.requests set note = left(coalesce(p_note, ''), 2000) where id = p_request and (public.is_team() or not team_only);
 end $$;
 
 -- A comment's text, changed by its own side (the client only on what it can see). The room shows the pencil only on

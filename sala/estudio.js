@@ -1889,7 +1889,7 @@ async function syncMention() {
   const line = (x) => (x.v ? { path: x.v.f.path, kind: "audio", label: pickLabel(x), drop: false }
     : { path: x.o.path, preview: x.o.preview_path || null, kind: isImg(x.o) ? "image" : "video", label: pickLabel(x), o: x.o, drop: x.drop, caption: x.o.caption || "" });
   // what this item was made from or uses comes first, then this scene's
-  const mine = (x) => !!it && (x.v ? x.v.i.id === it.id : x.o.item_id === it.id || (it.refs || []).some((id) => x.o.id === `file:${id}`));
+  const mine = (x) => !!it && (x.v ? x.v.i?.id === it.id : x.o.item_id === it.id || (it.refs || []).some((id) => x.o.id === `file:${id}`));
   const near = (x) => (mine(x) ? 0 : x.scenes.includes(here) ? 1 : 2);
   let parts, more = 0;
   if (tab === "all") {
@@ -3581,12 +3581,21 @@ function pickList(tab, here) {
   }
   if (tab === "gen") return S.options.filter((o) => isImg(o) && o.model !== BLOCKING).sort((a, b) => rank(sceneOf(a.item_id)) - rank(sceneOf(b.item_id)) || newest(a, b)).map((o) => opt(o, sceneGroup(sceneOf(o.item_id))));
   if (tab === "3d") return S.options.filter((o) => o.model === BLOCKING).sort((a, b) => rank(sceneOf(a.item_id)) - rank(sceneOf(b.item_id)) || newest(a, b)).map((o) => opt(o, sceneGroup(sceneOf(o.item_id))));
-  if (tab === "vid") return [...S.options.filter((o) => !isImg(o)).sort(newest).map((o) => opt(o)), ...S.files.filter((f) => f.mime.startsWith("video/")).map((f) => ({ o: fileTile(f, true), scenes: usedIn(f), group: "", drop: false }))];
-  if (tab === "voz") return S.items.flatMap((i) => (i.refs || []).map((id) => S.files.find((f) => f.id === id)).filter((f) => f?.mime.startsWith("audio/")).map((f) => ({ v: { f, i }, scenes: [i.scene], group: "", drop: false })));
-  // Material: each request's files in its order, then the references of the returns, item by item
-  const req = new Map(S.requests.map((r, i) => [r.id, [i, r.title]]));
-  const files = S.files.filter((f) => /^(image|video)\//.test(f.mime)).sort((a, b) => (req.get(a.request_id)?.[0] ?? 999) - (req.get(b.request_id)?.[0] ?? 999) || a.created_at.localeCompare(b.created_at))
-    .map((f) => ({ o: fileTile(f, video), scenes: usedIn(f), group: req.get(f.request_id)?.[1] || "Material", drop: false }));
+  // a file of the Materiais belongs to the scenes whose items use it, and to the scene of the team's own package it is in
+  // (a scene's materials, requests.team_only): those come first, this scene's before the others, then the client's
+  const reqBy = new Map(S.requests.map((r, i) => [r.id, { r, i }]));
+  const pkgOf = (f) => reqBy.get(f.request_id)?.r;
+  const fileScenes = (f) => { const n = pkgOf(f)?.team_only ? pkgOf(f).scene : null; return n == null ? usedIn(f) : [n, ...usedIn(f)]; };
+  const fileGroup = (f) => { const r = pkgOf(f); return !r ? "Material" : r.team_only ? `Material de cena · ${r.title}` : r.title; };
+  const fileRank = (f) => { const x = reqBy.get(f.request_id); return !x ? 9999 : x.r.team_only ? (x.r.scene === here ? -1 : x.r.scene ?? 998) : 1000 + x.i; };
+  const byPkg = (a, b) => fileRank(a) - fileRank(b) || a.created_at.localeCompare(b.created_at);
+  if (tab === "vid") return [...S.options.filter((o) => !isImg(o)).sort(newest).map((o) => opt(o)), ...S.files.filter((f) => f.mime.startsWith("video/")).sort(byPkg).map((f) => ({ o: fileTile(f, true), scenes: fileScenes(f), group: "", drop: false }))];
+  // Vozes: a scene's own voices (its materials) first, then the takes the client sent with the casting (the items' refs)
+  if (tab === "voz") return [...S.files.filter((f) => f.mime.startsWith("audio/") && pkgOf(f)?.team_only).sort(byPkg).map((f) => ({ v: { f, i: null }, scenes: fileScenes(f), group: fileGroup(f), drop: false })),
+    ...S.items.flatMap((i) => (i.refs || []).map((id) => S.files.find((f) => f.id === id)).filter((f) => f?.mime.startsWith("audio/")).map((f) => ({ v: { f, i }, scenes: [i.scene], group: "", drop: false })))];
+  // Material: each request's files in its order (the scenes' own first), then the references of the returns, item by item
+  const files = S.files.filter((f) => /^(image|video)\//.test(f.mime)).sort(byPkg)
+    .map((f) => ({ o: fileTile(f, video), scenes: fileScenes(f), group: fileGroup(f), drop: false }));
   const refs = (S.wkRefs || []).filter((x) => x.kind === "image" && x.path).sort((a, b) => rank(sceneOf(a.item_id)) - rank(sceneOf(b.item_id)))
     .map((x) => ({ o: pickOf(`ref:${x.id}`), scenes: [sceneOf(x.item_id)], group: `Retorno · ${ctx.itemOf(x.item_id)?.title || ""}`, drop: false }));
   return [...files, ...refs].filter((x) => x.o);
@@ -3613,7 +3622,7 @@ async function syncPicker() {
   if (!E.pick || !E.root) return;
   const on = (path) => E.refs.some((r) => r.path === path);
   const tile = (x) => `<button class="est-pick-th ${on(x.o.path) ? "on" : ""} ${x.drop ? "drop" : ""}" data-k="ref-add" data-id="${esc(x.o.id)}" title="${esc(label(x))}${x.o.caption ? ` · ${esc(x.o.caption)}` : ""}${x.drop ? " · descartada (✕)" : ""}">${tileMedia(x.o)}<span>${esc(label(x))}</span></button>`;
-  const voice = ({ f, i }) => `<div class="est-pick-th est-pick-aud ${on(f.path) ? "on" : ""}"><button class="est-wave" data-k="ref-voice" data-id="${f.id}" data-item="${i.id}" title="Usar a voz ${esc(voiceName(f, i))}">${ICONS.wave}</button>
+  const voice = ({ f, i }) => `<div class="est-pick-th est-pick-aud ${on(f.path) ? "on" : ""}"><button class="est-wave" data-k="ref-voice" data-id="${f.id}" data-item="${i?.id || ""}" title="Usar a voz ${esc(voiceName(f, i))}">${ICONS.wave}</button>
     <span><button class="est-play" data-k="play" data-path="${esc(f.path)}" aria-label="Ouvir ${esc(voiceName(f, i))}">${E.playing === f.path ? "■" : "▶"}</button>${esc(voiceName(f, i))}</span></div>`;
   const groups = [];
   for (const x of shown) { const g = groups.at(-1); if (g && g[0] === x.group) g[1].push(x); else groups.push([x.group, [x]]); }

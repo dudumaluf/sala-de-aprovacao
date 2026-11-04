@@ -1174,8 +1174,8 @@ function sidebar() {
   const rid = S.page.round || defaultRound();
   const r = roundOf(rid);
   const scenes = r ? scenesOf(r.id) : [];
-  const pending = S.requests.filter((x) => !reqState(x)[0]).length;
-  const newFiles = TEAM ? S.requests.filter((x) => reqState(x)[0] === "sent").length : pending;
+  const pending = askedReqs().filter((x) => !reqState(x)[0]).length;
+  const newFiles = TEAM ? askedReqs().filter((x) => reqState(x)[0] === "sent").length : pending;
   return `<aside class="side ${S.navOpen ? "open" : ""}">
     <div class="side-top">${sideToggle()}<a class="logo" href="#/">${esc(PROJECT.logo)}</a><p class="room">${TEAM ? "Sala de produção" : "Sala de aprovação"}</p></div>
     <nav class="side-scroll" data-keep="side" aria-label="Navegação">
@@ -1814,7 +1814,7 @@ function overviewPage(r) {
   const shown = (it) => kindOk(it) && fits(it);
   const images = all.reduce((a, it) => a + keptOf(it).length, 0);
   const ready = all.filter((i) => i.status === "ready" || i.visible).length;
-  const owed = S.requests.filter((q) => !q.done && (!filesOf(q.id).length && !q.note.trim() || /falta/i.test(q.note || ""))).length;
+  const owed = askedReqs().filter((q) => !q.done && (!filesOf(q.id).length && !q.note.trim() || /falta/i.test(q.note || ""))).length;
   S.ovList = [];
   const itemLine = (it, right) => {
     const [cls, label] = stageOf(it);
@@ -2770,17 +2770,24 @@ function matFilters(where) {
   return { btn, chips, on: on.length };
 }
 
+// the packages asked of the client, and the team's own (team_only, atualizar-2026-11l.sql): a scene's materials, in
+// scene order, that the client never receives
+const askedReqs = () => S.requests.filter((r) => !r.team_only);
+const sceneReqs = () => S.requests.filter((r) => r.team_only).sort((a, b) => (a.scene ?? 999) - (b.scene ?? 999) || a.sort - b.sort);
 function materialsPage() {
   const req = S.page.req && S.requests.find((x) => x.id === S.page.req);
   if (req) return packagePage(req);
-  const sent = S.requests.filter((r) => reqState(r)[0]).length;
-  const list = S.requests.filter((r) => matStateOk(r) && (S.matType === "all" || entriesOf(r.id).some((e) => kindOfEntry(e) === S.matType)));
+  const asked = askedReqs(), sent = asked.filter((r) => reqState(r)[0]).length;
+  const typeOk = (r) => S.matType === "all" || entriesOf(r.id).some((e) => kindOfEntry(e) === S.matType);
+  const list = asked.filter((r) => matStateOk(r) && typeOk(r)), mine = TEAM ? sceneReqs().filter(typeOk) : [];
   const f = matFilters("page");
   const sub = TEAM ? `O que pedimos ${AO_CL} e o que já chegou` : "Arraste os arquivos no card do pacote, ou abra o pacote e use ＋ Adicionar";
-  const right = progress(sent, S.requests.length, `${sent} de ${S.requests.length} enviados`) + f.btn +
-    (TEAM && (S.files.length || S.notes.length) ? `<button class="btn hico" data-act="all-zip" title="Baixar todos os materiais (.zip)" aria-label="Baixar todos os materiais">${ICON.down}</button>` : "");
+  const right = progress(sent, asked.length, `${sent} de ${asked.length} enviados`) + f.btn +
+    (TEAM && (S.files.length || S.notes.length) ? `<button class="btn hico" data-act="all-zip" title="Baixar todos os materiais ${DA_CL} (.zip)" aria-label="Baixar todos os materiais">${ICON.down}</button>` : "");
+  // the scenes' own packages under the client's: everything a scene is made of, for the team only
+  const scenes = mine.length ? `<p class="side-label mat-scenes">Materiais de cena <small>tudo de cada cena · só a equipe vê</small></p><div class="hgrid flow mat-cards">${mine.map(matCard).join("")}</div>` : "";
   return head(TEAM ? `Materiais ${DA_CL}` : "O que precisamos de vocês", sub, right, "Materiais") +
-    `<div class="main-body mat-body" data-keep="main">${f.chips}<div class="hgrid flow mat-cards">${list.map(matCard).join("")}${TEAM && !f.on ? matNewCard() : ""}</div>${list.length ? "" : '<p class="none">Nenhum pacote com esses filtros.</p>'}</div>`;
+    `<div class="main-body mat-body" data-keep="main">${f.chips}<div class="hgrid flow mat-cards">${list.map(matCard).join("")}${TEAM && !f.on ? matNewCard() : ""}</div>${list.length ? "" : '<p class="none">Nenhum pacote com esses filtros.</p>'}${scenes}</div>`;
 }
 // a package as the room's card: the picture on top (its last photos, its video, its voices, its first text), what it has
 // as small counts over it, its state as the title's dot; files dropped on it go in
@@ -2790,8 +2797,8 @@ function matCard(r) {
   const tags = counts.length ? `<span class="hero-tags">${counts.map(([k, n]) => `<span class="hero-talk" title="${plural(n, MAT_ONE[k], MAT_KINDS[k].toLowerCase())}">${MAT_ICO[k]}${n}</span>`).join("")}</span>` : "";
   const up = S.uploading[r.id];
   return `<article class="hcard mat-card" data-drop-req="${r.id}">
-    <a class="hero mat-hero ${es.length ? "" : "hero-empty"}" href="#/materiais/${r.id}" title="${esc(r.detail || r.title)}" aria-label="Abrir ${esc(r.title)}">${es.length ? matCover(es) : `<span class="mat-empty">${ICON.up}<span>Arraste aqui</span></span>`}${tags}${cls ? "" : '<span class="mat-falta">Falta</span>'}${up ? `<span class="mat-up">${esc(up)}</span>` : ""}</a>
-    <footer class="hcard-foot"><span class="t"><i class="ovx-dot ${cls === "approved" ? "approved" : cls === "sent" ? "client" : "pending"}" title="${label}"></i>${esc(r.title)}</span></footer>
+    <a class="hero mat-hero ${es.length ? "" : "hero-empty"}" href="#/materiais/${r.id}" title="${esc(r.detail || r.title)}" aria-label="Abrir ${esc(r.title)}">${es.length ? matCover(es) : `<span class="mat-empty">${ICON.up}<span>Arraste aqui</span></span>`}${tags}${cls || r.team_only ? "" : '<span class="mat-falta">Falta</span>'}${up ? `<span class="mat-up">${esc(up)}</span>` : ""}</a>
+    <footer class="hcard-foot"><span class="t">${r.team_only ? "" : `<i class="ovx-dot ${cls === "approved" ? "approved" : cls === "sent" ? "client" : "pending"}" title="${label}"></i>`}${esc(r.title)}</span></footer>
   </article>`;
 }
 function matCover(es) {
@@ -2822,11 +2829,12 @@ const matNewCard = () => `<article class="hcard mat-card mat-new">${S.matNew
 // per kind it has, and ＋ Adicionar for files, a link or a text
 function packagePage(r) {
   const es = entriesOf(r.id), counts = matCounts(r.id), tab = matTabOf(r.id), shown = matShown(r.id, tab);
-  const k = S.requests.indexOf(r), prev = S.requests[k - 1], next = S.requests[k + 1];
+  // ‹ › walk the client's packages, or the scenes' own (team_only) in scene order
+  const row = r.team_only ? sceneReqs() : askedReqs(), k = row.indexOf(r), prev = row[k - 1], next = row[k + 1];
   const arrow = (x, d, ico, t) => x ? `<a class="btn hico" data-step="${d}" href="#/materiais/${x.id}" title="${t} (${d < 0 ? "←" : "→"}): ${esc(x.title)}" aria-label="${t}">${ico}</a>` : `<span class="btn hico off" aria-hidden="true">${ico}</span>`;
   const stepper = `<span class="hgroup"><a class="btn hico" href="#/materiais" title="Todos os pacotes" aria-label="Todos os pacotes">${ICON.grid}</a>${arrow(prev, -1, ICON.prev, "Pacote anterior")}${arrow(next, 1, ICON.next, "Próximo pacote")}</span>`;
   const f = matFilters("package");
-  const team = TEAM ? `<button class="btn hico ${r.done ? "on" : ""}" data-act="req-done" data-id="${r.id}" aria-pressed="${r.done}" title="${r.done ? "Recebido: clique para desmarcar" : "Marcar como recebido"}" aria-label="Recebido">${ICO.keep}</button>`
+  const team = TEAM ? (r.team_only ? "" : `<button class="btn hico ${r.done ? "on" : ""}" data-act="req-done" data-id="${r.id}" aria-pressed="${r.done}" title="${r.done ? "Recebido: clique para desmarcar" : "Marcar como recebido"}" aria-label="Recebido">${ICO.keep}</button>`)
     + (es.length ? `<button class="btn hico" data-act="req-zip" data-id="${r.id}" title="Baixar o pacote (.zip)" aria-label="Baixar o pacote">${ICON.down}</button>` : "")
     + `<button class="btn hico" data-act="req-del" data-id="${r.id}" title="Excluir o pacote" aria-label="Excluir o pacote">${ICO.trash}</button>` : "";
   const add = `<span class="mat-addw"><button class="btn primary mat-addb" data-act="mat-add" aria-haspopup="dialog" aria-expanded="${!!S.matAdd}">${ICON.plus}Adicionar</button>${S.matAdd ? matAddPop(r) : ""}</span>`;
@@ -2839,7 +2847,8 @@ function packagePage(r) {
     : !shown.length ? '<p class="none">Nada com esse filtro.</p>'
     : tab === "all" ? Object.keys(MAT_KINDS).filter((kk) => counts[kk]).map((kk) => sec(kk, shown.filter((e) => kindOfEntry(e) === kk))).join("")
     : `<div class="mat-tiles">${shown.map(matTile).join("")}</div>`;
-  const brief = r.detail ? `<span class="h1-brief" title="${esc(r.detail)}">${esc(r.detail)}</span>` : "";
+  const say = r.team_only ? [r.detail, "só a equipe vê"].filter(Boolean).join(" · ") : r.detail;
+  const brief = say ? `<span class="h1-brief" title="${esc(say)}">${esc(say)}</span>` : "";
   return head(`${esc(r.title)}${brief}`, "", `${f.btn}${team}${stepper}${add}`, "Materiais") +
     `<div class="main-body ov-body mat-body" data-keep="main" data-drop-req="${r.id}">${es.length ? tabs : ""}${f.chips}${up}${body}</div>`;
 }
@@ -3705,7 +3714,7 @@ const ACTS = {
   "mat-open"(el) { matOpen(el.dataset.id); },
   "file-download"(el) { const f = S.files.find((x) => x.id === el.dataset.id); if (f) openFile(f.path, f.name, true); },
   "req-zip"(el) { const r = S.requests.find((x) => x.id === el.dataset.id); if (r) zipDownload(zipPairs(r), r.title); },
-  "all-zip"() { zipDownload(S.requests.flatMap((r) => zipPairs(r, r.title)), `Materiais ${DA_CL}`); },
+  "all-zip"() { zipDownload(askedReqs().flatMap((r) => zipPairs(r, r.title)), `Materiais ${DA_CL}`); },
   async "file-del"(el) {
     const f = S.files.find((x) => x.id === el.dataset.id);
     if (!f || !confirm(`Remover “${f.name}”?`)) return;

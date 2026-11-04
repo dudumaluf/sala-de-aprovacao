@@ -2228,6 +2228,10 @@ button.tc-chip:hover { background: var(--amber); color: var(--ink); }
 /* ---------- Materiais: one card per package (the Visão geral's card), a package on its own page, and Ver grande ---------- */
 .mat-body .fchips { margin: 16px 0 0; }
 .mat-cards { padding-top: 22px; }
+/* the scenes' own packages (team only) under the client's, with their own heading */
+.mat-scenes { margin: 40px 0 0; padding: 0; }
+.mat-scenes small { margin-left: 8px; font-weight: 500; letter-spacing: 0.04em; text-transform: none; }
+.mat-scenes + .mat-cards { padding-top: 12px; }
 .mat-hero { display: block; color: var(--text); }
 a.mat-hero:hover { box-shadow: 0 0 0 1px var(--line2); }
 .mat-card.over .hero, a.mat-hero:focus-visible { box-shadow: 0 0 0 2px var(--accent); outline: none; }
