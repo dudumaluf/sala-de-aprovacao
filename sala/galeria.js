@@ -333,10 +333,10 @@ function openCard(e) {
   closeLayers();
   if (e.f) {
     // a file the client sent opens in Materiais, in its own viewer
-    const { S } = C, i = S.files.filter((x) => x.request_id === e.f.request_id).findIndex((x) => x.id === e.f.id);
-    S.matFilter = "all";
-    S.lightbox = { req: e.f.request_id, i: Math.max(0, i) };
-    if (location.hash === "#/materiais") C.render(true); else location.hash = "#/materiais";
+    const { S } = C, ids = S.files.filter((x) => x.request_id === e.f.request_id).map((x) => x.id);
+    S.lightbox = { req: e.f.request_id, ids, i: Math.max(0, ids.indexOf(e.f.id)) };
+    const h = `#/materiais/${e.f.request_id}`;
+    if (location.hash === h) C.render(true); else location.hash = h;
     return;
   }
   const it = e.it;

@@ -121,7 +121,7 @@ create table public.requests (
   id uuid primary key default gen_random_uuid(),
   title text not null check (length(title) between 1 and 120),
   detail text not null default '',
-  note text not null default '',       -- a link or a remark; the client writes it through set_request_note()
+  note text not null default '',       -- a link or a remark (older rooms; links and texts now live in request_notes)
   done boolean not null default false,
   sort integer not null default 0,
   created_at timestamptz not null default now()
@@ -139,6 +139,20 @@ create table public.request_files (
   uploaded_by text not null default '',
   side text not null check (side in ('time', 'cliente')),
   created_at timestamptz not null default now()
+);
+
+-- a link or a text in a package (a request): both sides add them as themselves, like the files
+create table public.request_notes (
+  id uuid primary key default gen_random_uuid(),
+  request_id uuid not null references public.requests (id) on delete cascade,
+  kind text not null check (kind in ('link', 'text')),
+  title text not null default '' check (length(title) <= 200),
+  url text not null default '' check (length(url) <= 2000),
+  body text not null default '' check (length(body) <= 8000),
+  added_by text not null default '',
+  side text not null check (side in ('time', 'cliente')),
+  created_at timestamptz not null default now(),
+  check ((kind = 'link' and url <> '') or (kind = 'text' and body <> ''))
 );
 
 -- ---------- the client's answer, as the team reads it (team only) ----------
@@ -398,6 +412,7 @@ create index options_stack_idx on public.options (stack);
 create index comments_item_idx on public.comments (item_id, created_at);
 create index comments_option_idx on public.comments (option_id);
 create index request_files_req_idx on public.request_files (request_id);
+create index request_notes_req_idx on public.request_notes (request_id);
 create index item_feedback_item on public.item_feedback (item_id);
 create index feedback_refs_item on public.feedback_refs (item_id);
 create index tasks_item on public.tasks (item_id);
@@ -462,6 +477,7 @@ alter table public.option_reviews enable row level security;
 alter table public.comments enable row level security;
 alter table public.requests enable row level security;
 alter table public.request_files enable row level security;
+alter table public.request_notes enable row level security;
 alter table public.item_feedback enable row level security;
 alter table public.feedback_refs enable row level security;
 alter table public.tasks enable row level security;
@@ -527,6 +543,16 @@ create policy request_files_select on public.request_files for select to authent
 create policy request_files_insert on public.request_files for insert to authenticated
   with check (side = (select public.side()) and ((select is_team()) or (select is_client())));
 create policy request_files_delete on public.request_files for delete to authenticated
+  using ((select is_team()) or ((select is_client()) and side = 'cliente'));
+
+-- request_notes: the same, and each side edits only what it wrote (the team edits any)
+create policy request_notes_select on public.request_notes for select to authenticated using ((select is_team()) or (select is_client()));
+create policy request_notes_insert on public.request_notes for insert to authenticated
+  with check (side = (select public.side()) and ((select is_team()) or (select is_client())));
+create policy request_notes_update on public.request_notes for update to authenticated
+  using ((select is_team()) or ((select is_client()) and side = 'cliente'))
+  with check ((select is_team()) or ((select is_client()) and side = 'cliente'));
+create policy request_notes_delete on public.request_notes for delete to authenticated
   using ((select is_team()) or ((select is_client()) and side = 'cliente'));
 
 -- the team's reading of the client's answers, tasks, open questions, round notes, deliveries, studio jobs, 3D sets, and

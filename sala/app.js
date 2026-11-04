@@ -97,7 +97,9 @@ const S = {
   ret: { resolved: false, said: {}, call: {} }, drawerTab: "comentarios",
   page: { kind: "round", round: null, scene: null, item: null }, pageKey: "",
   me: store.get(`sala-name-${SIDE}`), drawer: null, mode: {}, uploading: {}, lightbox: null, lbx: null, modal: null,
-  navOpen: false, pending: false, flash: null, matFilter: "all",
+  navOpen: false, pending: false, flash: null,
+  // Materiais: the page's filters (state, kind), a package's tab and who-sent filter, the ＋ Adicionar popover, the new package card
+  matState: "all", matType: "all", matTab: "all", matSide: "all", matAdd: null, matNew: false, notes: [], notesOn: false,
   ov: { kinds: new Set(), curate: false, dropped: store.get("sala-dropped") === "1", view: store.get("sala-ov-view2") === "grid" ? "grid" : "hero" }, ovList: [], ovSel: (() => { try { return JSON.parse(store.get(`sala-ovsel-${SIDE}`) || "{}") || {}; } catch { return {}; } })(),
   more: null, dl: false, filt: false, sheet: {}, wipe: {}, sideOff: store.get("sala-side-off") === "1", scenesOff: store.get("sala-scenes-off") === "1", infoOff: store.get("sala-info-off") === "1",
   navPages: (() => { try { return JSON.parse(store.get("sala-nav-pages") || "{}"); } catch { return {}; } })(),
@@ -529,16 +531,19 @@ async function load(force = false) {
   // atualizar-2026-11e.sql) just goes without them
   // (and the marks on images, atualizar-2026-11f.sql, likewise)
   const labs = TEAM ? [q("labels", "sort"), q("item_labels", "added_at"), q("option_labels", "added_at")] : [];
-  const got = await Promise.all([q("rounds", "sort"), q("items", "sort"), q("options", "sort"), q("comments", "created_at"), q("requests", "sort"), q("request_files", "created_at"), q("annotations", "created_at"), ...team, ...labs]);
+  // (and a package's links and texts, atualizar-2026-11g.sql: without them its old note shows)
+  const got = await Promise.all([q("rounds", "sort"), q("items", "sort"), q("options", "sort"), q("comments", "created_at"), q("requests", "sort"), q("request_files", "created_at"), q("annotations", "created_at"), ...team, ...labs, q("request_notes", "created_at")]);
+  const nres = got.pop();
   const res = got.slice(0, got.length - labs.length), lab = got.slice(res.length);
   const bad = res.find((r) => r.error);
   if (bad) throw bad.error;
-  const labelsOn = TEAM && !lab[0].error && !lab[1].error, imgMarks = labelsOn && !lab[2].error;
-  const sig = JSON.stringify([...res, ...(labelsOn ? lab.slice(0, 2) : []), ...(imgMarks ? [lab[2]] : [])].map((r) => r.data));
+  const labelsOn = TEAM && !lab[0].error && !lab[1].error, imgMarks = labelsOn && !lab[2].error, notesOn = !nres.error;
+  const sig = JSON.stringify([...res, ...(labelsOn ? lab.slice(0, 2) : []), ...(imgMarks ? [lab[2]] : []), ...(notesOn ? [nres] : [])].map((r) => r.data));
   if (!force && sig === S.sig) return false;
   const [rounds, items, options, comments, requests, files, annotations, reviews = [], feedback = [], wkRefs = [], tasks = [], pendencias = [], roundNotes = [], envio = [], bshots = []] = res.map((r) => r.data);
   Object.assign(S, { rounds, items, options, comments, requests, files, annotations, reviews, feedback, wkRefs, tasks, pendencias, roundNotes, envio, bshots,
-    labels: labelsOn ? lab[0].data : [], itemLabels: labelsOn ? lab[1].data : [], optLabels: imgMarks ? lab[2].data : [], labelsOn, imgMarks, sig });
+    labels: labelsOn ? lab[0].data : [], itemLabels: labelsOn ? lab[1].data : [], optLabels: imgMarks ? lab[2].data : [], labelsOn, imgMarks,
+    notes: notesOn ? nres.data : [], notesOn, sig });
   // the etiquetas marked padrão filter the room as it opens: once per tab, so a filter someone took off stays off
   if (labelsOn && !S.labelInit) { S.labelInit = true; if (!S.labelF.size) for (const l of S.labels) if (l.padrao) S.labelF.add(l.id); }
   // an etiqueta someone deleted leaves the filter, a card someone deleted leaves the selection
@@ -566,14 +571,14 @@ function defaultRound() {
   return clientRounds().at(-1)?.id || null;
 }
 
-// ---------- routing: #/r/a1 · #/r/a1/visao · #/r/a1/s/7[/itemId] · #/r/a1/retorno[/itemId] · #/apresentacao · #/materiais · #/galeria ----------
+// ---------- routing: #/r/a1 · #/r/a1/visao · #/r/a1/s/7[/itemId] · #/r/a1/retorno[/itemId] · #/apresentacao · #/materiais[/requestId] · #/galeria ----------
 // a direct link adds ?v=2 (a video's version), &t=42 (its second), &o=<option> (an image in Ver grande, in its version),
-// &c=<comment> (that comment, lit in the panel): see applyLink
+// &c=<comment> (that comment, lit in the panel), and in Materiais ?f=<file, link or text> (it, big): see applyLink
 function resolvePage() {
   const [path, qs = ""] = location.hash.replace(/^#\/?/, "").split("?");
   const h = path.split("/").filter(Boolean);
   let p;
-  if (h[0] === "materiais") p = { kind: "materiais" };
+  if (h[0] === "materiais") p = { kind: "materiais", req: h[1] || null };
   else if (h[0] === "aprovado" && TEAM) p = { kind: "aprovado", round: S.page.round };
   else if (h[0] === "galeria" && TEAM) p = { kind: "galeria", round: S.page.round };
   else if (h[0] === "apresentacao" && TEAM) p = { kind: "apresentacao", round: S.page.round };
@@ -596,6 +601,12 @@ function resolvePage() {
 // the data). The card is the link's, else the round's one video (the animatic's page) ----------
 function applyLink(p) {
   const q = p.q || {};
+  // Materiais: ?f= opens that file, link or text big, among everything in its package
+  if (p.kind === "materiais") {
+    const e = q.f ? entryOf(q.f) : null;
+    if (e) { const ids = entriesOf(e.request_id).map((x) => x.id); S.lightbox = { req: e.request_id, ids, i: ids.indexOf(e.id) }; }
+    return;
+  }
   if (!q.v && !q.t && !q.o && !q.c) return;
   const opt = q.o ? S.options.find((x) => x.id === q.o) : null;
   const vids = (rid) => itemsOf(rid).filter((i) => i.kind === "video" && (TEAM || i.visible));
@@ -637,13 +648,18 @@ function seekNow(n = 0) {
   const go = () => { v.pause(); v.currentTime = Math.min(s.t, (v.duration || s.t + 1) - 0.05); tcSync(v); };
   if (v.readyState >= 1) go(); else v.addEventListener("loadedmetadata", go, { once: true });
 }
+// this room's address, or the client's room as a folder (…/aprovacao/), the way its links have always gone out
+function roomBase(client) {
+  const cl = CLIENT_URL || new URL("../aprovacao/", location.href).href;
+  return client ? (/\/$|\.html?$/.test(cl) ? cl : `${cl}/`) : location.href.split("#")[0];
+}
+// a package in Materiais, or one thing in it (?f=), in this room or the client's
+const matLinkTo = (req, f = null, client = false) => `${roomBase(client)}#/materiais/${req}${f ? `?f=${f}` : ""}`;
 // a link to a card, an image or a video in a version and at a second, in this room or the client's
 function linkTo({ item, opt = null, v = null, t = null, c = null, client = false }) {
   const it = itemOf(item);
   if (!it) return "";
-  // the client's room as a folder (…/aprovacao/), the way its links have always gone out
-  const cl = CLIENT_URL || new URL("../aprovacao/", location.href).href;
-  const base = client ? (/\/$|\.html?$/.test(cl) ? cl : `${cl}/`) : location.href.split("#")[0];
+  const base = roomBase(client);
   const q = new URLSearchParams();
   if (opt) q.set("o", opt);
   if (v) q.set("v", v);
@@ -655,10 +671,10 @@ function linkTo({ item, opt = null, v = null, t = null, c = null, client = false
 function onRoute() {
   resolvePage();
   // the team opens a card on its own (its own page); the client still scrolls to it on the page and flashes it
-  const key = `${S.page.kind}/${S.page.round}/${S.page.scene}${TEAM ? `/${S.page.item || ""}` : ""}`;
+  const key = `${S.page.kind}/${S.page.round}/${S.page.scene}${TEAM ? `/${S.page.item || ""}` : ""}${S.page.req ? `/${S.page.req}` : ""}`;
   const changed = key !== S.pageKey;
   S.pageKey = key;
-  if (changed) { S.drawer = null; S.navOpen = false; }
+  if (changed) { S.drawer = null; S.navOpen = false; S.matAdd = null; S.matNew = false; }
   if (S.page.kind === "scene" && S.page.tab && ITEM_TABS[S.page.tab]) { S.itemTab = S.page.tab; store.set("sala-item-tab", S.itemTab); }
   // an item link to the Retorno opens its request in the panel
   if (S.page.kind === "retorno" && S.page.item) { S.drawer = S.page.item; S.drawerTab = "pedido"; }
@@ -1039,7 +1055,7 @@ function sceneDot(list) {
 }
 function reqState(r) {
   if (r.done) return ["approved", "Recebido"];
-  if (filesOf(r.id).length || r.note.trim()) return ["sent", "Enviado"];
+  if (filesOf(r.id).length || notesOf(r.id).length) return ["sent", "Enviado"];
   return ["", "Pendente"];
 }
 
@@ -2637,55 +2653,171 @@ function itemRefs(r, it) {
   return `<div class="item-refs">${html}${matHtml}${html || matHtml ? "" : '<p class="none">Nenhuma referência neste item.</p>'}</div>`;
 }
 
-// what the client sends us; the team can narrow it to one kind of file, or to what is still missing
-const FILE_KINDS = { foto: "Fotos", voz: "Vozes", video: "Vídeos" };
+// ---------- Materiais: what we ask the client for, in packages (requests). The page is one card per package, like the
+// Visão geral; a package opens on its own page, a tab per kind (photos, voices, videos, links, texts, other files), and
+// Ver grande walks everything in it, one at a time. Both sides add files, links and texts as themselves ----------
+const MAT_KINDS = { foto: "Fotos", voz: "Vozes", video: "Vídeos", link: "Links", text: "Textos", outro: "Arquivos" };
+const MAT_ONE = { foto: "foto", voz: "voz", video: "vídeo", link: "link", text: "texto", outro: "arquivo" };
+const MAT_ICO = {
+  foto: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5"/><circle cx="6" cy="6.6" r="1.2"/><path d="M2.6 11.6 6.4 8.2l2.9 2.5 1.9-1.4 2.2 1.9" stroke-linejoin="round"/></svg>',
+  voz: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><rect x="6" y="2" width="4" height="8" rx="2"/><path d="M3.6 8a4.4 4.4 0 0 0 8.8 0M8 12.4V14"/></svg>',
+  video: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="M6.8 6.2v3.6L9.9 8z" fill="currentColor" stroke="none"/></svg>',
+  link: LINK_ICO,
+  text: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M3.5 2.5h6l3 3v8h-9z" stroke-linejoin="round"/><path d="M5.6 7.6h4.8M5.6 10h4.8M5.6 12.4h2.8"/></svg>',
+  outro: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M3.5 2.5h6l3 3v8h-9z" stroke-linejoin="round"/><path d="M9.5 2.5v3h3" stroke-linejoin="round"/></svg>',
+};
 const fileKind = (f) => (f.mime.startsWith("audio/") ? "voz" : f.mime.startsWith("video/") ? "video" : f.preview_path || f.mime.startsWith("image/") ? "foto" : "outro");
-const filesShown = (id) => (FILE_KINDS[S.matFilter] ? filesOf(id).filter((f) => fileKind(f) === S.matFilter) : filesOf(id));
+const isNote = (e) => e.kind === "link" || e.kind === "text";
+const kindOfEntry = (e) => (isNote(e) ? e.kind : fileKind(e));
+const safeUrl = (u) => (/^https?:\/\/\S+$/i.test((u || "").trim()) ? u.trim() : "");
+const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ""); } catch { return u; } };
+const dayOf = (ts) => fmtShort(new Date(ts).toLocaleDateString("sv-SE", { timeZone: TZ }));
+const fmtSize = (b) => (!b ? "" : b >= 1e6 ? `${(b / 1e6).toFixed(1).replace(".", ",")} MB` : `${Math.max(1, Math.round(b / 1e3))} KB`);
+// a package's links and texts; a database without request_notes (atualizar-2026-11g.sql not run) shows the package's
+// old note as its one text, read-only
+function notesOf(id) {
+  if (S.notesOn) return S.notes.filter((n) => n.request_id === id);
+  const r = S.requests.find((x) => x.id === id), t = r?.note?.trim();
+  if (!t) return [];
+  const url = safeUrl(t);
+  return [{ id: `note-${id}`, request_id: id, kind: url ? "link" : "text", url, title: "", body: url ? "" : t, side: "time", added_by: "", created_at: r.created_at, old: true }];
+}
+// everything in a package, in the tabs' order, each kind in the order it arrived
+function entriesOf(id) {
+  const order = Object.keys(MAT_KINDS);
+  return [...filesOf(id), ...notesOf(id)].map((e, i) => [e, i])
+    .sort(([a, i], [b, j]) => order.indexOf(kindOfEntry(a)) - order.indexOf(kindOfEntry(b)) || String(a.created_at).localeCompare(String(b.created_at)) || i - j)
+    .map(([e]) => e);
+}
+const entryOf = (id) => S.files.find((f) => f.id === id) || S.notes.find((n) => n.id === id) || (String(id).startsWith("note-") ? notesOf(String(id).slice(5))[0] : null);
+const entryWho = (e) => (isNote(e) ? e.added_by : e.uploaded_by) || "";
+const canChange = (e) => !e.old && (TEAM || e.side === "cliente");
+// the filters: the page's (what state a package is in, what kind of thing it has) and a package's (who sent it)
+const matSideOk = (e) => S.matSide === "all" || e.side === S.matSide;
+const matCounts = (id) => { const c = {}; for (const e of entriesOf(id).filter(matSideOk)) { const k = kindOfEntry(e); c[k] = (c[k] || 0) + 1; } return c; };
+// the tab a package opens on: the one picked, unless this package has nothing of that kind
+const matTabOf = (id) => (S.matTab !== "all" && matCounts(id)[S.matTab] ? S.matTab : "all");
+const matShown = (id, tab = matTabOf(id)) => entriesOf(id).filter((e) => matSideOk(e) && (tab === "all" || kindOfEntry(e) === tab));
+const MAT_STATE = { falta: "Faltando", sent: "Enviados", approved: "Recebidos" };
+const matStateOk = (r) => S.matState === "all" || reqState(r)[0] === (S.matState === "falta" ? "" : S.matState);
+function matFilters(where) {
+  const opt = (k, v, label, t = "") => `<button class="fopt ${S[k] === v ? "on" : ""}" data-act="mat-f" data-k="${k}" data-v="${v}" aria-pressed="${S[k] === v}"${t ? ` title="${t}"` : ""}>${label}</button>`;
+  const group = (t, body) => `<section class="filt-group"><p class="filt-label">${t}</p><div class="filt-opts">${body}</div></section>`;
+  const sideL = { cliente: TEAM ? CL : "Vocês", time: "Equipe" };
+  const groups = where === "page"
+    ? group("Situação", [["all", "Todos"], ...Object.entries(MAT_STATE)].map(([v, l]) => opt("matState", v, l)).join(""))
+      + group("Tipo", [["all", "Tudo"], ...Object.entries(MAT_KINDS)].map(([v, l]) => opt("matType", v, l, v === "all" ? "" : `Só os pacotes com ${l.toLowerCase()}`)).join(""))
+    : group("Quem mandou", [["all", "Todos"], ["cliente", sideL.cliente], ["time", sideL.time]].map(([v, l]) => opt("matSide", v, l)).join(""));
+  const on = (where === "page"
+    ? [S.matState !== "all" && ["matState", MAT_STATE[S.matState]], S.matType !== "all" && ["matType", `Com ${MAT_KINDS[S.matType].toLowerCase()}`]]
+    : [S.matSide !== "all" && ["matSide", `De ${sideL[S.matSide]}`]]).filter(Boolean);
+  const pop = S.filt ? `<div class="filt-pop" role="dialog" aria-label="Filtros">${groups}</div>` : "";
+  const btn = `<span class="fbar-bare fbar-head"><button class="btn hico ${on.length ? "on" : ""}" data-act="filt" aria-haspopup="dialog" aria-expanded="${!!S.filt}" title="Filtros: ${where === "page" ? "o que falta e o tipo de material" : "quem mandou"}" aria-label="Filtros">${ICO.funnel}${on.length ? `<b class="badge" aria-label="${plural(on.length, "filtro ligado", "filtros ligados")}">${on.length}</b>` : ""}</button>${pop}</span>`;
+  const chips = on.length ? `<div class="fchips">${on.map(([k, l]) => `<button class="fchip" data-act="mat-off" data-v="${k}" title="Tirar este filtro">${esc(l)}${ICO.drop}</button>`).join("")}${on.length > 1 ? '<button class="link fchips-clear" data-act="mat-off" data-v="all">Limpar</button>' : ""}</div>` : "";
+  return { btn, chips, on: on.length };
+}
+
 function materialsPage() {
+  const req = S.page.req && S.requests.find((x) => x.id === S.page.req);
+  if (req) return packagePage(req);
   const sent = S.requests.filter((r) => reqState(r)[0]).length;
-  const k = TEAM ? S.matFilter : "all";
-  const list = k === "all" ? S.requests : k === "falta" ? S.requests.filter((r) => !reqState(r)[0]) : S.requests.filter((r) => filesShown(r.id).length);
-  const count = (v) => (v === "falta" ? S.requests.filter((r) => !reqState(r)[0]).length : S.files.filter((f) => fileKind(f) === v).length);
-  const filter = TEAM ? `<div class="seg" role="group" aria-label="Filtrar materiais">${Object.entries({ all: "Tudo", ...FILE_KINDS, falta: "Faltando" }).map(([v, n]) =>
-    `<button data-act="mat-filter" data-v="${v}" class="${k === v ? "on" : ""}" aria-pressed="${k === v}">${n}${v === "all" ? "" : ` <small>${count(v)}</small>`}</button>`).join("")}</div>` : "";
-  const sub = TEAM ? `O que pedimos ${AO_CL} e o que já chegou` : "Arraste os arquivos para cada card ou use o botão Enviar";
-  const total = S.files.length;
-  const right = progress(sent, S.requests.length, `${sent} de ${S.requests.length} enviados`) +
-    (TEAM && total ? `<button class="btn" data-act="all-zip">Baixar ${FILE_KINDS[k] ? FILE_KINDS[k].toLowerCase() : "todos os materiais"} (.zip)</button>` : "");
+  const list = S.requests.filter((r) => matStateOk(r) && (S.matType === "all" || entriesOf(r.id).some((e) => kindOfEntry(e) === S.matType)));
+  const f = matFilters("page");
+  const sub = TEAM ? `O que pedimos ${AO_CL} e o que já chegou` : "Arraste os arquivos no card do pacote, ou abra o pacote e use ＋ Adicionar";
+  const right = progress(sent, S.requests.length, `${sent} de ${S.requests.length} enviados`) + f.btn +
+    (TEAM && (S.files.length || S.notes.length) ? `<button class="btn hico" data-act="all-zip" title="Baixar todos os materiais (.zip)" aria-label="Baixar todos os materiais">${ICON.down}</button>` : "");
   return head(TEAM ? `Materiais ${DA_CL}` : "O que precisamos de vocês", sub, right, "Materiais") +
-    `<div class="main-body ov-body" data-keep="main">${filter ? `<div class="ov-bar">${filter}</div>` : ""}<div class="reqs">${list.map(reqCard).join("")}${TEAM && k === "all" ? addReqCard() : ""}</div></div>`;
+    `<div class="main-body mat-body" data-keep="main">${f.chips}<div class="hgrid flow mat-cards">${list.map(matCard).join("")}${TEAM && !f.on ? matNewCard() : ""}</div>${list.length ? "" : '<p class="none">Nenhum pacote com esses filtros.</p>'}</div>`;
 }
-function reqCard(r) {
-  const fs = filesShown(r.id);
-  const [cls, label] = reqState(r);
-  const pics = fs.filter((f) => fileKind(f) !== "voz"), voices = fs.filter((f) => fileKind(f) === "voz");
-  const shown = pics.slice(0, 7);
-  const both = pics.length && voices.length;
-  return `<div class="req" data-drop-req="${r.id}">
-    <div class="req-top"><h3>${esc(r.title)}</h3><span class="state ${cls}">${label}</span></div>
-    <p class="req-detail" title="${esc(r.detail)}">${esc(r.detail)}</p>
-    ${pics.length ? `${both ? '<span class="req-kind">Fotos</span>' : ""}<div class="files">${shown.map(fileTile).join("")}${pics.length > shown.length ? `<button class="more-files" data-act="file-open" data-id="${pics[shown.length].id}" title="Ver os outros">+${pics.length - shown.length}</button>` : ""}</div>` : ""}
-    ${voices.length ? `${both ? '<span class="req-kind">Vozes</span>' : ""}<div class="req-voices">${voices.map(voiceTile).join("")}</div>` : ""}
-    ${S.uploading[r.id] ? `<span class="hint">${esc(S.uploading[r.id])}</span>` : ""}
-    <div class="req-foot"><input class="field note" data-note="${r.id}" value="${esc(r.note)}" placeholder="Link ou observação" maxlength="2000" aria-label="Link ou observação">
-      <label class="btn small">Enviar<input type="file" multiple hidden data-upload-req="${r.id}"></label></div>
-    ${TEAM ? `<div class="req-team">${fs.length ? (fs.length === 1 ? `<button class="link" data-act="file-download" data-id="${fs[0].id}">Baixar arquivo</button>` : `<button class="link" data-act="req-zip" data-id="${r.id}">Baixar tudo (.zip)</button>`) : ""}<button class="link" data-act="req-done" data-id="${r.id}">${r.done ? "Desmarcar recebido" : "Marcar recebido"}</button><button class="link danger" data-act="req-del" data-id="${r.id}">Excluir</button></div>` : ""}
-  </div>`;
+// a package as the room's card: the picture on top (its last photos, its video, its voices, its first text), what it has
+// as small counts over it, its state as the title's dot; files dropped on it go in
+function matCard(r) {
+  const es = entriesOf(r.id), [cls, label] = reqState(r);
+  const counts = Object.keys(MAT_KINDS).map((k) => [k, es.filter((e) => kindOfEntry(e) === k).length]).filter(([, n]) => n);
+  const tags = counts.length ? `<span class="hero-tags">${counts.map(([k, n]) => `<span class="hero-talk" title="${plural(n, MAT_ONE[k], MAT_KINDS[k].toLowerCase())}">${MAT_ICO[k]}${n}</span>`).join("")}</span>` : "";
+  const up = S.uploading[r.id];
+  return `<article class="hcard mat-card" data-drop-req="${r.id}">
+    <a class="hero mat-hero ${es.length ? "" : "hero-empty"}" href="#/materiais/${r.id}" title="${esc(r.detail || r.title)}" aria-label="Abrir ${esc(r.title)}">${es.length ? matCover(es) : `<span class="mat-empty">${ICON.up}<span>Arraste aqui</span></span>`}${tags}${cls ? "" : '<span class="mat-falta">Falta</span>'}${up ? `<span class="mat-up">${esc(up)}</span>` : ""}</a>
+    <footer class="hcard-foot"><span class="t"><i class="ovx-dot ${cls === "approved" ? "approved" : cls === "sent" ? "client" : "pending"}" title="${label}"></i>${esc(r.title)}</span></footer>
+  </article>`;
 }
-function fileTile(f) {
-  const canDel = TEAM || f.side === "cliente";
-  const img = f.preview_path || /^image\/(jpeg|png|webp|gif|avif)$/.test(f.mime);
-  const who = `${f.name}${f.uploaded_by ? ` · ${f.uploaded_by}` : ""}`;
-  return `<div class="file">${img
-    ? `<button class="thumbbtn" data-act="file-open" data-id="${f.id}" title="${esc(who)}"><img class="thumb" data-path="${esc(f.thumb_path || f.preview_path || f.path)}" alt="${esc(f.name)}"${srcAttr(f.thumb_path || f.preview_path || f.path)}></button>`
-    : `<button class="chip" data-act="file-open" data-id="${f.id}" title="${esc(who)}">${esc(f.name)}</button>`}
-    ${canDel ? `<button class="x" data-act="file-del" data-id="${f.id}" aria-label="Remover ${esc(f.name)}">×</button>` : ""}</div>`;
+function matCover(es) {
+  const of = (k) => es.filter((e) => kindOfEntry(e) === k);
+  const img = (f) => { const p = f.thumb_path || f.preview_path || f.path; return `<img data-path="${esc(p)}" alt="" decoding="async"${srcAttr(p)}>`; };
+  const pics = of("foto");
+  if (pics.length >= 4) return `<span class="mat-sheet">${pics.slice(-4).map(img).join("")}</span>`;
+  if (pics.length) return `<span class="mat-one">${img(pics.at(-1))}</span>`;
+  const vid = of("video")[0];
+  if (vid) return `<span class="mat-one">${media(vid, "thumb")}<span class="mat-play">${ICON.play}</span></span>`;
+  if (of("voz").length) return matWave(of("voz"));
+  const txt = of("text")[0], ln = of("link")[0];
+  if (txt) return `<span class="mat-txt">${esc(txt.body.slice(0, 420))}</span>`;
+  if (ln) return `<span class="mat-doc">${LINK_ICO}<b>${esc(hostOf(ln.url))}</b>${ln.title ? `<small>${esc(ln.title)}</small>` : ""}</span>`;
+  return `<span class="mat-doc">${MAT_ICO.outro}<b>${esc(es[0].name)}</b></span>`;
 }
-function voiceTile(f) {
-  const canDel = TEAM || f.side === "cliente";
-  return `<div class="vtile"><small title="${esc(`${f.name}${f.uploaded_by ? ` · ${f.uploaded_by}` : ""}`)}">${esc(f.name.replace(/\.[^.]+$/, "").trim())}</small><audio controls preload="none" data-path="${esc(f.path)}"${srcAttr(f.path)}></audio>${canDel ? `<button class="x" data-act="file-del" data-id="${f.id}" aria-label="Remover ${esc(f.name)}">×</button>` : ""}</div>`;
+// a package of voices shows a sound wave, the same one each time for the same files
+function matWave(vs) {
+  let x = [...vs.map((f) => f.id).join("")].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7);
+  const bars = Array.from({ length: 40 }, () => { x = (x * 1103515245 + 12345) >>> 0; return 14 + ((x >>> 8) % 72); });
+  return `<span class="mat-wave">${bars.map((h) => `<i style="height:${h}%"></i>`).join("")}</span>`;
 }
-const addReqCard = () => `<div class="req add"><form data-form="add-req"><input class="field" name="label" placeholder="Novo pedido ${AO_CL}" required maxlength="120"><input class="field" name="detail" placeholder="Detalhe (opcional)" maxlength="400"><button class="btn small">Adicionar pedido</button></form></div>`;
+const matNewCard = () => `<article class="hcard mat-card mat-new">${S.matNew
+  ? `<form class="hero mat-form" data-form="add-req"><input class="field" name="label" placeholder="Nome do pacote" required maxlength="120"><input class="field" name="detail" placeholder="O que vai nele (opcional)" maxlength="400"><span class="mat-row-btns"><button class="btn small primary">Criar pacote</button><button type="button" class="link" data-act="mat-new">Cancelar</button></span></form>`
+  : `<button class="hero hero-empty mat-add" data-act="mat-new">${ICON.plus}<span>Novo pacote</span></button>`}</article>`;
+
+// a package on its own page, like a card's: what it is for under its name, ‹ › to the packages before and after, a tab
+// per kind it has, and ＋ Adicionar for files, a link or a text
+function packagePage(r) {
+  const es = entriesOf(r.id), counts = matCounts(r.id), tab = matTabOf(r.id), shown = matShown(r.id, tab);
+  const k = S.requests.indexOf(r), prev = S.requests[k - 1], next = S.requests[k + 1];
+  const arrow = (x, d, ico, t) => x ? `<a class="btn hico" data-step="${d}" href="#/materiais/${x.id}" title="${t} (${d < 0 ? "←" : "→"}): ${esc(x.title)}" aria-label="${t}">${ico}</a>` : `<span class="btn hico off" aria-hidden="true">${ico}</span>`;
+  const stepper = `<span class="hgroup"><a class="btn hico" href="#/materiais" title="Todos os pacotes" aria-label="Todos os pacotes">${ICON.grid}</a>${arrow(prev, -1, ICON.prev, "Pacote anterior")}${arrow(next, 1, ICON.next, "Próximo pacote")}</span>`;
+  const f = matFilters("package");
+  const team = TEAM ? `<button class="btn hico ${r.done ? "on" : ""}" data-act="req-done" data-id="${r.id}" aria-pressed="${r.done}" title="${r.done ? "Recebido: clique para desmarcar" : "Marcar como recebido"}" aria-label="Recebido">${ICO.keep}</button>`
+    + (es.length ? `<button class="btn hico" data-act="req-zip" data-id="${r.id}" title="Baixar o pacote (.zip)" aria-label="Baixar o pacote">${ICON.down}</button>` : "")
+    + `<button class="btn hico" data-act="req-del" data-id="${r.id}" title="Excluir o pacote" aria-label="Excluir o pacote">${ICO.trash}</button>` : "";
+  const add = `<span class="mat-addw"><button class="btn primary mat-addb" data-act="mat-add" aria-haspopup="dialog" aria-expanded="${!!S.matAdd}">${ICON.plus}Adicionar</button>${S.matAdd ? matAddPop(r) : ""}</span>`;
+  const all = Object.values(counts).reduce((a, b) => a + b, 0);
+  const tabs = `<div class="ov-bar mat-bar"><div class="seg" role="group" aria-label="O que ver">${[["all", "Tudo", all], ...Object.keys(MAT_KINDS).filter((kk) => counts[kk]).map((kk) => [kk, MAT_KINDS[kk], counts[kk]])]
+    .map(([v, l, n]) => `<button data-act="mat-tab" data-v="${v}" class="${tab === v ? "on" : ""}" aria-pressed="${tab === v}">${l} <small>${n}</small></button>`).join("")}</div></div>`;
+  const up = S.uploading[r.id] ? `<p class="hint mat-hint">${esc(S.uploading[r.id])}</p>` : "";
+  const sec = (kk, list) => `<section class="mat-sec"><p class="side-label">${MAT_KINDS[kk]} <small>${list.length}</small></p><div class="mat-tiles">${list.map(matTile).join("")}</div></section>`;
+  const body = !es.length ? `<label class="mat-drop">${ICON.up}<b>Arraste os arquivos aqui</b><span>ou clique pra escolher. Links e textos entram pelo ＋ Adicionar.</span><input type="file" multiple hidden data-upload-req="${r.id}"></label>`
+    : !shown.length ? '<p class="none">Nada com esse filtro.</p>'
+    : tab === "all" ? Object.keys(MAT_KINDS).filter((kk) => counts[kk]).map((kk) => sec(kk, shown.filter((e) => kindOfEntry(e) === kk))).join("")
+    : `<div class="mat-tiles">${shown.map(matTile).join("")}</div>`;
+  const brief = r.detail ? `<span class="h1-brief" title="${esc(r.detail)}">${esc(r.detail)}</span>` : "";
+  return head(`${esc(r.title)}${brief}`, "", `${f.btn}${team}${stepper}${add}`, "Materiais") +
+    `<div class="main-body ov-body mat-body" data-keep="main" data-drop-req="${r.id}">${es.length ? tabs : ""}${f.chips}${up}${body}</div>`;
+}
+function matAddPop(r) {
+  const back = '<button type="button" class="link" data-act="mat-add" data-v="menu">Voltar</button>';
+  const inner = S.matAdd === "link"
+    ? `<form class="mat-addf" data-form="mat-link" data-req="${r.id}"><p class="filt-label">Link</p><input class="field" name="url" inputmode="url" placeholder="https://…" required maxlength="2000"><input class="field" name="title" placeholder="Título (opcional)" maxlength="200"><span class="mat-row-btns"><button class="btn small primary">Adicionar link</button>${back}</span></form>`
+    : S.matAdd === "text"
+    ? `<form class="mat-addf" data-form="mat-text" data-req="${r.id}"><p class="filt-label">Texto</p><textarea class="field" name="body" rows="7" placeholder="Uma nota, um briefing, o que precisar explicar" required maxlength="8000"></textarea><span class="mat-row-btns"><button class="btn small primary">Adicionar texto</button>${back}</span></form>`
+    : `<label class="mat-opt">${ICON.up}<span><b>Arquivos</b><small>Fotos, vídeos, áudios, PDFs. Ou arraste pra página.</small></span><input type="file" multiple hidden data-upload-req="${r.id}"></label>`
+      + (S.notesOn ? `<button class="mat-opt" data-act="mat-add" data-v="link">${LINK_ICO}<span><b>Link</b><small>Um endereço e um título</small></span></button>`
+      + `<button class="mat-opt" data-act="mat-add" data-v="text">${MAT_ICO.text}<span><b>Texto</b><small>Uma nota, um briefing</small></span></button>` : "");
+  return `<div class="filt-pop mat-pop" role="dialog" aria-label="Adicionar">${inner}</div>`;
+}
+// one thing in a package, as a tile of the grid: a click opens it big (a voice also plays right there)
+function matTile(e) {
+  const k = kindOfEntry(e), meta = [entryWho(e), e.created_at ? dayOf(e.created_at) : ""].filter(Boolean).join(" · ");
+  const del = canChange(e) ? `<button class="x" data-act="${isNote(e) ? "note-del" : "file-del"}" data-id="${e.id}" aria-label="Remover">×</button>` : "";
+  const open = (inner, cls) => `<button class="mt-box ${cls}" data-act="mat-open" data-id="${e.id}" title="Ver grande">${inner}</button>`;
+  const p = e.thumb_path || e.preview_path || e.path;
+  const box = k === "foto" ? open(`<img data-path="${esc(p)}" alt="${esc(e.name)}" decoding="async"${srcAttr(p)}>`, "mt-img")
+    : k === "video" ? open(`${media(e, "thumb")}<span class="mat-play">${ICON.play}</span>`, "mt-img")
+    : k === "voz" ? `<div class="mt-box mt-voice"><button class="mt-vname" data-act="mat-open" data-id="${e.id}" title="Ver grande">${MAT_ICO.voz}<b>${esc(e.name.replace(/\.[^.]+$/, "").replace(PROJECT_TAG, " ").trim())}</b></button><audio controls preload="none" data-path="${esc(e.path)}"${srcAttr(e.path)}></audio></div>`
+    : k === "link" ? open(`<b>${esc(e.title || hostOf(e.url))}</b><small>${esc(hostOf(e.url))}</small>`, "mt-doc mt-link")
+    : k === "text" ? open(`<span class="mt-txt">${esc(e.body)}</span>`, "mt-doc mt-text")
+    : open(`${MAT_ICO.outro}<b>${esc(e.name)}</b><small>${fmtSize(e.size)}</small>`, "mt-doc");
+  // a link's tile has its own way out: the round ↗ opens the address in a new tab (the tile itself opens Ver grande)
+  const go = k === "link" ? (safeUrl(e.url) ? `<a class="mt-go" href="${esc(safeUrl(e.url))}" target="_blank" rel="noopener" title="Abrir ${esc(hostOf(e.url))}" aria-label="Abrir o link">${ICO.open}</a>` : `<span class="mt-go off" aria-hidden="true">${LINK_ICO}</span>`) : "";
+  const name = k === "foto" || k === "video" || k === "outro" ? `<span class="mt-n">${esc(e.name)}</span>` : "";
+  return `<figure class="mt" data-k="${k}">${box}${go}${del}<figcaption>${name}${meta ? `<span class="mt-meta">${esc(meta)}</span>` : ""}</figcaption></figure>`;
+}
 
 // the one panel on the right: an item's comments, or, when the client asked something of it (team), its request with
 // the tasks, what is open and the references (retPanel); the round's open questions have their own (roundPanel)
@@ -2726,27 +2858,56 @@ function drawer() {
 function fileMedia(f) {
   const p = f.preview_path || f.path;
   if (f.mime.startsWith("video/")) return `<video data-path="${esc(f.path)}" controls autoplay playsinline${srcAttr(f.path)}></video>`;
-  if (f.mime.startsWith("audio/")) return `<div class="lb-file"><p>${esc(f.name)}</p><audio data-path="${esc(f.path)}" controls autoplay${srcAttr(f.path)}></audio></div>`;
+  if (f.mime.startsWith("audio/")) return `<div class="lb-file lb-voice">${MAT_ICO.voz}<p>${esc(f.name)}</p><audio data-path="${esc(f.path)}" controls autoplay${srcAttr(f.path)}></audio></div>`;
   if (f.preview_path || /^image\/(jpeg|png|webp|gif|avif)$/.test(f.mime)) return `<img data-path="${esc(p)}" alt="${esc(f.name)}"${srcAttr(p)}>`;
-  return `<div class="lb-file"><p>${esc(f.name)}</p><small>Sem prévia para este formato. Use “Baixar original”.</small></div>`;
+  if (f.mime === "application/pdf") return `<iframe class="lb-pdf" data-path="${esc(f.path)}" title="${esc(f.name)}"${srcAttr(f.path)}></iframe>`;
+  return `<div class="lb-file">${MAT_ICO.outro}<p>${esc(f.name)}</p><small>Sem prévia para este formato. Use “Baixar original”.</small></div>`;
 }
-function fileViewer() {
-  const { req, i } = S.lightbox;
+// Ver grande in a package: what the page showed when it was opened (its tab and filter), ← → one by one. A link opens
+// from here, a text reads in full, and whoever wrote one can edit it
+function matViewer() {
+  const { req } = S.lightbox;
   const r = S.requests.find((x) => x.id === req);
-  const fs = filesShown(req);
-  const f = fs[i];
-  if (!r || !f) return "";
+  // (the Galeria opens a file by its place among the package's files)
+  const list = (S.lightbox.ids || filesOf(req).map((f) => f.id)).map(entryOf).filter(Boolean);
+  if (!r || !list.length) return "";
+  const i = Math.min(Math.max(0, S.lightbox.i || 0), list.length - 1), e = list[i];
+  const k = kindOfEntry(e), who = entryWho(e), edit = !!S.lightbox.edit && isNote(e) && canChange(e);
+  const name = e.kind === "link" ? e.title || hostOf(e.url) : e.kind === "text" ? "Texto" : e.name;
+  const url = e.kind === "link" ? safeUrl(e.url) : "";
+  const stage = edit ? matEditForm(e)
+    : e.kind === "link" ? `<div class="lb-file lb-link">${LINK_ICO}<p>${esc(e.title || hostOf(e.url))}</p><small>${esc(e.url)}</small></div>`
+    : e.kind === "text" ? `<div class="lb-text">${esc(e.body)}</div>`
+    : fileMedia(e);
+  const bottom = isNote(e)
+    ? `${url ? `<a class="btn primary" href="${esc(url)}" target="_blank" rel="noopener">Abrir o link ↗</a>` : ""}${canChange(e) && !edit ? '<button class="btn" data-act="note-edit">Editar</button>' : ""}`
+    : `<button class="btn primary" data-act="file-download" data-id="${e.id}">Baixar original</button>`;
   return `<div class="lb" data-act="lb-bg" role="dialog" aria-modal="true" aria-label="${esc(r.title)}">
-    <div class="lb-top"><span><b>${esc(r.title)}</b> · ${i + 1} de ${fs.length} · ${esc(f.name)}${f.uploaded_by ? ` · ${esc(f.uploaded_by)}` : ""}</span><button class="link" data-act="lb-close">Fechar ✕</button></div>
-    <div class="lb-stage">${fileMedia(f)}
-      ${fs.length > 1 ? `<button class="lb-nav prev" data-act="lb-step" data-v="-1" aria-label="Anterior">‹</button><button class="lb-nav next" data-act="lb-step" data-v="1" aria-label="Próximo">›</button>` : ""}
+    <div class="lb-top"><span><b>${esc(r.title)}</b>${list.length > 1 ? ` · ${i + 1} de ${list.length}` : ""} · ${esc(name)}${who ? ` · ${esc(who)}` : ""}${e.created_at ? ` · ${dayOf(e.created_at)}` : ""}</span>
+      <span class="lb-tools">${e.old ? "" : `<button class="lb-info" data-act="mat-link" data-id="${e.id}" title="Copiar o link deste ${MAT_ONE[k]}" aria-label="Copiar o link">${LINK_ICO}</button>`}<button class="link" data-act="lb-close">Fechar ✕</button></span></div>
+    <div class="lb-stage">${stage}
+      ${list.length > 1 && !edit ? `<button class="lb-nav prev" data-act="lb-step" data-v="-1" aria-label="Anterior">‹</button><button class="lb-nav next" data-act="lb-step" data-v="1" aria-label="Próximo">›</button>` : ""}
     </div>
-    <div class="lb-bottom">
-      <button class="btn primary" data-act="file-download" data-id="${f.id}">Baixar original</button>
-      ${TEAM && fs.length > 1 ? `<button class="btn" data-act="req-zip" data-id="${req}">Baixar os ${fs.length} (.zip)</button>` : ""}
-    </div>
+    <div class="lb-bottom">${bottom}${TEAM && list.length > 1 && !edit ? `<button class="btn" data-act="req-zip" data-id="${req}">Baixar o pacote (.zip)</button>` : ""}</div>
   </div>`;
 }
+const matEditForm = (e) => `<form class="lb-text lb-edit" data-form="note-edit" data-id="${e.id}">${e.kind === "link"
+  ? `<input class="field" name="url" inputmode="url" value="${esc(e.url)}" required maxlength="2000"><input class="field" name="title" value="${esc(e.title)}" placeholder="Título (opcional)" maxlength="200">`
+  : `<textarea class="field" name="body" rows="14" required maxlength="8000">${esc(e.body)}</textarea>`}<span class="mat-row-btns"><button class="btn small primary">Salvar</button><button type="button" class="link" data-act="note-edit">Cancelar</button></span></form>`;
+// opens a file, link or text big: from its package's page, among what the page shows; from anywhere else (an item's
+// references, the Galeria), among everything in its package
+function matOpen(id, whole = false) {
+  const e = entryOf(id);
+  if (!e) return;
+  const rid = e.request_id, onPage = !whole && S.page.kind === "materiais" && S.page.req === rid;
+  let ids = (onPage ? matShown(rid) : entriesOf(rid)).map((x) => x.id);
+  if (!ids.includes(e.id)) ids = entriesOf(rid).map((x) => x.id);
+  S.lightbox = { req: rid, ids, i: ids.indexOf(e.id) };
+  render(true);
+}
+// a package's links and texts go in its .zip as one text file
+const notesTxt = (ns) => ns.map((n) => (n.kind === "link" ? `${n.title ? `${n.title}\n` : ""}${n.url}` : n.body)).join("\n\n---\n\n");
+const zipPairs = (r, folder = "") => { const ns = notesOf(r.id); return [...filesOf(r.id).map((f) => [f, folder]), ...(ns.length ? [[{ name: "Links e textos.txt", text: notesTxt(ns) }, folder]] : [])]; };
 function compareView() {
   const { cmp, r, i } = S.lightbox;
   const it = itemOf(cmp);
@@ -2894,7 +3055,7 @@ function tcBlock(it, o, withList = true) {
 function lightbox() {
   if (S.lightbox.wipe) return wipeView();
   if (S.lightbox.cmp) return compareView();
-  if (S.lightbox.req) return fileViewer();
+  if (S.lightbox.req) return matViewer();
   if (S.lightbox.ref) return refViewer();
   if (S.lightbox.pair) return pairViewer();
   const { id, i } = S.lightbox;
@@ -3454,13 +3615,11 @@ const ACTS = {
     if (error) return toast(error.message, true);
     await refresh();
   },
-  "file-open"(el) {
-    const f = S.files.find((x) => x.id === el.dataset.id);
-    if (f) { S.lightbox = { req: f.request_id, i: filesShown(f.request_id).indexOf(f) }; render(true); }
-  },
+  "file-open"(el) { matOpen(el.dataset.id, true); },
+  "mat-open"(el) { matOpen(el.dataset.id); },
   "file-download"(el) { const f = S.files.find((x) => x.id === el.dataset.id); if (f) openFile(f.path, f.name, true); },
-  "req-zip"(el) { const r = S.requests.find((x) => x.id === el.dataset.id); zipDownload(filesShown(r.id).map((f) => [f, ""]), r.title); },
-  "all-zip"() { zipDownload(S.requests.flatMap((r) => filesShown(r.id).map((f) => [f, r.title])), FILE_KINDS[S.matFilter] ? `${FILE_KINDS[S.matFilter]} ${DA_CL}` : `Materiais ${DA_CL}`); },
+  "req-zip"(el) { const r = S.requests.find((x) => x.id === el.dataset.id); if (r) zipDownload(zipPairs(r), r.title); },
+  "all-zip"() { zipDownload(S.requests.flatMap((r) => zipPairs(r, r.title)), `Materiais ${DA_CL}`); },
   async "file-del"(el) {
     const f = S.files.find((x) => x.id === el.dataset.id);
     if (!f || !confirm(`Remover “${f.name}”?`)) return;
@@ -3477,18 +3636,49 @@ const ACTS = {
   },
   async "req-del"(el) {
     const r = S.requests.find((x) => x.id === el.dataset.id);
-    if (!confirm(`Excluir o pedido “${r.title}” e os arquivos dele?`)) return;
+    if (!confirm(`Excluir o pacote “${r.title}” e tudo o que tem nele?`)) return;
     await run(async () => {
       const paths = filesOf(r.id).flatMap((f) => [f.path, f.preview_path, f.thumb_path]).filter(Boolean);
       const { error } = await sb.from("requests").delete().eq("id", r.id);
       if (error) throw error;
       if (paths.length) await sb.storage.from(BUCKET).remove(paths);
+      if (S.page.req === r.id) location.hash = "#/materiais";
       await refresh();
-    }, "Pedido excluído");
+    }, "Pacote excluído");
   },
   status(el) { patchItem(el.dataset.id, { status: el.dataset.v }); },
   review(el) { saveReview(el.dataset.id, { verdict: reviewOf(el.dataset.id)?.verdict === el.dataset.v ? null : el.dataset.v }); },
-  "mat-filter"(el) { S.matFilter = el.dataset.v; render(); },
+  "mat-tab"(el) { S.matTab = el.dataset.v; render(true); },
+  "mat-f"(el) { const k = el.dataset.k; if (["matState", "matType", "matSide"].includes(k)) { S[k] = el.dataset.v; render(true); } },
+  "mat-off"(el) { const k = el.dataset.v; if (k === "all") S.matState = S.matType = S.matSide = "all"; else if (["matState", "matType", "matSide"].includes(k)) S[k] = "all"; render(true); },
+  // ＋ Adicionar: the menu (files, a link, a text), then the link's or the text's form in its place
+  "mat-add"(el) {
+    const v = el.dataset.v;
+    S.matAdd = v || (S.matAdd ? null : "menu");
+    render(true);
+    if (v === "link" || v === "text") setTimeout(() => $app.querySelector(".mat-addf .field")?.focus(), 0);
+  },
+  "mat-new"() { S.matNew = !S.matNew; render(true); if (S.matNew) setTimeout(() => $app.querySelector('.mat-form [name="label"]')?.focus(), 0); },
+  async "mat-link"(el) {
+    const e = entryOf(el.dataset.id);
+    if (!e) return;
+    const url = (client) => matLinkTo(e.request_id, e.id, client);
+    const copy = async (client, act = null) => {
+      try { await navigator.clipboard.writeText(url(client)); toast(client && TEAM ? `Link da sala ${DA_CL} copiado` : "Link copiado", false, act); }
+      catch { window.prompt("Copie o link:", url(client)); }
+    };
+    await copy(false, TEAM ? { label: `Link ${DA_CL}`, fn: () => copy(true) } : null);
+  },
+  "note-edit"() { if (!S.lightbox) return; S.lightbox.edit = !S.lightbox.edit; render(true); if (S.lightbox.edit) setTimeout(() => $app.querySelector(".lb-edit .field")?.focus(), 0); },
+  async "note-del"(el) {
+    const n = S.notes.find((x) => x.id === el.dataset.id);
+    if (!n || !confirm(`Remover ${n.kind === "link" ? "este link" : "este texto"}?`)) return;
+    await run(async () => {
+      const { error } = await sb.from("request_notes").delete().eq("id", n.id);
+      if (error) throw error;
+      await refresh();
+    }, n.kind === "link" ? "Link removido" : "Texto removido");
+  },
   "ov-kind"(el) { toggleIn(S.ov.kinds, el.dataset.v); render(true); },
   "confirm-round"(el) {
     run(async () => { const { error } = await sb.rpc("confirm_round", { p_round: el.dataset.id, p_who: myName() }); if (error) throw error; await refresh(); }, "Rodada confirmada. Obrigado!");
@@ -3706,7 +3896,8 @@ function step(d) {
     pickSel(next.id, optsOf(next.id)[next.i]);
     return render(true);
   }
-  const n = S.lightbox.req ? filesShown(S.lightbox.req).length : optsOf(S.lightbox.id).length;
+  if (S.lightbox.req) S.lightbox.edit = false;
+  const n = S.lightbox.req ? (S.lightbox.ids || filesOf(S.lightbox.req)).length : optsOf(S.lightbox.id).length;
   S.lightbox.i = (S.lightbox.i + d + n) % n;
   render(true);
 }
@@ -3754,6 +3945,7 @@ document.addEventListener("click", (e) => {
   if (S.more && !e.target.closest?.(".more-pop, [data-act=more]")) { S.more = null; if (!el) render(true); }
   if (S.dl && !e.target.closest?.(".dl-pop, [data-act=dl]")) { S.dl = false; if (!el) render(true); }
   if (S.filt && !e.target.closest?.(".filt-pop, [data-act=filt]")) { S.filt = false; if (!el) render(true); }
+  if (S.matAdd && !e.target.closest?.(".mat-pop, [data-act=mat-add]")) { S.matAdd = null; if (!el) render(true); }
   if (S.selMenu && !e.target.closest?.(".sel-wrap")) { S.selMenu = false; if (!el) render(true); }
   // with cards selected, a click on a card's image adds it to the selection or takes it out, instead of opening it
   const card = TEAM && S.sel.size && $app.contains(e.target) ? e.target.closest(".sitem[data-drop]") : null;
@@ -3841,7 +4033,7 @@ document.addEventListener("change", (e) => {
     run(async () => { const { error } = await sb.from("round_notes").upsert({ round_id: t.dataset.rnote, body, updated_at: new Date().toISOString() }); if (error) throw error; await refresh(); }, "Combinados salvos");
   }
   else if (t.dataset.uploadItem) { uploadOptions(t.dataset.uploadItem, t.files); t.value = ""; }
-  else if (t.dataset.uploadReq) { uploadRequest(t.dataset.uploadReq, t.files); t.value = ""; }
+  else if (t.dataset.uploadReq) { S.matAdd = null; uploadRequest(t.dataset.uploadReq, t.files); t.value = ""; }
   else if (t.dataset.note) {
     run(async () => { const { error } = await sb.rpc("set_request_note", { p_request: t.dataset.note, p_note: t.value.trim() }); if (error) throw error; await refresh(); }, "Salvo");
   } else if (t.dataset.reason) {
@@ -3863,9 +4055,10 @@ document.addEventListener("keydown", (e) => {
   const typing = t.matches?.("input, textarea, select");
   if (e.key === "Enter" && t.matches?.("input.inline, textarea.brief, textarea.ret-basenote, textarea.btask-text, input.cap-in, input.lb-capin, input.rv-note, input.note")) { e.preventDefault(); t.blur(); return; }
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && t.matches?.(".compose textarea")) { t.form.requestSubmit(); return; }
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && t.matches?.(".mat-addf textarea, .lb-edit textarea")) { e.preventDefault(); t.form.requestSubmit(); return; }
   if (S.lightbox) {
     // Esc leaves Ajustar first (without saving), then the lightbox; while adjusting, no other key acts
-    if (e.key === "Escape") { if (S.lbx) { S.lbx = null; return render(true); } return ACTS["lb-close"](); }
+    if (e.key === "Escape") { if (S.lbx) { S.lbx = null; return render(true); } if (S.lightbox.edit) { S.lightbox.edit = false; return render(true); } return ACTS["lb-close"](); }
     if (typing || S.lbx) return;  // arrows and letters belong to the field being edited
     if (e.key === "ArrowRight") step(1);
     if (e.key === "ArrowLeft") step(-1);
@@ -3885,13 +4078,13 @@ document.addEventListener("keydown", (e) => {
     return;
   }
   if (e.key === "Escape") {
-    if (S.more || S.dl || S.filt || S.selMenu) { S.more = null; S.dl = false; S.filt = false; S.selMenu = false; render(true); }
+    if (S.more || S.dl || S.filt || S.selMenu || S.matAdd || S.matNew) { S.more = null; S.dl = false; S.filt = false; S.selMenu = false; S.matAdd = null; S.matNew = false; render(true); }
     else if (S.modal && S.modal !== "name") ACTS["modal-close"]();
     else if (S.sel.size) { S.sel.clear(); render(true); }
     else if (S.drawer) ACTS["drawer-close"]();
     return;
   }
-  if (!typing && !S.modal && S.page.kind === "scene" && (e.key === "ArrowRight" || e.key === "ArrowLeft")) stepScene(e.key === "ArrowRight" ? 1 : -1);
+  if (!typing && !S.modal && (S.page.kind === "scene" || (S.page.kind === "materiais" && S.page.req)) && (e.key === "ArrowRight" || e.key === "ArrowLeft")) stepScene(e.key === "ArrowRight" ? 1 : -1);
 });
 
 document.addEventListener("focusout", () => setTimeout(() => S.pending && render(false), 0));
@@ -3988,13 +4181,38 @@ document.addEventListener("submit", async (e) => {
   }
   if (f.dataset.form === "add-req") {
     btn.disabled = true;
-    const sort = Math.max(0, ...S.requests.map((r) => r.sort)) + 1;
+    // a new package opens on its own page, ready for what goes in it
+    const sort = Math.max(0, ...S.requests.map((r) => r.sort)) + 1, id = crypto.randomUUID();
     await run(async () => {
-      const { error } = await sb.from("requests").insert({ title: val(f, "label"), detail: val(f, "detail"), sort });
+      const { error } = await sb.from("requests").insert({ id, title: val(f, "label"), detail: val(f, "detail"), sort });
       if (error) throw error;
       clearForm(f);
+      S.matNew = false;
       await refresh();
-    }, "Pedido adicionado");
+      location.hash = `#/materiais/${id}`;
+    }, "Pacote criado");
+    if (btn.isConnected) btn.disabled = false;
+    return;
+  }
+  // a link or a text in a package (＋ Adicionar), and its edit in Ver grande
+  if (f.dataset.form === "mat-link" || f.dataset.form === "mat-text" || f.dataset.form === "note-edit") {
+    const n = f.dataset.form === "note-edit" ? S.notes.find((x) => x.id === f.dataset.id) : null;
+    const kind = n ? n.kind : f.dataset.form === "mat-link" ? "link" : "text";
+    let url = kind === "link" ? val(f, "url") : "";
+    if (url && !/^[a-z][a-z0-9+.-]*:/i.test(url)) url = `https://${url}`;
+    if (kind === "link" && !safeUrl(url)) return toast("Esse endereço não parece um link (comece com https://).", true);
+    const body = kind === "text" ? val(f, "body") : "";
+    if (kind === "text" && !body) return toast("Escreva o texto.", true);
+    const fields = kind === "link" ? { url: safeUrl(url), title: val(f, "title") } : { body };
+    btn.disabled = true;
+    await run(async () => {
+      const { error } = n ? await sb.from("request_notes").update(fields).eq("id", n.id)
+        : await sb.from("request_notes").insert({ request_id: f.dataset.req, kind, title: "", url: "", body: "", ...fields, added_by: myName(), side: SIDE });
+      if (error) throw error;
+      if (n) { if (S.lightbox) S.lightbox.edit = false; } else { S.matAdd = null; S.matTab = "all"; }
+      await refresh();
+    }, n ? "Salvo" : kind === "link" ? "Link adicionado" : "Texto adicionado");
+    if (btn.isConnected) btn.disabled = false;
     return;
   }
   if (f.dataset.tcForm) {
