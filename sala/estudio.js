@@ -1857,85 +1857,32 @@ function mentionAt() {
   const m = node.nodeValue.slice(0, off).match(/(^|\s)@([^\s@]{0,24})$/u);
   return m ? { node, start: off - m[2].length - 1, end: off, q: m[2] } : null;
 }
-// the @ list: what the + picker has (pickList), in the same tabs and order, as a small list over the caret. Tudo shows the
-// first few of each tab, this item's and this scene's first; a word after the @ narrows every tab (by name, group or scene,
-// as the picker's search); a tab (its chip, Tab and ⇧Tab, or Ver todas) lists all of it, a page at a time
+// the @ list: only what is already in the bar (the base, then the circles in their order), each with the tag the model
+// knows it by (@image1, @video1, Imagem 2…) and its role; a word after the @ narrows it by name or tag. Anything else
+// joins the bar through the + first
 const MPAGE = 40;
 async function syncMention() {
   const box = $(".est-mention");
   if (!box) return;
-  const seq = (E.mseq = (E.mseq || 0) + 1); // only the latest call draws (each one waits for the thumbnails' links)
   const at = mentionAt();
   const hide = () => { E.mention = null; box.hidden = true; };
   if (!at) return hide();
-  const { ctx } = E, it = E.item, here = it?.scene ?? E.scene ?? null;
-  // the same @ keeps its tab (and its page and line while the word stays) as it redraws; a new @ starts on Tudo
   const was = E.mention?.at.node === at.node && E.mention.at.start === at.start ? E.mention : null;
-  const tabs = [["all", "Tudo"], ...pickTabs(isVideo())];
-  const tab = tabs.some(([k]) => k === was?.tab) ? was.tab : "all";
-  const still = !!was && was.tab === tab && was.q === at.q;
-  const page = still ? was.page || 1 : 1;
-  // the tabs' tiles (and, as a word asks, each one's search text) are made once per @, and again when the room reloads
-  const key = [ctx.S.options, ctx.S.files, ctx.S.items, ctx.S.wkRefs, ctx.S.reviews, isVideo(), here, it?.id];
-  let data = was?.data;
-  if (!data || data.key.some((v, n) => v !== key[n])) {
-    pickables(); // the names (E.names) the room's images go by
-    data = { key, lists: Object.fromEntries(tabs.slice(1).map(([k]) => [k, pickList(k, here)])) };
-  }
   const q = fold(at.q);
-  const lists = Object.fromEntries(tabs.slice(1).map(([k]) => [k, data.lists[k].filter((x) => pickFind(x, q))]));
-  if (!Object.values(lists).some((l) => l.length)) return hide();
-  // a tile of the picker as a line of the list, and the token it puts in the text
-  const line = (x) => (x.v ? { path: x.v.f.path, kind: "audio", label: pickLabel(x), drop: false }
-    : { path: x.o.path, preview: x.o.preview_path || null, kind: isImg(x.o) ? "image" : "video", label: pickLabel(x), o: x.o, drop: x.drop, caption: x.o.caption || "" });
-  // what this item was made from or uses comes first, then this scene's
-  const mine = (x) => !!it && (x.v ? x.v.i?.id === it.id : x.o.item_id === it.id || (it.refs || []).some((id) => x.o.id === `file:${id}`));
-  const near = (x) => (mine(x) ? 0 : x.scenes.includes(here) ? 1 : 2);
-  let parts, more = 0;
-  if (tab === "all") {
-    // a few of each tab, each image once
-    const seen = new Set(), n = q ? 5 : 3, pathOf = (x) => (x.v ? x.v.f.path : x.o.path);
-    parts = tabs.slice(1).map(([k, name]) => {
-      const list = [];
-      for (const [, , x] of lists[k].map((x, j) => [near(x), j, x]).sort((a, b) => a[0] - b[0] || a[1] - b[1])) {
-        if (list.length === n) break;
-        if (!seen.has(pathOf(x))) { seen.add(pathOf(x)); list.push(line(x)); }
-      }
-      return { k, name, count: lists[k].length, list };
-    }).filter((p) => p.list.length);
-  } else {
-    // the whole tab, by the picker's groups (this scene, then each scene; each request of the client)
-    const all = lists[tab], shown = all.slice(0, MPAGE * page);
-    more = all.length - shown.length;
-    parts = [];
-    for (const x of shown) { const p = parts.at(-1); if (p && p.group === x.group) p.list.push(line(x)); else parts.push({ group: x.group, list: [line(x)] }); }
-  }
-  const items = parts.flatMap((p) => p.list);
-  const hasStill = (x) => x.o && (x.kind === "image" || x.o.thumb_path || x.o.preview_path);
-  await ctx.sign(items.filter(hasStill).map((x) => x.o.thumb_path || x.o.preview_path || x.o.path));
-  if (seq !== E.mseq) return; // typed on meanwhile: the newer call draws
-  E.mention = { at, q: at.q, tab, page, more, items, data, i: still ? Math.min(was.i, items.length - 1) : 0,
-    tabs: tabs.filter(([k]) => k === "all" || lists[k].length).map(([k]) => k) };
-  // "Ana · aprovada": the item in full, what sets it apart dimmed
-  const name = (s) => { const k = s.indexOf(" · "); return k < 0 ? esc(s) : `${esc(s.slice(0, k))}<small>${esc(s.slice(k + 3))}</small>`; };
-  // already in: the base, or one of the references (a ✓ would read as the team's ✓ in the names)
-  const used = (p) => (E.base?.path === p ? "base" : E.refs.some((r) => r.path === p) ? "em uso" : "");
-  let j = 0;
-  const row = (x) => {
-    const n = j++;
-    return `<button class="est-mrow ${n === E.mention.i ? "on" : ""} ${x.drop ? "discard" : ""}" data-k="mention" data-i="${n}" role="option" title="${esc(x.label)}${x.caption && !x.label.includes(x.caption) ? ` · ${esc(x.caption)}` : ""}${x.drop ? " · descartada (✕)" : ""}">${hasStill(x) ? `<img src="${esc(thumbUrl(x.o))}" alt="">` : x.kind === "audio" ? ICONS.wave : ICONS.film}<span>${name(x.label)}</span>${used(x.path) ? `<i class="est-mon" title="${used(x.path) === "base" ? "É a base desta edição" : "Já está nas referências"}">${used(x.path)}</i>` : ""}${x.kind === "audio" ? `<i class="est-mplay" data-k="play" data-path="${esc(x.path)}" title="Ouvir">${E.playing === x.path ? "■" : "▶"}</i>` : ""}</button>`;
-  };
-  const tabName = (k) => tabs.find(([t]) => t === k)[1];
-  const body = tab === "all"
-    ? parts.map((p) => `<p class="est-mh"><span>${esc(p.name)}</span><small>${p.count}</small>${p.count > p.list.length ? `<button data-k="mention-tab" data-v="${p.k}">Ver todas</button>` : ""}</p>${p.list.map(row).join("")}`).join("")
-    : !items.length ? `<p class="est-mnote">Nada em ${esc(tabName(tab))}${q ? ` com “${esc(at.q)}”` : ""}.</p>`
-    : parts.map((p) => `${p.group ? `<p class="est-mh"><span>${esc(p.group)}</span></p>` : ""}${p.list.map(row).join("")}`).join("")
-      + (more ? `<button class="est-mmore" data-k="mention-more">Mostrar mais · ${more}</button>` : "");
-  const chips = tabs.map(([k, n]) => `<button class="${k === tab ? "on" : ""} ${k !== "all" && !lists[k].length ? "zero" : ""}" data-k="mention-tab" data-v="${k}" role="tab" aria-selected="${k === tab}">${esc(n)}${k === tab && k !== "all" ? `<small>${lists[k].length}</small>` : ""}</button>`).join("");
-  // redrawn on every letter: the tabs keep their scroll, the list too while it is the same list
-  const top = still ? box.querySelector(".est-mlist")?.scrollTop || 0 : 0, left = box.querySelector(".est-mtabs")?.scrollLeft || 0;
-  box.innerHTML = `<div class="est-mtabs" role="tablist" aria-label="Material da sala">${chips}</div><div class="est-mlist" role="listbox" aria-label="Referências da sala">${body}</div>
-    <p class="est-mfoot"><span><kbd>↑</kbd><kbd>↓</kbd><kbd>↵</kbd> usar</span><span><kbd>Tab</kbd> próxima aba</span>${q ? "" : "<span>ou digite um nome</span>"}</p>`;
+  const baseTag = E.root?.querySelector(".est-refs .est-chip.base .est-tip b")?.textContent || "";
+  const all = [
+    ...(E.base ? [{ path: E.base.path, kind: "image", label: E.blocking ? "Blocking" : "Base", thumb: thumbUrl(E.base), tag: baseTag, role: "" }] : []),
+    ...E.refs.map((r, i) => ({ path: r.path, preview: r.preview || null, kind: r.kind || "image", label: r.label, thumb: r.thumb || "", tag: tagOfChip(i), role: roleOf(r)?.[1] || "" })),
+  ];
+  const items = all.filter((x) => !q || fold(`${x.label} ${x.tag} ${x.role}`).includes(q));
+  E.mention = { at, q: at.q, tab: "bar", page: 1, more: 0, items, tabs: ["bar"], i: was && was.q === at.q ? Math.min(was.i, Math.max(0, items.length - 1)) : 0 };
+  const face = (x) => (x.thumb && x.kind !== "audio" ? `<img src="${esc(x.thumb)}" alt="">` : x.kind === "audio" ? ICONS.wave : ICONS.film);
+  const row = (x, n) => `<button class="est-mrow ${n === E.mention.i ? "on" : ""}" data-k="mention" data-i="${n}" role="option" title="${esc(x.label)}${x.role ? ` · ${esc(x.role)}` : ""}">${face(x)}<span>${x.tag ? `<b class="est-mtag">${esc(x.tag)}</b>` : ""}${esc(x.label)}${x.role ? `<small>${esc(x.role)}</small>` : ""}</span>${x.kind === "audio" ? `<i class="est-mplay" data-k="play" data-path="${esc(x.path)}" title="Ouvir">${E.playing === x.path ? "■" : "▶"}</i>` : ""}</button>`;
+  const body = !all.length ? `<p class="est-mnote">Nenhuma referência na barra ainda. <button class="link" data-k="pick">Juntar pelo +</button></p>`
+    : !items.length ? `<p class="est-mnote">Nada com “${esc(at.q)}” nas bolinhas. <button class="link" data-k="pick">Procurar no +</button></p>`
+    : items.map(row).join("");
+  box.innerHTML = `<p class="est-mh est-mbar"><span>Na barra</span><small>${all.length}</small></p><div class="est-mlist" role="listbox" aria-label="Referências da barra">${body}</div>
+    <p class="est-mfoot"><span><kbd>↑</kbd><kbd>↓</kbd><kbd>↵</kbd> usar</span><span>outras entram pelo +</span></p>`;
   box.hidden = false;
   // above the caret, inside the card, as tall as the room above it allows
   const r = document.createRange();
@@ -1944,12 +1891,6 @@ async function syncMention() {
   box.style.maxHeight = `${Math.max(200, Math.min(420, c.top - 14))}px`;
   box.style.left = `${Math.max(8, Math.min(c.left - card.left, card.width - box.offsetWidth - 8))}px`;
   box.style.bottom = `${card.bottom - c.top + 6}px`;
-  box.querySelector(".est-mlist").scrollTop = top;
-  const tb = box.querySelector(".est-mtabs"), on = tb.querySelector(".on");
-  tb.scrollLeft = left;
-  if (on.offsetLeft < tb.scrollLeft) tb.scrollLeft = on.offsetLeft - 5;
-  else if (on.offsetLeft + on.offsetWidth > tb.scrollLeft + tb.clientWidth) tb.scrollLeft = on.offsetLeft + on.offsetWidth - tb.clientWidth + 5;
-  fadeTabs(tb);
   markMention();
 }
 // the tabs fade at an edge that has more of them past it
@@ -1977,18 +1918,15 @@ function pickMention(j) {
   const range = document.createRange();
   range.setStart(node, start); range.setEnd(node, end);
   range.deleteContents();
-  const tok = document.createElement("span");
-  tok.className = "est-tok";
-  tok.contentEditable = "false";
-  Object.assign(tok.dataset, { path: x.path, kind: x.kind, label: x.label });
-  tok.innerHTML = `${x.o && x.kind === "image" ? `<img src="${esc(thumbUrl(x.o))}" alt="">` : x.kind === "audio" ? ICONS.wave : ICONS.film}<span>${esc(x.label)}</span>`;
+  const tmp = document.createElement("span");
+  tmp.innerHTML = tokHTML({ path: x.path, kind: x.kind, label: x.label, thumb: x.thumb || (x.o ? thumbUrl(x.o) : "") });
+  const tok = tmp.firstChild;
   range.insertNode(tok);
   const space = document.createTextNode(" ");
   tok.after(space);
   const sel = getSelection(), after = document.createRange();
   after.setStart(space, 1); after.collapse(true);
   sel.removeAllRanges(); sel.addRange(after);
-  if (!E.refs.some((r) => r.path === x.path) && E.base?.path !== x.path) E.refs.push({ path: x.path, preview: x.preview || null, thumb_path: x.o?.thumb_path || null, thumb: x.o && x.kind === "image" ? thumbUrl(x.o) : "", label: x.label, kind: x.kind });
   E.mention = null;
   $(".est-mention").hidden = true;
   editor()?.classList.remove("empty");
@@ -3316,11 +3254,11 @@ function syncBar() {
   }
   const pr = $(".est-prompt");
   if (pr && E.mode !== "draw") {
-    pr.dataset.placeholder = !video ? (areaOn() ? (E.areas.length > 1 ? `O que muda na área ${E.ai + 1}? Cada área tem o seu texto e as suas referências. Use @ para citar uma imagem da sala.` : "O que muda dentro da área? Use @ para citar uma imagem da sala, como um rosto.") : soulOn() ? "Descreva a imagem: a base é a cena de partida e o rosto vem do Soul ID escolhido ao lado." : E.base ? "Descreva a mudança. Use @ para citar uma imagem da sala, ou desenhe na imagem para apontar onde." : "Descreva a imagem que quer criar. Use @ para citar castings, locações e outras imagens da sala.")
+    pr.dataset.placeholder = !video ? (areaOn() ? (E.areas.length > 1 ? `O que muda na área ${E.ai + 1}? Cada área tem o seu texto e as suas referências. Use @ para citar uma referência da barra.` : "O que muda dentro da área? Use @ para citar uma referência da barra, como um rosto.") : soulOn() ? "Descreva a imagem: a base é a cena de partida e o rosto vem do Soul ID escolhido ao lado." : E.base ? "Descreva a mudança. Use @ para citar uma imagem da sala, ou desenhe na imagem para apontar onde." : "Descreva a imagem que quer criar. Use @ para citar castings, locações e outras imagens da sala.")
       : m.way === "frames" ? "Descreva o que acontece entre o primeiro e o último quadro e como a câmera se move."
       : m.way === "guide" ? (m.id.includes("motion") ? "Diga quem e o que está na cena, e de qual imagem: o movimento e a câmera vêm do vídeo-guia." : "Diga o que troca no vídeo-guia e por qual imagem: o resto do vídeo fica igual.")
       : m.way === "edit" ? "Diga o que muda no vídeo e de qual imagem vem cada coisa: o tempo, o quadro e os cortes do vídeo ficam."
-      : "Descreva o plano: o que acontece, a câmera e a luz. Use @ para citar imagens, vídeos e vozes (a voz faz a sincronia labial).";
+      : "Descreva o plano: o que acontece, a câmera e a luz. Use @ para citar as imagens, os vídeos e as vozes da barra (a voz faz a sincronia labial).";
   }
   const em = $(".est-empty span");
   if (em) em.textContent = video ? (m.way === "guide" ? "Junte com + o vídeo-guia (aba Vídeos) e as imagens do que entra nele, e escreva embaixo o que acontece." : m.way === "edit" ? "Junte com + o vídeo a editar (aba Vídeos) e até 5 imagens do que entra nele, e escreva embaixo o que muda." : "Escreva o plano embaixo e junte com + imagens, vídeos e vozes da sala.")
