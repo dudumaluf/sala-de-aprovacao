@@ -4,7 +4,8 @@
 // (linear) or hold (segura). At a cut the camera jumps to the next shot's keys. The timeline lives in the set's saved
 // state (cena3d.state.timeline), so undo, redo and the autosave cover it.
 // A set gets one when sets.js gives it a `cut`: { name, shots: [{ cam, title, in, out, ride, shake, end }], figs: { name:
-// [[t, pose preset]] }, device: [[t, led]], audio: { option }, env: { t0, dt, v } }. `motion` makes the set rock as a
+// [[t, pose preset]] }, device: [[t, led, ry]], lines: [[in, out, who, text]], audio: { option }, env: { t0, dt, v },
+// card }. A device key may also turn the product where it stands (ry, degrees). `motion` makes the set rock as a
 // whole (everything but the meshes marked userData.still, the sea), cameras of shots marked `ride` riding with it;
 // `device.swing` lets the product swing on its hook as the set rocks.
 import { THREE, D2R } from "./kit.js";
@@ -76,7 +77,7 @@ export function createTimeline(H) {
       const ci = E.set.cast.find((x) => x.name === name);
       if (ci) figs[`${ci.item}:${ci.name}`] = list.map(([t, preset]) => ({ t, preset, ease: "suave" }));
     }
-    for (const [t, led] of c.device || []) dev.push({ t, led });
+    for (const [t, led, ry] of c.device || []) dev.push(ry == null ? { t, led } : { t, led, ry });
     if (E.set.motion) move.push({ t: c.shots[0].in, amp: 1, ease: "suave" });
     return { v: 1, shots: c.shots.map((s) => ({ cam: s.cam, title: s.title || s.cam, in: s.in, out: s.out, ride: !!s.ride })), cam, figs, dev, move };
   }
@@ -118,16 +119,28 @@ export function createTimeline(H) {
     });
     return { fps, a, b, F0, frames, shots: list, dev: sorted(T.data.dev || []) };
   };
-  // Exportar a cena: video.js renders and saves it; the button shows how far it got (0–1; null when it is over)
+  // Exportar a cena: a small menu (with the cast, without it, both); video.js renders and saves each one; the button
+  // shows how far it got (0–1; null when it is over) and which of the videos it is on
   T.busy = null;
-  T.progress = (p) => {
+  T.menu = false;
+  T.progress = (p, label = "") => {
     T.busy = p;
+    T.busyLabel = label;
     const b = $('[data-tk="export"]');
     if (!b) return;
     b.disabled = p != null;
     b.classList.toggle("busy", p != null);
-    b.textContent = p != null ? `Exportando… ${Math.round(p * 100)}%` : exportLabel();
+    b.textContent = p != null ? busyText() : exportLabel();
   };
+  const busyText = () => `Exportando${T.busyLabel ? ` ${T.busyLabel}` : ""}… ${Math.round(T.busy * 100)}%`;
+  function exportMenu(p) {
+    const [a, b] = span(), to = H.exportTo?.();
+    p.innerHTML = `<div class="c3d-tptop"><b>Exportar a cena · ${fmt(b - a)}</b><button class="c3d-tx" data-tk="close" aria-label="Fechar">×</button></div>
+      <div class="c3d-tline"><button class="c3d-tchip acc" data-tk="export-go" data-v="both">Os dois</button><button class="c3d-tchip" data-tk="export-go" data-v="cast">Com o elenco</button><button class="c3d-tchip" data-tk="export-go" data-v="set">Sem o elenco</button></div>
+      <p class="c3d-tnote">1280×720 a 24 fps, sem som, com os cortes. Sem o elenco: só o cenário e a câmera. Cada vídeo entra ${to ? `no card ${esc(to.title)}` : "no card"} como Blocking 3D, sem ✓, com o resumo dos planos pro prompt.</p>`;
+    p.hidden = false;
+    p.style.left = `${Math.max(8, T.el.getBoundingClientRect().width - 338)}px`;
+  }
   const exportLabel = () => { const [a, b] = span(); return `Exportar a cena (${fmt(b - a)})`; };
 
   // ---------- the scene at a second ----------
@@ -234,9 +247,11 @@ export function createTimeline(H) {
     if (!d) return;
     const ks = sorted(T.data.dev || []);
     if (ks.length) {
-      let k = ks[0];
-      for (const x of ks) if (x.t <= t + EPS) k = x;
+      let k = ks[0], ry = ks.find((x) => x.ry != null)?.ry ?? null;
+      for (const x of ks) if (x.t <= t + EPS) { k = x; if (x.ry != null) ry = x.ry; }
       if (k.led && d.userData.led !== k.led) H.setLed(d, k.led);
+      // a key may also turn it where it stands (where its light faces), from that key on
+      if (ry != null) d.rotation.y = ry * D2R;
     }
     const sw = E.set.device?.swing;
     if (sw && !d.userData.attach) {
@@ -310,11 +325,12 @@ export function createTimeline(H) {
   // the Keyframe button (K): what the 3D shows now, for what is selected (a figure, the product) or else the camera
   T.addKey = () => {
     if (!T.data) return;
+    T.menu = false;
     const t = +T.t.toFixed(2), sel = E.sel;
     if (sel?.fig) {
       const f = sel.fig;
       put(`fig:${f.key}`, { t, pose: poseOf(f), pos: r3(f.root.position.toArray()), ry: +(f.root.rotation.y / D2R).toFixed(2), ease: "suave" });
-    } else if (sel?.type === "device") put("dev", { t, led: E.device.userData.led });
+    } else if (sel?.type === "device") put("dev", { t, led: E.device.userData.led, ry: +(E.device.rotation.y / D2R).toFixed(1) });
     else {
       const old = around(camKeys(shotAt(t)), t);
       put("cam", { s: shotIx(t), t, ...camNow(), ease: "suave", shake: old ? old.a.shake || 0 : 0 });
@@ -375,9 +391,9 @@ export function createTimeline(H) {
   }
   function exportButton() {
     const to = H.exportTo?.(), n = shots().length;
-    const title = `O vídeo do blocking da cena inteira como a timeline está agora (${n} ${n === 1 ? "plano" : `planos, com os cortes`}), 1920×1080 a 24 fps, sem som: entra ${to ? `no card ${to.title}` : "no card"} como Blocking 3D, sem ✓, com o resumo dos planos pro prompt`;
+    const title = `O vídeo do blocking da cena inteira como a timeline está agora (${n} ${n === 1 ? "plano" : `planos, com os cortes`}), com e sem o elenco, 1280×720 a 24 fps, sem som: entra ${to ? `no card ${to.title}` : "no card"} como Blocking 3D, sem ✓, com o resumo dos planos pro prompt`;
     const busy = T.busy != null;
-    return `<button class="c3d-tchip${busy ? " busy" : ""}" data-tk="export" title="${esc(title)}"${busy ? " disabled" : ""}>${busy ? `Exportando… ${Math.round(T.busy * 100)}%` : exportLabel()}</button>`;
+    return `<button class="c3d-tchip${busy ? " busy" : T.menu ? " on" : ""}" data-tk="export" title="${esc(title)}"${busy ? " disabled" : ""}>${busy ? busyText() : exportLabel()}</button>`;
   }
   function lane() {
     const D = T.data, rs = rows(), [ra, rb] = range();
@@ -440,6 +456,7 @@ export function createTimeline(H) {
   function pop() {
     const p = $(".c3d-tpop");
     if (!p) return;
+    if (T.menu && T.shown() && T.busy == null) { exportMenu(p); return; }
     const ks = T.sel && keysOf(T.sel.row), k = ks?.[T.sel.i];
     if (!k || !T.shown()) { p.hidden = true; return; }
     const row = T.sel.row, seg = (cur) => `<span class="c3d-seg">${EASES.map(([v, l]) => `<button data-tk="ease" data-v="${v}" class="${(cur || "suave") === v ? "on" : ""}">${l}</button>`).join("")}</span>`;
@@ -457,7 +474,8 @@ export function createTimeline(H) {
       body = `<div class="c3d-tline"><button class="c3d-tchip" data-tk="grab" title="A pose e o lugar de agora viram este keyframe">Gravar a pose de agora</button></div><div class="c3d-tline"><label>Chega</label>${seg(k.ease)}</div>`;
     } else if (row === "dev") {
       title = `${esc(H.PRODUCT?.title || "Produto")} · ${fmt(k.t)}`;
-      body = `<div class="c3d-tline"><label>Luz</label><select data-tk="led">${H.LED_STATES.map(([v, l]) => `<option value="${v}"${k.led === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>`;
+      body = `<div class="c3d-tline"><label>Luz</label><select data-tk="led">${H.LED_STATES.map(([v, l]) => `<option value="${v}"${k.led === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>
+        <div class="c3d-tline"><label>Virado</label><button class="c3d-tchip" data-tk="grab" title="Para onde ele está virado agora no 3D vira este keyframe">Gravar o giro de agora</button>${k.ry != null ? `<output>${Math.round(k.ry)}°</output>` : ""}</div>`;
     } else if (row === "move") {
       title = `${esc(E.set.motion?.label || "Movimento")} · ${fmt(k.t)}`;
       body = `<div class="c3d-tline"><label>Balanço</label><input type="range" data-tk="amp" min="0" max="2" step="0.05" value="${k.amp ?? 1}"><output>×${(k.amp ?? 1).toFixed(2).replace(".", ",")}</output></div><div class="c3d-tline"><label>Chega</label>${seg(k.ease)}</div>`;
@@ -480,6 +498,7 @@ export function createTimeline(H) {
       if (!inLane || (k && !["k", "edge", "shot"].includes(k))) return;
       e.preventDefault();
       T.pause();
+      T.menu = false;
       const x0 = e.clientX;
       let moved = false;
       if (k === "k") {
@@ -512,15 +531,17 @@ export function createTimeline(H) {
       if (!b || !T.data || T.busy != null) return;
       const k = b.dataset.tk;
       if (k === "play") T.playing ? T.pause() : T.play();
-      else if (k === "export") H.exportScene?.();
+      else if (k === "export") { T.menu = !T.menu; T.sel = null; T.render(); }
+      else if (k === "export-go") { T.menu = false; T.render(); H.exportScene?.(b.dataset.v); }
       else if (k === "loop") { T.loop = !T.loop; head(); }
       else if (k === "key") T.addKey();
-      else if (k === "close") { T.sel = null; T.render(); }
+      else if (k === "close") { T.sel = null; T.menu = false; T.render(); }
       else if (k === "del") delKey();
       else if (k === "ease") { const key = keysOf(T.sel.row)[T.sel.i]; key.ease = b.dataset.v; H.commit(); pop(); T.seek(T.t); }
       else if (k === "grab") {
         const key = keysOf(T.sel.row)[T.sel.i];
         if (T.sel.row === "cam") Object.assign(key, camNow());
+        else if (T.sel.row === "dev") key.ry = +(E.device.rotation.y / D2R).toFixed(1);
         else { const f = E.figs.find((x) => x.key === T.sel.row.slice(4)); if (f) Object.assign(key, { pose: poseOf(f), pos: r3(f.root.position.toArray()), ry: +(f.root.rotation.y / D2R).toFixed(2) }); }
         H.commit(); T.render();
       }
@@ -558,7 +579,7 @@ export function createTimeline(H) {
     if (k === " ") { take(); T.playing ? T.pause() : T.play(); return true; }
     if (k === "k") { take(); T.addKey(); return true; }
     if ((k === "delete" || k === "backspace") && T.sel) { take(); delKey(); return true; }
-    if (k === "escape" && T.sel) { take(); T.sel = null; T.render(); return true; }
+    if (k === "escape" && (T.sel || T.menu)) { take(); T.sel = null; T.menu = false; T.render(); return true; }
     return false;
   };
   // the editor took the camera back (a drag on the 3D): stop driving it

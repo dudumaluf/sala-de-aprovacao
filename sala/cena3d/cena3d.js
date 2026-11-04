@@ -30,7 +30,7 @@ const CL = PROJECT?.client;
 const ART = CL ? { a: ["a ", "da "], o: ["o ", "do "] }[PROJECT.clientArticle] || ["", "de "] : ["o ", "do "];
 const CLIENT = `${ART[0]}${CL || "cliente"}`, CLIENT_OF = `${ART[1]}${CL || "cliente"}`;
 const MODEL = "Blocking 3D";
-const CSS_V = 13; // bump when cena3d.css changes, so an open tab does not keep the old styles
+const CSS_V = 14; // bump when cena3d.css changes, so an open tab does not keep the old styles
 const LENSES = [14, 16, 18, 21, 24, 28, 32, 35, 40, 50, 65, 75, 85, 100, 135];
 // lens in mm on a full-frame (36 mm wide) sensor framed 16:9 ↔ vertical field of view
 const fovOf = (mm) => THREE.MathUtils.radToDeg(2 * Math.atan(36 / (16 / 9) / 2 / mm));
@@ -1531,22 +1531,27 @@ async function doSave(to = null) {
     E.el.querySelectorAll(".c3d-save.busy").forEach((b) => b.classList.remove("busy"));
   }
 }
-// the timeline's Exportar a cena: the scene's blocking video (video.js) goes to the scene's card in the animation round
-// (the set's cut.card), else to this location's card; the 3D does not take clicks or keys until it is done
+// the timeline's Exportar a cena: the scene's blocking videos (video.js), with the cast, without it (the set and the
+// camera only) or both, go to the scene's card in the animation round (the set's cut.card), else to this location's
+// card; the 3D does not take clicks or keys until they are done
 const exportCard = () => (E.set?.cut?.card && E.ctx.itemOf(E.set.cut.card)) || E.item;
-async function runExport() {
+async function runExport(which = "both") {
   if (E.busy || !E.tl?.has()) return;
+  const runs = which === "cast" ? [true] : which === "set" ? [false] : [true, false], done = [];
   E.busy = true;
   E.el.classList.add("exporting");
-  E.tl.progress(0);
   try {
-    const r = await exportScene(E, { SHOT, MODEL, PRODUCT, LED_STATES, slug, card: exportCard }, (p) => E.tl.progress(p));
-    if (location.hostname === "localhost" || location.hostname === "127.0.0.1") E.lastExport = r; // local checks only
-    E.ctx.toast(`O vídeo da cena entrou no card ${r.card.title} (Blocking 3D, sem ✓: ${CLIENT} não vê)`);
+    for (const [i, cast] of runs.entries()) {
+      const label = runs.length > 1 ? `${i + 1} de ${runs.length}` : "";
+      E.tl.progress(i / runs.length, label);
+      done.push(await exportScene(E, { MODEL, PRODUCT, LED_STATES, slug, card: exportCard }, { cast }, (p) => E.tl.progress((i + p) / runs.length, label)));
+    }
+    E.ctx.toast(`${done.length > 1 ? `Os ${done.length} vídeos da cena entraram` : `O vídeo da cena ${runs[0] ? "com" : "sem"} o elenco entrou`} no card ${done[0].card.title} (Blocking 3D, sem ✓: ${CLIENT} não vê)`);
   } catch (e) {
     console.error(e);
-    E.ctx.toast(`O vídeo da cena não saiu${e?.message ? `: ${e.message}` : ""}.`, true);
+    E.ctx.toast(`${done.length ? "Um vídeo entrou, mas o outro" : "O vídeo da cena"} não saiu${e?.message ? `: ${e.message}` : ""}.`, true);
   } finally {
+    if (location.hostname === "localhost" || location.hostname === "127.0.0.1") E.lastExport = done; // local checks only
     E.busy = false;
     E.el.classList.remove("exporting");
     E.tl.progress(null);
