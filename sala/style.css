@@ -1706,6 +1706,15 @@ body.est-open .update-bar { bottom: auto; top: 6px; height: 40px; }
 .est-fold { position: absolute; top: -13px; right: 18px; z-index: 1; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 1px solid var(--line2); border-radius: 999px; background: var(--raise); color: var(--muted); cursor: pointer; }
 .est-fold:hover { color: var(--text); }
 .est-fold svg { width: 14px; height: 14px; }
+/* the arrow next to the fold grows the prompt upward over the picture: more lines of the text, a wider card and the
+   reference circles spread out; it points up, and down again once the prompt is tall */
+.est-grow { position: absolute; top: -13px; right: 50px; z-index: 1; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 1px solid var(--line2); border-radius: 999px; background: var(--raise); color: var(--muted); cursor: pointer; }
+.est-grow:hover, .est-grow[aria-pressed="true"] { color: var(--text); }
+.est-grow svg { width: 14px; height: 14px; transform: rotate(180deg); }
+.est.bar-big .est-grow svg { transform: none; }
+.est.bar-big .est-card { max-width: 1240px; }
+.est.bar-big .est-prompt { max-height: min(58vh, 640px); }
+.est.bar-big .est-refs > .est-chip:not(:first-child) { margin-left: 6px; }
 .est-unfold { display: none; }
 .est.bar-off .est-card { display: none; }
 .est.bar-off .est-unfold { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border: 1px solid var(--line2); border-radius: 999px; background: var(--raise); color: var(--text); font-size: 13px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4); cursor: pointer; }

@@ -148,9 +148,12 @@ const shownOpt = () => (E.view ? optOf(E.view) : E.base);
 const drawerPref = () => { try { return localStorage.getItem("sala-est-drawer") !== "off"; } catch { return true; } };
 // the prompt floats over the image; it can fold away so the image is whole (remembered on this computer too)
 const barPref = () => { try { return localStorage.getItem("sala-est-bar") !== "off"; } catch { return true; } };
-const rootClass = () => `est est-${E.mode}${E.drawer ? "" : " drawer-off"}${E.barOn === false ? " bar-off" : ""}`;
+// and it can grow upward over the picture, for a long prompt (the arrow next to the fold; remembered too)
+const bigPref = () => { try { return localStorage.getItem("sala-est-big") === "on"; } catch { return false; } };
+const rootClass = () => `est est-${E.mode}${E.drawer ? "" : " drawer-off"}${E.barOn === false ? " bar-off" : ""}${E.barBig ? " bar-big" : ""}`;
 const FOLD = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l4 4 4-4"/></svg>';
-const foldHtml = () => `<button class="est-fold" data-k="fold" title="Esconder o prompt: a imagem fica inteira" aria-label="Esconder o prompt">${FOLD}</button>`;
+const growSays = () => (E.barBig ? "Voltar o prompt ao tamanho normal" : "Expandir o prompt pra cima: mais linhas do texto e as bolinhas abertas");
+const foldHtml = () => `<button class="est-grow" data-k="grow" title="${growSays()}" aria-label="${growSays()}" aria-pressed="${!!E.barBig}">${FOLD}</button><button class="est-fold" data-k="fold" title="Esconder o prompt: a imagem fica inteira" aria-label="Esconder o prompt">${FOLD}</button>`;
 const unfoldHtml = () => `<button class="est-unfold" data-k="fold" title="Mostrar o prompt" aria-label="Mostrar o prompt">${ICONS.spark}<span>Prompt</span></button>`;
 
 // ---------- the edge function ----------
@@ -2698,7 +2701,7 @@ function open(ctx, init) {
     tool: "pen", color: COLORS[0], prompt: "", busy: false, pick: false, shown: new Set(), scene: null, round: null, playing: null, blocking: false, sel: null, drag: null,
     model: E.model || MODELS[0].id, aspect: E.aspect || "auto", res: E.res || "2k", quality: E.quality || "high", count: 1,
     kind: E.kind || "image", vmodel: E.vmodel || VIDEO_MODELS[0].id, vaspect: E.vaspect || "16:9", vres: E.vres || "720p", dur: E.dur || 5, sound: E.sound ?? true,
-    drawer: drawerPref(), barOn: barPref(), dest: init?.blocking ? "card" : "ver", parent: null, recipeKey: "",
+    drawer: drawerPref(), barOn: barPref(), barBig: bigPref(), dest: init?.blocking ? "card" : "ver", parent: null, recipeKey: "",
     cam: camPref(), camWoven: null, camOpen: false, camMore: false, camHtml: "",
     recipes: [], recWoven: null, railMode: "vers", rq: "", rcat: "all", redit: null, rflash: null, sentOpen: new Set(), vprompt: false,
   }, init);
@@ -3514,6 +3517,15 @@ async function onClick(e) {
     return syncRail();
   }
   if (k === "dest") { E.dest = E.dest === "ver" ? "card" : "ver"; syncBar(); return syncRail(); }
+  if (k === "grow") {
+    E.barBig = !E.barBig;
+    try { localStorage.setItem("sala-est-big", E.barBig ? "on" : "off"); } catch { /* the page still works */ }
+    E.root.classList.toggle("bar-big", E.barBig);
+    Object.assign(b, { title: growSays() });
+    b.setAttribute("aria-label", growSays());
+    b.setAttribute("aria-pressed", String(E.barBig));
+    return fitStage();
+  }
   if (k === "fold") {
     E.barOn = !E.barOn;
     try { localStorage.setItem("sala-est-bar", E.barOn ? "on" : "off"); } catch { /* the page still works */ }
