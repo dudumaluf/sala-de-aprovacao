@@ -73,8 +73,12 @@ export const POSES = {
 const POSE_BONES = BONES.map(([n]) => n);
 
 // ---------- the human mannequin ----------
-// opts: { height (m), color, build ("m" | "f"), name }
-export function makeHuman({ height = 1.75, color = "#E07A3F", build = "m", name = "" } = {}) {
+// opts: { height (m), color, build ("m" | "f"), name, look }
+// look (optional, from the set's cast): the figure in its wardrobe, part by part, so the blocking reads as the cast and
+// not as a mannequin: { skin, top, arms, hips, bottom, shoes, neck, hat, beard } colors (arms → top, hips → bottom,
+// neck → skin, shoes → a dark shade of `color` when left out); hat draws a knit cap, beard a full beard. Without a look
+// the figure is the plain mannequin in `color`.
+export function makeHuman({ height = 1.75, color = "#E07A3F", build = "m", name = "", look = null } = {}) {
   const s = height / 1.75;
   const root = new THREE.Group();
   root.name = name;
@@ -94,7 +98,13 @@ export function makeHuman({ height = 1.75, color = "#E07A3F", build = "m", name 
     bones[n] = b;
   }
   const m = mat(color, { rough: 0.62 });
-  const dark = mat(new THREE.Color(color).multiplyScalar(0.55).getStyle(), { rough: 0.7 });
+  const shade = (c) => mat(new THREE.Color(c).multiplyScalar(0.55).getStyle(), { rough: 0.7 });
+  const dark = shade(color);
+  const L = look || {};
+  const lm = (c, rough = 0.72) => (c ? mat(c, { rough }) : m);
+  const skin = lm(L.skin, 0.6), top = lm(L.top), arms = L.arms ? lm(L.arms) : top, bottom = lm(L.bottom);
+  const hipsM = L.hips ? lm(L.hips) : bottom, neckM = L.neck ? lm(L.neck) : skin;
+  const shoes = L.shoes ? mat(L.shoes, { rough: 0.6 }) : dark, face = L.skin ? shade(L.skin) : dark;
   const meshes = [];
   const add = (bone, geo, at, r = [0, 0, 0], mm = m) => {
     const mesh = new THREE.Mesh(geo, mm);
@@ -108,25 +118,39 @@ export function makeHuman({ height = 1.75, color = "#E07A3F", build = "m", name 
   const cap = (r, len) => new THREE.CapsuleGeometry(r, Math.max(0.001, len - 2 * r), 3, 10);
   const ell = (rx, ry, rz) => { const g = new THREE.SphereGeometry(1, 14, 10); g.scale(rx, ry, rz); return g; };
   const wide = build === "f" ? 0.9 : 1;
-  add("hips", ell(0.16 * (build === "f" ? 1.06 : 1), 0.11, 0.11), [0, -0.02, 0]);
-  add("spine", ell(0.14 * wide, 0.13, 0.1), [0, 0.08, 0]);
-  add("chest", ell(0.18 * wide, 0.17, 0.115), [0, 0.11, 0]);
-  for (const x of [0.19, -0.19]) add("chest", ell(0.06, 0.06, 0.06), [x * wide, 0.2, 0]);
-  add("neck", cap(0.048, 0.12), [0, 0.05, 0]);
-  add("head", ell(0.085, 0.115, 0.1), [0, 0.1, 0.01]);
-  add("head", new THREE.BoxGeometry(0.024, 0.034, 0.05), [0, 0.085, 0.1], [0, 0, 0], dark); // the nose shows where the face points
-  add("head", new THREE.BoxGeometry(0.11, 0.022, 0.03), [0, 0.12, 0.085], [0, 0, 0], dark); // the eye line
+  add("hips", ell(0.16 * (build === "f" ? 1.06 : 1), 0.11, 0.11), [0, -0.02, 0], [0, 0, 0], hipsM);
+  add("spine", ell(0.14 * wide, 0.13, 0.1), [0, 0.08, 0], [0, 0, 0], top);
+  add("chest", ell(0.18 * wide, 0.17, 0.115), [0, 0.11, 0], [0, 0, 0], top);
+  for (const x of [0.19, -0.19]) add("chest", ell(0.06, 0.06, 0.06), [x * wide, 0.2, 0], [0, 0, 0], top);
+  add("neck", cap(0.048, 0.12), [0, 0.05, 0], [0, 0, 0], neckM);
+  add("head", ell(0.085, 0.115, 0.1), [0, 0.1, 0.01], [0, 0, 0], skin);
+  add("head", new THREE.BoxGeometry(0.024, 0.034, 0.05), [0, 0.085, 0.1], [0, 0, 0], face); // the nose shows where the face points
+  add("head", new THREE.BoxGeometry(0.11, 0.022, 0.03), [0, 0.12, 0.085], [0, 0, 0], face); // the eye line
+  if (L.hat) {
+    // a knit cap down to the brow, with its folded band
+    const hat = mat(L.hat, { rough: 0.95 });
+    const dome = new THREE.SphereGeometry(1, 18, 10, 0, Math.PI * 2, 0, Math.PI * 0.42);
+    dome.scale(0.095, 0.124, 0.109);
+    add("head", dome, [0, 0.1, 0.008], [0, 0, 0], hat);
+    add("head", new THREE.CylinderGeometry(0.098, 0.1, 0.04, 20, 1, true).scale(1, 1, 1.13), [0, 0.142, 0.008], [0, 0, 0], hat);
+  }
+  if (L.beard) {
+    // a full beard: jaw and chin, with the moustache over the mouth
+    const beard = mat(L.beard, { rough: 1 });
+    add("head", ell(0.078, 0.06, 0.066), [0, 0.04, 0.05], [0, 0, 0], beard);
+    add("head", ell(0.04, 0.012, 0.02), [0, 0.066, 0.1], [0, 0, 0], beard);
+  }
   for (const sd of ["l", "r"]) {
     const k = sd === "l" ? 1 : -1;
-    add(`${sd}Upper`, cap(0.046, 0.3), [0, -0.15, 0]);
-    add(`${sd}Fore`, ell(0.042, 0.042, 0.042), [0, 0, 0]);
-    add(`${sd}Fore`, cap(0.039, 0.26), [0, -0.13, 0]);
-    add(`${sd}Hand`, new THREE.BoxGeometry(0.03, 0.15, 0.08), [0, -0.075, 0.005]);
-    add(`${sd}Hand`, new THREE.BoxGeometry(0.022, 0.065, 0.022), [-0.012 * k, -0.035, 0.05], [-30, 0, 0]);
-    add(`${sd}Thigh`, cap(0.075, 0.43), [0, -0.215, 0]);
-    add(`${sd}Shin`, ell(0.056, 0.056, 0.056), [0, 0, 0]);
-    add(`${sd}Shin`, cap(0.054, 0.4), [0, -0.2, 0]);
-    add(`${sd}Foot`, new THREE.BoxGeometry(0.095, 0.07, 0.26), [0, -0.005, 0.07], [0, 0, 0], dark);
+    add(`${sd}Upper`, cap(0.046, 0.3), [0, -0.15, 0], [0, 0, 0], arms);
+    add(`${sd}Fore`, ell(0.042, 0.042, 0.042), [0, 0, 0], [0, 0, 0], arms);
+    add(`${sd}Fore`, cap(0.039, 0.26), [0, -0.13, 0], [0, 0, 0], arms);
+    add(`${sd}Hand`, new THREE.BoxGeometry(0.03, 0.15, 0.08), [0, -0.075, 0.005], [0, 0, 0], skin);
+    add(`${sd}Hand`, new THREE.BoxGeometry(0.022, 0.065, 0.022), [-0.012 * k, -0.035, 0.05], [-30, 0, 0], skin);
+    add(`${sd}Thigh`, cap(0.075, 0.43), [0, -0.215, 0], [0, 0, 0], bottom);
+    add(`${sd}Shin`, ell(0.056, 0.056, 0.056), [0, 0, 0], [0, 0, 0], bottom);
+    add(`${sd}Shin`, cap(0.054, 0.4), [0, -0.2, 0], [0, 0, 0], bottom);
+    add(`${sd}Foot`, new THREE.BoxGeometry(0.095, 0.07, 0.26), [0, -0.005, 0.07], [0, 0, 0], shoes);
   }
   const fig = { kind: "human", root, skel, bones, meshes, color, height, build, preset: "stand", limbs: {}, hipsRest: bones.hips.position.clone() };
   for (const [k, L] of Object.entries(LIMBS)) {

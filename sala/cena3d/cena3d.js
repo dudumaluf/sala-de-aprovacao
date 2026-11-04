@@ -447,7 +447,9 @@ function defaults() {
 const camOf = (c) => ({ pos: c.pos, target: c.target, lens: c.lens, preset: c.id });
 function addFigure(c) {
   const kind = c.kind || "human";
-  const fig = kind === "human" ? makeHuman({ height: c.height || 1.75, color: c.color, build: c.build || "m", name: c.name }) : makeAnimal(kind, { name: c.name });
+  // the wardrobe comes from the set (sets.js cast `look`), never from a saved state, so a set's look reaches old states
+  const look = E.set?.cast?.find((s) => `${s.item}:${s.name}` === c.key)?.look || null;
+  const fig = kind === "human" ? makeHuman({ height: c.height || 1.75, color: c.color, build: c.build || "m", name: c.name, look }) : makeAnimal(kind, { name: c.name });
   Object.assign(fig, { key: c.key, name: c.name, itemTitle: c.item || "", visible: c.visible !== false });
   fig.root.position.set(...(c.pos || c.at || [0, 0, 0]));
   fig.root.rotation.y = (c.ry || 0) * D2R;
