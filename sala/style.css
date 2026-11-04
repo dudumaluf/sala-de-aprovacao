@@ -1929,6 +1929,8 @@ body.est-open .update-bar { bottom: auto; top: 6px; height: 40px; }
 .est-pick[hidden] { display: none; }
 .est-pick-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .est-pick-head .grow { flex: 1; }
+/* Substituir (a circle's menu): which reference the pick replaces */
+.est-pswap { color: var(--muted); font-size: 12px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-left: -2px; }
 /* its tabs (Aprovadas, Geradas, Material, 3D…) with how many each holds for the scene and the word picked */
 .est-ptabs { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line2); border-radius: 999px; }
 .est-ptabs button { display: inline-flex; align-items: baseline; gap: 5px; height: 26px; padding: 0 11px; border: 0; border-radius: 999px; background: none; color: var(--muted); font: 12.5px/26px var(--sans); white-space: nowrap; cursor: pointer; }

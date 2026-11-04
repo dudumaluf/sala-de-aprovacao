@@ -1918,7 +1918,7 @@ function pickMention(j) {
   const sel = getSelection(), after = document.createRange();
   after.setStart(space, 1); after.collapse(true);
   sel.removeAllRanges(); sel.addRange(after);
-  if (!E.refs.some((r) => r.path === x.path) && E.base?.path !== x.path) E.refs.push({ path: x.path, preview: x.preview || null, thumb: x.o && x.kind === "image" ? thumbUrl(x.o) : "", label: x.label, kind: x.kind });
+  if (!E.refs.some((r) => r.path === x.path) && E.base?.path !== x.path) E.refs.push({ path: x.path, preview: x.preview || null, thumb_path: x.o?.thumb_path || null, thumb: x.o && x.kind === "image" ? thumbUrl(x.o) : "", label: x.label, kind: x.kind });
   E.mention = null;
   $(".est-mention").hidden = true;
   editor()?.classList.remove("empty");
@@ -2284,10 +2284,13 @@ function close() {
 const SESSION = ["mode", "item", "base", "refs", "strokes", "notes", "hist", "tool", "color", "scene", "round", "blocking", "view", "areas", "ai", "xf",
   "model", "aspect", "res", "quality", "count", "kind", "vmodel", "vaspect", "vres", "dur", "sound", "dest", "parent", "recipeKey", "cam", "camWoven",
   "recipes", "recWoven", "railMode"];
-function openRef(i) {
+async function openRef(i) {
   const { ctx } = E, r = E.refs[i];
-  const o = r && (r.kind || "image") === "image" ? ctx.S.options.find((x) => x.path === r.path) : null;
-  if (!o) return ctx.toast(r?.kind && r.kind !== "image" ? "Dá pra editar só as imagens." : "Esta imagem veio de fora da sala: dá pra tirar, não editar.", true);
+  if (!r) return;
+  if ((r.kind || "image") !== "image") return ctx.toast("Dá pra editar só as imagens.", true);
+  // a file from outside the room becomes an option of this card first (adoptRef)
+  const o = refOpt(r) || (await adoptRef(r));
+  if (!o || !E.root) return;
   const title = E.blocking ? "Render do blocking" : E.mode === "create" ? "Criar" : isVideo() ? "Vídeo com IA" : "Editar com IA";
   const snap = { ...Object.fromEntries(SESSION.map((k) => [k, E[k]])), prompt: promptText() };
   teardown();
@@ -2353,7 +2356,7 @@ async function swapRef(ref, id) {
   if (o && o.path !== ref.path) {
     await ctx.sign([o.thumb_path || o.preview_path || o.path]);
     const old = ref.path, here = !!E.root && E.refs.includes(ref);
-    Object.assign(ref, { path: o.path, preview: o.preview_path || null, thumb: thumbUrl(o) });
+    Object.assign(ref, { path: o.path, preview: o.preview_path || null, thumb_path: o.thumb_path || null, thumb: thumbUrl(o) });
     if (here) {
       E.root.querySelectorAll(".est-tok").forEach((t) => { if (t.dataset.path !== old) return; t.dataset.path = o.path; const im = t.querySelector("img"); if (im) im.src = ref.thumb; });
       E.prompt = promptText();
@@ -2361,6 +2364,83 @@ async function swapRef(ref, id) {
     if (here || (E.root && E.parent?.ref === ref)) ctx.toast(`✦ ${ref.label}: a versão nova já está na geração`);
   }
   if (E.root) { syncChips(); if (E.parent) syncView(); }
+}
+// the text's inline references to one file now stand for another (a copy, a swap): its path, its picture and its name
+function retoken(old, ref) {
+  let n = 0;
+  E.root?.querySelectorAll(".est-tok").forEach((t) => {
+    if (t.dataset.path !== old) return;
+    const tmp = document.createElement("span");
+    tmp.innerHTML = tokHTML({ path: ref.path, kind: ref.kind || "image", label: ref.label, thumb: ref.thumb });
+    t.replaceWith(tmp.firstChild);
+    n++;
+  });
+  if (n) E.prompt = promptText();
+  return n;
+}
+// Substituir (a circle's menu): what was picked takes the reference's place, in its circle (its @ number stays) and in
+// the text wherever it is named; the role stays when it fits the new kind. Already in another circle, that one leaves
+function swapIn(old, ref) {
+  const { ctx } = E, i = E.refs.indexOf(old);
+  if (i < 0 || !E.root) return;
+  if (ref.path === old.path) return ctx.toast("É a mesma referência.");
+  const kind = ref.kind || "image", role = old.role && (ROLES[kind] || []).some(([k]) => k === old.role) ? old.role : null;
+  const nu = { ...ref, ...(role && { role }) };
+  E.refs[i] = nu;
+  const j = E.refs.findIndex((x, n) => n !== i && x.path === nu.path);
+  if (j >= 0) E.refs.splice(j, 1);
+  const n = retoken(old.path, nu);
+  syncChips();
+  ctx.toast(`${old.label} → ${nu.label}: trocada na bolinha${n ? " e no texto" : ""}`);
+}
+// a reference that came from outside the room (the computer, a kit, the material) is edited as an option of this card: a
+// copy of its file goes in, out of what the client sees (envio), and its edits are versions of it that come back into the
+// circle. A copy, because deleting that option deletes its files and the material's file must stay. Once per circle
+const ADOPT = new WeakMap();
+function adoptRef(r) {
+  if (!ADOPT.has(r)) ADOPT.set(r, adopt(r).finally(() => ADOPT.delete(r)));
+  return ADOPT.get(r);
+}
+async function adopt(r) {
+  const { ctx } = E, it = E.item;
+  if (!it) { ctx.toast("Esta referência veio de fora da sala: abra o estúdio por um card pra editá-la nele.", true); return null; }
+  const f = refFile(r), kind = r.kind || "image", id = crypto.randomUUID(), done = new Map();
+  const B = ctx.sb.storage.from(ctx.bucket || "media");
+  const extOf = (p) => (p.match(/\.([a-z0-9]{2,5})$/i)?.[1] || "").toLowerCase();
+  const copy = async (from, tail) => {
+    if (!from) return null;
+    if (!done.has(from)) {
+      const to = `items/${it.id}/${id}${tail}.${extOf(from) || (kind === "video" ? "mp4" : "jpg")}`;
+      const { error } = await B.copy(from, to);
+      if (error) throw error;
+      done.set(from, to);
+    }
+    return done.get(from);
+  };
+  ctx.toast(`Trazendo ${r.label} pro card…`);
+  try {
+    const path = await copy(r.path, "");
+    const preview = await copy(r.preview || f?.preview_path, ".preview").catch(() => null);
+    const thumb = await copy(r.thumb_path || f?.thumb_path, ".thumb").catch(() => null);
+    const ext = extOf(r.path);
+    const mime = f?.mime || { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp", mp4: "video/mp4", mov: "video/quicktime", webm: "video/webm" }[ext] || (kind === "video" ? "video/mp4" : "image/jpeg");
+    // the option and its envio row are made together (adopt_ref), so the client never receives it
+    const { error } = await ctx.sb.rpc("adopt_ref", {
+      p_id: id, p_item: it.id, p_path: path, p_preview: preview, p_thumb: thumb, p_mime: mime, p_name: (f?.name || `${r.label}.${ext || "jpg"}`).slice(0, 120),
+      p_by: ctx.myName(), p_caption: `Referência · ${r.label}`.slice(0, 140),
+    });
+    if (error) throw error;
+    await ctx.refresh();
+    const old = r.path;
+    Object.assign(r, { path, preview, thumb_path: thumb });
+    retoken(old, r);
+    if (E.root) syncChips();
+    ctx.toast(`${r.label} virou opção de ${it.title}, fora do envio`);
+    return ctx.S.options.find((x) => x.id === id) || null;
+  } catch (err) {
+    ctx.toast(`Não deu pra trazer ${r.label} pra sala: ${err.message || err}`, true);
+    return null;
+  }
 }
 // a voice take plays or stops (the picker, the @ list and a voice circle's menu); the picker and the @ list show which
 async function togglePlay(path) {
@@ -2424,7 +2504,7 @@ async function pvShow(i) {
   const el = document.createElement("div");
   el.className = `est-pv est-pv-${kind}`;
   const wave = Array.from({ length: 30 }, (_, k) => `<i style="height:${Math.round(8 + 22 * Math.abs(Math.sin(k * 1.7)) + 12 * Math.abs(Math.sin(k * 0.6)))}px"></i>`).join("");
-  const how = [role ? `Papel: ${role[1]}` : "", kind === "image" && o ? "clique: editar" : "", "botão direito: mais"].filter(Boolean).join(" · ");
+  const how = [role ? `Papel: ${role[1]}` : "", kind === "image" && (o || E.item) ? "clique: editar" : "", "botão direito: mais"].filter(Boolean).join(" · ");
   el.innerHTML = `<div class="est-pv-m">${kind === "audio" ? `<div class="est-pv-wave">${wave}</div>` : r.thumb ? `<img src="${esc(r.thumb)}" alt="">` : ""}${kind === "image" ? "" : '<i class="est-pv-bar"></i><span class="est-pv-snd"></span>'}</div>
     <div class="est-pv-i">${tag ? `<b>${esc(tag)}</b>` : ""}${esc(r.label)}<small>${esc(how)}</small></div>`;
   E.root.append(el);
@@ -2475,8 +2555,9 @@ function onCtx(e) {
   pvHide();
   cmOpen(+chip.dataset.i, e.clientX, e.clientY);
 }
-// the menu, by what the circle is: an image, a video or a voice. A file that came from outside the room (a computer, a kit)
-// can be used, looked at and taken out, but not edited: its new version would have no card to live in
+// the menu, by what the circle is: an image, a video or a voice. Substituir opens the + to pick what takes its place. A
+// file that came from outside the room (the computer, a kit, the material) is edited as an option of this card
+// (adoptRef); in a studio with no card it can be used, looked at, swapped and taken out
 function cmOpen(i, x, y) {
   cmClose();
   const r = E.refs[i];
@@ -2485,15 +2566,15 @@ function cmOpen(i, x, y) {
   const it = (k, label, { small = "", dis = false, cls = "", v } = {}) =>
     `<button type="button" class="est-cm-it ${cls}" data-k="${k}"${v != null ? ` data-v="${esc(v)}"` : ""}${dis ? " disabled" : ""} role="menuitem">${label}${small ? `<small>${esc(small)}</small>` : ""}</button>`;
   const sub = (label, small, inner) => `<div class="est-cm-it sub" tabindex="0" role="menuitem" aria-haspopup="true">${label}<small>${esc(small)} ▸</small><div class="est-cm-sub" role="menu">${inner}</div></div>`;
-  const sep = '<div class="est-cm-sep"></div>', outside = "veio de fora da sala";
-  const out = [kind === "audio" ? it("cm-play", E.playing === r.path ? "Parar" : "Ouvir") : it("cm-big", "Ver grande")];
+  const sep = '<div class="est-cm-sep"></div>', outside = "veio de fora da sala", home = !o && !!E.item;
+  const out = [kind === "audio" ? it("cm-play", E.playing === r.path ? "Parar" : "Ouvir") : it("cm-big", "Ver grande"), it("cm-swap", "Substituir", { small: "abre o +" })];
   if (kind === "image") {
-    out.push(it("cm-edit", "Editar com IA", { small: o ? "volta pra bolinha" : outside, dis: !o }));
+    out.push(it("cm-edit", "Editar com IA", { small: o ? "volta pra bolinha" : home ? "vira opção do card, fora do envio" : outside, dis: !o && !home }));
     const vers = o ? versionsOf(o) : [], vi = vers.findIndex((x) => x.id === o?.id);
     if (vers.length > 1 && vi >= 0) out.push(`<div class="est-cm-row"><span>Versão</span><span class="est-cm-step">${it("cm-ver", "‹", { v: vers[(vi - 1 + vers.length) % vers.length].id, cls: "mini" })}<small>${vi + 1}/${vers.length}</small>${it("cm-ver", "›", { v: vers[(vi + 1) % vers.length].id, cls: "mini" })}</span></div>`);
   }
   if (kind === "video") {
-    out.push(o ? sub("Editar vídeo", "", VIDEO_MODELS.filter((m) => m.way === "edit" || m.way === "guide").map((m) => it("cm-vedit", m.name, { v: m.id, small: EDIT_SAYS[m.id] || "", cls: "two" })).join(""))
+    out.push(o || home ? sub("Editar vídeo", o ? "" : "vira opção do card", VIDEO_MODELS.filter((m) => m.way === "edit" || m.way === "guide").map((m) => it("cm-vedit", m.name, { v: m.id, small: EDIT_SAYS[m.id] || "", cls: "two" })).join(""))
       : it("cm-vedit", "Editar vídeo", { small: outside, dis: true }));
     out.push(it("cm-frame", "Tirar um quadro", { small: "vira imagem" }));
   }
@@ -2528,6 +2609,17 @@ async function cmAct(k, v) {
   if (k === "cm-edit") return openRef(i);
   if (k === "cm-vedit") return openVideoRef(i, v);
   if (k === "cm-ver") return swapRef(r, v);
+  // Substituir: the + opens on the tab where a file like this one lives; what is picked there takes its place (swapIn)
+  if (k === "cm-swap") {
+    const kind = r.kind || "image", video = isVideo();
+    Object.assign(E, { swapAt: r, pick: true, pickBase: false, pmore: 1 });
+    if (kind === "audio" && video) E.ptab = "voz";
+    else if (kind === "video" && video) E.ptab = "vid";
+    else if (refFile(r)) E.ptab = "mat";
+    else if (refOpt(r)?.model === BLOCKING) E.ptab = "3d";
+    else if (["vid", "voz"].includes(E.ptab)) E.ptab = "ok";
+    return syncPicker();
+  }
   if (k === "cm-role") {
     if (v) r.role = v; else delete r.role;
     syncChips();
@@ -2549,16 +2641,18 @@ async function cmAct(k, v) {
 }
 // a video of the room opens in the studio with the model picked in the menu (Seedance's edit or a Genjutsu mode), the
 // generation waiting behind it; what it makes lands on the video's card and its newest goes back into the circle (swapRef)
-function openVideoRef(i, vm) {
-  const { ctx } = E, r = E.refs[i], o = r?.kind === "video" ? refOpt(r) : null;
-  if (!o) return ctx.toast("Este vídeo veio de fora da sala: dá pra usar e tirar, ainda não editar.", true);
+async function openVideoRef(i, vm) {
+  const { ctx } = E, r = E.refs[i];
+  if (r?.kind !== "video") return;
+  const o = refOpt(r) || (await adoptRef(r));
+  if (!o || !E.root) return;
   const it = ctx.itemOf(o.item_id);
   if (!it || !VIDEO_MODELS.some((m) => m.id === vm)) return;
   const title = E.blocking ? "Render do blocking" : E.mode === "create" ? "Criar" : isVideo() ? "Vídeo com IA" : "Editar com IA";
   const snap = { ...Object.fromEntries(SESSION.map((k) => [k, E[k]])), prompt: promptText() };
   teardown();
   open(ctx, { mode: "create", kind: "video", vmodel: vm, item: it, round: it.round_id, scene: it.scene, base: null, blocking: false,
-    refs: [{ path: o.path, preview: o.preview_path || null, thumb: thumbUrl(o), label: r.label, kind: "video" }], prompt: "", parent: { snap, ref: r, title } });
+    refs: [{ path: o.path, preview: o.preview_path || null, thumb_path: o.thumb_path || null, thumb: thumbUrl(o), label: r.label, kind: "video" }], prompt: "", parent: { snap, ref: r, title } });
 }
 // Ver grande: the image, the video or the voice in a player over the studio (Esc or a click outside closes it). A video
 // can give the frame on screen as a new image reference, right after it
@@ -2599,7 +2693,7 @@ async function bigFrame() {
   try {
     const m = await ctx.putFile("estudio/refs", new File([blob], `quadro-${sec.replace(",", "_")}s.jpg`, { type: "image/jpeg" }));
     await ctx.sign([m.thumb_path || m.path]);
-    const ref = { path: m.path, preview: m.preview_path || null, thumb: ctx.urls.get(m.thumb_path || m.path) || "", label: `Quadro ${sec} s · ${r.label}`.slice(0, 48), kind: "image" };
+    const ref = { path: m.path, preview: m.preview_path || null, thumb_path: m.thumb_path || null, thumb: ctx.urls.get(m.thumb_path || m.path) || "", label: `Quadro ${sec} s · ${r.label}`.slice(0, 48), kind: "image" };
     const at = E.refs.indexOf(r);
     E.refs.splice(at >= 0 ? at + 1 : E.refs.length, 0, ref);
     bigClose();
@@ -3016,11 +3110,12 @@ function syncChips() {
     soul ? `<span class="est-chip soul ${E.soul ? "" : "empty"}" data-k="soul" role="button" tabindex="0" aria-label="Escolher o rosto (Soul ID)">${E.soul ? (soulThumb(E.soul) ? `<img src="${esc(soulThumb(E.soul))}" alt="">` : `<i>${esc(E.soul.name.slice(0, 1).toUpperCase())}</i>`) : ICONS.face}<span class="est-tip"><span>${E.soul ? `<b>Rosto</b>${esc(E.soul.name)} · ${Math.round((E.soulK ?? 1) * 100)}%` : "Escolher o rosto"}</span><small>${E.soul ? "clique: trocar o rosto ou a força" : "um Soul ID treinado na Galeria"}</small></span></span>` : "",
     E.blocking ? "" : draw(),
     ...E.refs.map((r, i) => {
-      const can = (r.kind || "image") === "image" && E.ctx.S.options.some((o) => o.path === r.path);
+      // a file from outside the room is edited too when the studio has a card: it becomes an option of it first
+      const mine = E.ctx.S.options.some((o) => o.path === r.path), can = (r.kind || "image") === "image" && (mine || !!E.item);
       return chip(r.thumb, r.label, r.kind || "image", {
         cls: `${can ? "can" : ""} ${r.wait ? "wait" : ""} ${r.role ? "has-role" : ""}`, rm: true,
         attrs: `data-i="${i}"${can ? ` data-k="ref-open" role="button" tabindex="0" aria-label="Editar ${esc(r.label)} com IA"` : ""}`,
-        hint: r.wait ? "<small>gerando a versão nova…</small>" : can ? "<small>clique para editar</small>" : edit && r === E.refs.find((x) => x.kind === "video") ? "<small>é o vídeo editado: o resultado fica com o tempo e o quadro dele</small>" : "",
+        hint: r.wait ? "<small>gerando a versão nova…</small>" : can ? `<small>clique para editar${mine ? "" : " · vira opção do card"}</small>` : edit && r === E.refs.find((x) => x.kind === "video") ? "<small>é o vídeo editado: o resultado fica com o tempo e o quadro dele</small>" : "",
       });
     }),
     E.blocking ? draw() : "",
@@ -3326,6 +3421,10 @@ function pickOf(id) {
   if (id.startsWith("ref:")) { const x = (S.wkRefs || []).find((r) => `ref:${r.id}` === id); return x?.path ? { id, ref: true, item_id: x.item_id, path: x.path, mime: "image/jpeg", label: x.label || "Referência", name: x.label || "Referência" } : null; }
   return optOf(id);
 }
+// what a picker tile (or a voice's wave) stands for, and the reference it makes in the circles
+const pickedOf = (k, b) => (k === "ref-add" ? pickOf(b.dataset.id) || (E.item ? refImgs(E.item) : []).find((r) => r.id === b.dataset.id) : E.ctx.S.files.find((f) => f.id === b.dataset.id));
+const pickedRef = (k, o, b) => (k === "ref-voice" ? { path: o.path, thumb: "", label: voiceName(o, E.ctx.itemOf(b.dataset.item)), kind: "audio" }
+  : { path: o.path, preview: o.preview_path || null, thumb_path: o.thumb_path || null, thumb: isImg(o) ? thumbUrl(o) : "", label: nameOf(o), kind: isImg(o) ? "image" : "video" });
 // the room's items and ✓/✕ by id, made fresh for each list (a list sorts and names hundreds of tiles); the first review of
 // an option is its verdict, as a find() gives it
 function lookups(S) {
@@ -3367,7 +3466,8 @@ async function syncPicker() {
   const p = $(".est-pick");
   if (!p) return;
   p.hidden = !E.pick;
-  if (!E.pick) return;
+  // closed, the picker forgets a Substituir it was open for
+  if (!E.pick) { E.swapAt = null; return; }
   const { ctx } = E, S = ctx.S, video = isVideo() && !E.pickBase;
   const tabs = pickTabs(video);
   if (!tabs.some(([k]) => k === E.ptab)) E.ptab = "ok";
@@ -3393,7 +3493,7 @@ async function syncPicker() {
   // redrawn on every pick and every letter typed: the scroll and the search box stay as they were
   const top = p.querySelector(".est-pick-body")?.scrollTop || 0, sx = document.activeElement?.dataset?.k === "pq" ? document.activeElement : null;
   const caret = sx ? [sx.selectionStart, sx.selectionEnd] : null;
-  p.innerHTML = `<div class="est-pick-head">${E.pickBase ? "<b>Base</b>" : ""}
+  p.innerHTML = `<div class="est-pick-head">${E.pickBase ? "<b>Base</b>" : E.swapAt ? `<b>Substituir</b><span class="est-pswap" title="${esc(E.swapAt.label)}">${esc(E.swapAt.label)}</span>` : ""}
       <div class="est-ptabs" role="tablist" aria-label="Material da sala">${tabs.map(([k, n]) => `<button class="${k === E.ptab ? "on" : ""}" data-k="ptab" data-v="${k}" role="tab" aria-selected="${k === E.ptab}">${n}<small>${counts[k]}</small></button>`).join("")}</div>
       <label class="est-pill" title="De qual cena"><select data-k="pscope">${here != null ? `<option value="here" ${E.pscope === "here" ? "selected" : ""}>Esta cena</option>` : ""}<option value="all" ${scope == null ? "selected" : ""}>Todas as cenas</option>${scenes.map((n) => `<option value="${n}" ${E.pscope === String(n) ? "selected" : ""}>${String(n).padStart(2, "0")} ${esc(ctx.sceneName(n))}</option>`).join("")}</select></label>
       <label class="est-psearch" title="Buscar pelo nome">${ICONS.search}<input type="search" data-k="pq" placeholder="Buscar" value="${esc(E.pq || "")}" aria-label="Buscar pelo nome"></label>
@@ -3423,7 +3523,7 @@ async function onClick(e) {
   const ai = b.closest(".est-area")?.dataset.i;
   if (k === "area-x") return dropArea(ai != null ? +ai : E.ai);
   if (k === "area-sel") return showArea(+ai);
-  if (k === "area-ref") { showArea(+ai); E.pick = true; E.pickBase = false; return syncPicker(); }
+  if (k === "area-ref") { showArea(+ai); E.pick = true; E.pickBase = false; E.swapAt = null; return syncPicker(); }
   if (k === "area-next") return showArea((E.ai + 1) % E.areas.length);
   if (k?.startsWith("xf-")) return xfAct(k, e.shiftKey);
   if (b.dataset.color) {
@@ -3446,7 +3546,7 @@ async function onClick(e) {
   if (k === "save") return saveDrawing();
   if (k === "sound") { E.sound = !E.sound; return syncBar(); }
   if (k === "pick") { E.pick = !E.pick; E.pickBase = false; return syncPicker(); }
-  if (k === "pick-base") { E.pick = true; E.pickBase = true; return syncPicker(); }
+  if (k === "pick-base") { E.pick = true; E.pickBase = true; E.swapAt = null; return syncPicker(); }
   // Soul 2's face: open the trained faces (fresh from the table), pick one
   if (k === "soul") { E.soulOpen = !E.soulOpen; if (E.soulOpen) { E.pick = false; syncPicker(); loadSouls(); } return syncSouls(); }
   if (k === "soul-pick") { E.soul = (E.souls || []).find((s) => s.id === b.dataset.id) || null; syncChips(); return syncSouls(); }
@@ -3485,13 +3585,19 @@ async function onClick(e) {
   if (k === "up") return goBack();
   if (k === "use-ref") { if (E.parent && optOf(b.dataset.id)) await swapRef(E.parent.ref, b.dataset.id); return; }
   if (k === "ref-rm") { E.refs.splice(+b.closest("[data-i]").dataset.i, 1); return syncChips(); }
+  // Substituir (a circle's menu): the tile picked takes that reference's place, and the picker closes
+  if ((k === "ref-add" || k === "ref-voice") && E.swapAt) {
+    const old = E.swapAt, o = pickedOf(k, b);
+    E.pick = false; syncPicker();
+    if (o) swapIn(old, pickedRef(k, o, b));
+    return;
+  }
   if (k === "ref-add" || k === "ref-voice") {
-    const o = k === "ref-add" ? pickOf(b.dataset.id) || (E.item ? refImgs(E.item) : []).find((r) => r.id === b.dataset.id) : ctx.S.files.find((f) => f.id === b.dataset.id);
+    const o = pickedOf(k, b);
     if (!o) return;
     const i = E.refs.findIndex((r) => r.path === o.path);
     if (i >= 0) E.refs.splice(i, 1);
-    else if (k === "ref-voice") E.refs.push({ path: o.path, thumb: "", label: voiceName(o, ctx.itemOf(b.dataset.item)), kind: "audio" });
-    else E.refs.push({ path: o.path, preview: o.preview_path || null, thumb: isImg(o) ? thumbUrl(o) : "", label: nameOf(o), kind: isImg(o) ? "image" : "video" });
+    else E.refs.push(pickedRef(k, o, b));
     syncChips(); return syncPicker();
   }
   if (k === "play") return togglePlay(b.dataset.path);
@@ -3643,25 +3749,37 @@ async function onChange(e) {
         return setBase({ id: null, item_id: E.item?.id ?? null, path: m.path, preview_path: m.preview_path || null, thumb_path: m.thumb_path || null, mime: m.mime, name: m.name });
       } catch (err) { return E.ctx.toast(`${f.name}: ${err.message || "falhou"}`, true); }
     }
+    // Substituir: a file from the computer takes the circle's place
+    if (E.swapAt) {
+      const old = E.swapAt, f = files.find((x) => refFileOk(x, isVideo()));
+      E.pick = false; syncPicker();
+      if (!f) return E.ctx.toast(isVideo() ? "Entram imagens, vídeos e vozes." : "Entram imagens (vídeo e voz só no modo vídeo).", true);
+      try { return swapIn(old, await fileRef(f)); } catch (err) { return E.ctx.toast(`${f.name || "Arquivo"}: ${err.message || "falhou"}`, true); }
+    }
     await addRefFiles(files);
   }
 }
 // files from the computer become references: the picker's Do computador, a paste (⌘V) anywhere in the studio, or a drop
 // on it. A pasted image has no name of its own, so it is "Colada 1", "Colada 2"…; a paste in the text also puts it there
 // inline, where the caret was
+const refFileOk = (f, video) => f.type.startsWith("image/") || (video && /^(video|audio)\//.test(f.type));
+// a file from the computer, stored, as a reference: by its own name, or "Colada N" for a pasted image that has none
+async function fileRef(f) {
+  const kind = f.type.startsWith("audio/") ? "audio" : f.type.startsWith("video/") ? "video" : "image";
+  const m = await E.ctx.putFile("estudio/refs", f);
+  if (kind === "image") await E.ctx.sign([m.thumb_path || m.path]);
+  const named = f.name && !/^(image|imagem|screenshot|captura)[\s._-]*\d*\.\w+$/i.test(f.name);
+  const label = named ? f.name.replace(/\.[^.]+$/, "").slice(0, 40) : `Colada ${E.refs.filter((r) => /^Colada \d+$/.test(r.label)).length + 1}`;
+  return { path: m.path, preview: m.preview_path || null, thumb_path: m.thumb_path || null, thumb: kind === "image" ? E.ctx.urls.get(m.thumb_path || m.path) || "" : "", label, kind };
+}
 async function addRefFiles(files, { inline = false } = {}) {
   const video = isVideo();
-  const ok = files.filter((f) => f.type.startsWith("image/") || (video && /^(video|audio)\//.test(f.type)));
+  const ok = files.filter((f) => refFileOk(f, video));
   if (!ok.length) return E.ctx.toast(video ? "Entram imagens, vídeos e vozes." : "Entram imagens (vídeo e voz só no modo vídeo).", true);
   const at = inline ? saveCaret() : null;
   for (const f of ok) {
     try {
-      const kind = f.type.startsWith("audio/") ? "audio" : f.type.startsWith("video/") ? "video" : "image";
-      const m = await E.ctx.putFile("estudio/refs", f);
-      if (kind === "image") await E.ctx.sign([m.thumb_path || m.path]);
-      const named = f.name && !/^(image|imagem|screenshot|captura)[\s._-]*\d*\.\w+$/i.test(f.name);
-      const label = named ? f.name.replace(/\.[^.]+$/, "").slice(0, 40) : `Colada ${E.refs.filter((r) => /^Colada \d+$/.test(r.label)).length + 1}`;
-      const ref = { path: m.path, preview: m.preview_path || null, thumb: kind === "image" ? E.ctx.urls.get(m.thumb_path || m.path) || "" : "", label, kind };
+      const ref = await fileRef(f);
       E.refs.push(ref);
       if (at && E.root) putTokenAt(at, ref);
     } catch (err) { E.ctx.toast(`${f.name || "Imagem"}: ${err.message || "falhou"}`, true); }
@@ -3857,7 +3975,7 @@ export async function openKit(ctx, { itemId }) {
   if (!k) return openCreate(ctx, { roundId: it.round_id, scene: it.scene, itemId });
   const list = Array.isArray(k.refs) ? k.refs : [];
   await ctx.sign(list.map((r) => r.thumb_path).filter(Boolean)).catch(() => {});
-  const refs = list.map((r) => ({ path: r.path, preview: r.preview || null, thumb: r.thumb_path ? ctx.urls.get(r.thumb_path) || "" : "", label: r.label || "Referência", kind: r.kind || "image", ...(r.role && { role: r.role }) }));
+  const refs = list.map((r) => ({ path: r.path, preview: r.preview || null, thumb_path: r.thumb_path || null, thumb: r.thumb_path ? ctx.urls.get(r.thumb_path) || "" : "", label: r.label || "Referência", kind: r.kind || "image", ...(r.role && { role: r.role }) }));
   const video = k.kind !== "image";
   const known = (list2, id) => (list2.some((m) => m.id === id) ? id : list2[0].id);
   open(ctx, {
@@ -3878,7 +3996,7 @@ async function saveKit() {
     return x ? x.thumb_path || x.preview_path || (kind === "image" ? x.path : null) : kind === "image" ? path : null;
   };
   const base = E.base ? [{ path: E.base.path, preview: E.base.preview_path || null, thumb_path: E.base.thumb_path || E.base.preview_path || E.base.path, label: "Base", kind: "image" }] : [];
-  const refs = [...base, ...E.refs.filter((r) => !r.wait).map((r) => ({ path: r.path, preview: r.preview || null, thumb_path: thumbOf(r.path, r.kind || "image"), label: r.label, kind: r.kind || "image", ...(r.role && { role: r.role }) }))];
+  const refs = [...base, ...E.refs.filter((r) => !r.wait).map((r) => ({ path: r.path, preview: r.preview || null, thumb_path: r.thumb_path || thumbOf(r.path, r.kind || "image"), label: r.label, kind: r.kind || "image", ...(r.role && { role: r.role }) }))];
   const kit = { kind: video ? "video" : "image", model: video ? E.vmodel : E.model, dur: E.dur, vres: E.vres, vaspect: E.vaspect, sound: !!E.sound, aspect: E.aspect, res: E.res, refs, prompt: promptText() };
   try { await ctx.saveKit(it.id, kit); ctx.toast(`Kit guardado em ${it.title}: o ✦ do card abre assim`); }
   catch (err) { console.error(err); ctx.toast(`Não guardou o kit: ${err.message || err}`, true); }
@@ -3905,7 +4023,7 @@ export async function openWith(ctx, { baseId = null, refs = [], roundId = null, 
     const n = (seen.get(label) || 0) + 1;
     seen.set(label, n);
     if (n > 1) label = `${label} #${n}`;
-    return { path: o?.path || r.path, preview: o?.preview_path || r.preview_path || null, thumb: ctx.urls.get(r.thumb_path || r.preview_path || r.path) || "", label, kind: "image" };
+    return { path: o?.path || r.path, preview: o?.preview_path || r.preview_path || null, thumb_path: o?.thumb_path || r.thumb_path || null, thumb: ctx.urls.get(r.thumb_path || r.preview_path || r.path) || "", label, kind: "image" };
   });
   if (base) return open(ctx, { mode: "edit", base, item: ctx.itemOf(base.item_id), refs: list });
   const items = ctx.S.items.filter((i) => i.round_id === roundId && i.scene === scene).sort((a, b) => a.sort - b.sort);

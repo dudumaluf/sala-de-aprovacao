@@ -678,6 +678,25 @@ begin
   if not found then raise exception 'comment not found, or not from this side'; end if;
 end $$;
 
+-- The studio edits a reference that came from outside the room (the computer, a kit, the material): its copy, already
+-- under the card in storage, becomes an option of the card out of what the client sees in this version (envio), in one
+-- go, so the client never receives it. Team only.
+create or replace function public.adopt_ref(p_id uuid, p_item uuid, p_path text, p_preview text, p_thumb text, p_mime text,
+  p_name text, p_by text, p_caption text) returns uuid
+language plpgsql security definer set search_path = '' as $$
+declare v integer;
+begin
+  if not public.is_team() then raise exception 'team only'; end if;
+  select coalesce(r.version, 1) into v from public.items i join public.rounds r on r.id = i.round_id where i.id = p_item;
+  if v is null then raise exception 'item not found'; end if;
+  insert into public.options (id, item_id, path, preview_path, thumb_path, mime, name, created_by, version, caption, reasoning)
+  values (p_id, p_item, p_path, p_preview, p_thumb, coalesce(p_mime, ''), left(coalesce(p_name, ''), 120), left(coalesce(p_by, ''), 60), v,
+    left(coalesce(p_caption, ''), 140), 'Veio de fora da sala (do computador, de um kit ou do material) e entrou neste card pra ser editada no estúdio. Fica fora do envio.');
+  insert into public.envio (option_id, version, include, by, updated_at) values (p_id, v, false, left(coalesce(p_by, ''), 60), now())
+  on conflict (option_id, version) do update set include = false, by = excluded.by, updated_at = now();
+  return p_id;
+end $$;
+
 -- ---------- the studio's API key (server side only) ----------
 -- The edge function `estudio` (supabase/functions/estudio) needs the image/video API key. The simplest way is an Edge
 -- Function secret named HF_KEY (Dashboard → Edge Functions → Secrets); the function reads it first. If you prefer
@@ -699,6 +718,7 @@ revoke execute on function public.confirm_round(text, text) from public, anon;
 revoke execute on function public.set_request_note(uuid, text) from public, anon;
 revoke execute on function public.edit_comment(uuid, text) from public, anon;
 revoke execute on function public.delete_comment(uuid, boolean, text) from public, anon;
+revoke execute on function public.adopt_ref(uuid, uuid, text, text, text, text, text, text, text) from public, anon;
 revoke execute on function public.option_dropped(uuid) from public, anon;
 revoke execute on function public.item_shown(uuid) from public, anon;
 grant execute on function public.decide(uuid, uuid, text, text) to authenticated, service_role;
@@ -706,6 +726,7 @@ grant execute on function public.confirm_round(text, text) to authenticated, ser
 grant execute on function public.set_request_note(uuid, text) to authenticated, service_role;
 grant execute on function public.edit_comment(uuid, text) to authenticated, service_role;
 grant execute on function public.delete_comment(uuid, boolean, text) to authenticated, service_role;
+grant execute on function public.adopt_ref(uuid, uuid, text, text, text, text, text, text, text) to authenticated, service_role;
 grant execute on function public.option_dropped(uuid) to authenticated, service_role;
 grant execute on function public.item_shown(uuid) to authenticated, service_role;
 revoke all on function public.estudio_hf_key() from public, anon, authenticated;
