@@ -133,6 +133,8 @@ function fmtDeadline(ts) {
 }
 const fmtTime = (ts) => new Date(ts).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: TZ }).replace(",", " ·");
 
+// the paste shortcut as this computer has it, for the hints
+const PASTE_KEY = /mac|iphone|ipad|ipod/i.test(navigator.userAgentData?.platform || navigator.platform || navigator.userAgent) ? "⌘V" : "Ctrl+V";
 let toastTimer;
 // act: { label, fn } adds a button to the toast (Desfazer) and keeps it up longer
 function toast(msg, err = false, act = null) {
@@ -698,16 +700,50 @@ async function uploadMany(key, prefix, files, save) {
   await refresh();
   return done;
 }
+// what a card can take: images and videos the browser shows. A file the browser gave no type (Windows does, for some) is
+// typed by its extension; a format no browser shows on a card (it would come in as a broken image) is turned away by name
+const MEDIA_EXT = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", jfif: "image/jpeg", pjpeg: "image/jpeg", pjp: "image/jpeg", webp: "image/webp", gif: "image/gif", avif: "image/avif", bmp: "image/bmp", mp4: "video/mp4", m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm" };
+const NO_SHOW_TYPE = /^(image\/(tiff|heic|heif|x-exr|vnd\.adobe\.photoshop|x-photoshop|psd)|video\/(x-matroska|x-msvideo))$/i;
+const NO_SHOW_EXT = /\.(tiff?|heic|heif|exr|psd|dng|cr2|nef|arw|raw|mkv|avi)$/i;
+const noShow = (f) => NO_SHOW_TYPE.test(f.type) || NO_SHOW_EXT.test(f.name);
+function asMedia(f) {
+  if (noShow(f)) return null;
+  if (/^(image|video)\//.test(f.type)) return f;
+  const type = MEDIA_EXT[(f.name.split(".").pop() || "").toLowerCase()];
+  return type ? new File([f], f.name, { type, lastModified: f.lastModified }) : null;
+}
+// "a.png, b.png e mais 3"
+const fileNames = (fs) => { const n = fs.map((f) => f.name); return n.length > 3 ? `${n.slice(0, 3).join(", ")} e mais ${n.length - 3}` : n.join(n.length === 2 ? " e " : ", "); };
+// the same file again on this card is asked first; a generic name (a pasted image.png) is not the same file
+const GENERIC_NAME = /^(image|imagem|img|captura|screenshot|screen shot|blob|download|unnamed|untitled)\b/i;
 async function uploadOptions(itemId, list) {
-  const files = [...list].filter((f) => f.type.startsWith("image/") || f.type.startsWith("video/"));
-  if (!files.length) return toast("Só imagens ou vídeos.", true);
+  const typed = [...list].map((f) => [f, asMedia(f)]);
+  let files = typed.filter(([, m]) => m).map(([, m]) => m);
+  const out = typed.filter(([, m]) => !m).map(([f]) => f);
+  if (out.length) {
+    const odd = out.filter(noShow);
+    toast(odd.length ? `${fileNames(odd)}: o navegador não abre esse formato. Exporte em JPG, PNG ou MP4.` : `${fileNames(out)}: só imagens ou vídeos (JPG, PNG, WEBP, MP4, MOV).`, true);
+  }
+  if (!files.length) return;
   const it = itemOf(itemId);
+  const have = new Set(S.options.filter((o) => o.item_id === itemId).map((o) => (o.name || "").toLowerCase()));
+  const again = files.filter((f) => !GENERIC_NAME.test(f.name) && have.has(f.name.toLowerCase()));
+  if (again.length && !confirm(`${fileNames(again)} ${again.length > 1 ? "já estão" : "já está"} neste card. Subir de novo?\n\nOK sobe tudo. Cancelar ${files.length > again.length ? "sobe só os novos" : "não sobe nada"}.`)) files = files.filter((f) => !again.includes(f));
+  if (!files.length) return;
+  const ids = [];
   const done = await uploadMany(itemId, `items/${itemId}`, files, async (m) => {
-    const { error } = await sb.from("options").insert({ item_id: itemId, path: m.path, preview_path: m.preview_path, thumb_path: m.thumb_path, mime: m.mime, name: m.name, created_by: myName(), version: roundOf(it?.round_id)?.version || 1 });
+    const id = crypto.randomUUID();
+    const { error } = await sb.from("options").insert({ id, item_id: itemId, path: m.path, preview_path: m.preview_path, thumb_path: m.thumb_path, mime: m.mime, name: m.name, created_by: myName(), version: roundOf(it?.round_id)?.version || 1 });
     if (error) throw error;
+    ids.push(id);
   });
   if (done && it?.status === "todo") { await sb.from("items").update({ status: "doing" }).eq("id", itemId); await refresh(); }
-  if (done) toast(done === 1 ? "Opção adicionada" : `${done} opções adicionadas`);
+  if (!done) return;
+  // what you just sent is what the card shows, lit for a moment where it is
+  pickSel(itemId, S.options.find((o) => o.id === ids[0]));
+  render(true);
+  lightCard(itemId);
+  toast(`${done === 1 ? "1 opção adicionada" : `${done} opções adicionadas`} em ${it?.title || "o card"}`);
 }
 async function uploadRequest(reqId, list) {
   const files = [...list];
@@ -1363,8 +1399,8 @@ const sheetTile = (it, o, opt = {}) => {
   return `<div class="hero csh-tile ${verdict ? `rv-${verdict}` : ""} ${isPick(it, o) ? "chosen" : ""}">${optFace(it, o, { size: "thumb", by: true, ...opt })}</div>`;
 };
 // the image picked on a card with its dots (S.ovSel) is kept by its original's id, so flipping its versions (‹ n/N ›), a
-// new version landing on it or new images arriving leave it where it was; this browser remembers it. One that is gone falls
-// back to the rule
+// new version landing on it or new images arriving leave it where it was (but the card shows the first of the images you
+// upload yourself, see uploadOptions); this browser remembers it. One that is gone falls back to the rule
 const selOf = (o) => stackRoot(o)?.id || o?.id;
 function pickSel(id, o) {
   if (!o) return;
@@ -2082,7 +2118,7 @@ const TAG_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stro
 function morePop(it) {
   const vars = Object.keys(it.variants || {}).sort();
   return `<div class="more-pop${S.moreUp ? " up" : ""}" role="dialog" aria-label="Ajustes de ${esc(it.title)}">
-    <label class="mp-act" title="Ou arraste para o card, ou cole com ⌘V">${ICON.up}<span>Subir imagens ou vídeos</span><input type="file" multiple hidden accept="image/*,video/*" data-upload-item="${it.id}"></label>
+    <label class="mp-act" title="Ou arraste para o card, ou cole com ${PASTE_KEY}">${ICON.up}<span>Subir imagens ou vídeos</span><input type="file" multiple hidden accept="image/*,video/*" data-upload-item="${it.id}"></label>
     ${optsOf(it.id).length > 1 ? `<button class="mp-act" data-act="item-zip" data-id="${it.id}">${ICON.down}<span>Baixar o pacote (.zip)</span></button>` : ""}
     <hr class="mp-sep">
     <div class="mp-row"><span>Dono</span><select class="sel mini" data-field="assignee" data-id="${it.id}" aria-label="Responsável"><option value="">Sem dono</option>${Object.entries(PEOPLE).map(([k, n]) => `<option value="${k}" ${it.assignee === k ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></div>
@@ -3496,13 +3532,18 @@ function land() {
   S.landing = null;
   const main = $app.querySelector('[data-keep="main"]');
   if (main && top) main.scrollTop = top;
-  const el = item && document.getElementById(`item-${item}`);
-  if (!el) return;
+  const el = item && lightCard(item);
+  if (el && focus) { const t = el.querySelector("input.inline.title"); t?.focus({ preventScroll: true }); t?.select(); }
+}
+// a card in view, lit for a moment (it stays lit through a redraw: S.flash)
+function lightCard(id) {
+  const el = document.getElementById(`item-${id}`);
+  if (!el) return null;
   el.scrollIntoView({ block: "nearest" });
-  S.flash = item;
+  S.flash = id;
   el.classList.add("flash");
-  setTimeout(() => { S.flash = null; document.getElementById(`item-${item}`)?.classList.remove("flash"); }, 1600);
-  if (focus) { const t = el.querySelector("input.inline.title"); t?.focus({ preventScroll: true }); t?.select(); }
+  setTimeout(() => { S.flash = null; document.getElementById(`item-${id}`)?.classList.remove("flash"); }, 1600);
+  return el;
 }
 // to a page (the one already open keeps its scroll) with a card in view, lit for a moment; focus: its title selected,
 // to rename it by typing
@@ -3743,18 +3784,28 @@ document.addEventListener("submit", async (e) => {
 
 // drag and drop: files onto an item or a request; board cards between people
 const hasFiles = (e) => { const t = [...(e.dataTransfer?.types || [])]; return t.includes("Files") || t.includes("text/uri-list"); };
-// files from Finder, or an image dragged from another page (an image generator, Drive), fetched from its URL
-async function droppedFiles(dt) {
+// what a drop or a paste brings: files (Finder, Explorer, a copied image) or an image dragged from another page (an image
+// generator, Drive): the image itself from the page's HTML (an <img> or <video> inside a link), else the link. A data:
+// image comes in as it is; a blob: one can't leave its page, and a site that doesn't let it be fetched gets the way that
+// works. Everything is read from dt before the first await: a paste's or a drop's data is gone once the event is over
+const SITE_TIP = `copie a imagem (botão direito › Copiar imagem) e cole no card com ${PASTE_KEY}, ou baixe e arraste o arquivo`;
+async function filesFrom(dt) {
   if (dt.files?.length) return [...dt.files];
-  const url = (dt.getData("text/uri-list") || "").split(/\r?\n/).find((l) => /^https?:/.test(l));
+  const html = dt.getData("text/html") || "";
+  const doc = html ? new DOMParser().parseFromString(html, "text/html") : null;
+  const srcs = doc ? [...doc.querySelectorAll("img[src], video[src], source[src]")].map((x) => x.getAttribute("src")) : [];
+  const links = (dt.getData("text/uri-list") || "").split(/\r?\n/).filter((l) => l && !l.startsWith("#"));
+  const url = [...srcs, ...links].find((u) => /^(https?|data|blob):/i.test(u || ""));
   if (!url) return [];
+  if (/^blob:/i.test(url)) { toast(`Esse site não deixa arrastar a imagem: ${SITE_TIP}.`, true); return []; }
+  const web = /^https?:/i.test(url), host = web ? new URL(url).hostname.replace(/^www\./, "") : "";
   try {
     const blob = await (await fetch(url)).blob();
     if (!/^(image|video)\//.test(blob.type)) throw new Error("not media");
-    const name = decodeURIComponent(new URL(url).pathname.split("/").pop() || "imagem").replace(/[^\w.\-]+/g, "_").slice(0, 60);
-    return [new File([blob], /\.[a-z0-9]{2,5}$/i.test(name) ? name : `${name}.${blob.type.split("/")[1]}`, { type: blob.type })];
+    const name = ((web && decodeURIComponent(new URL(url).pathname.split("/").pop() || "")) || "imagem").replace(/[^\w.\-]+/g, "_").slice(0, 60);
+    return [new File([blob], /\.[a-z0-9]{2,5}$/i.test(name) ? name : `${name}.${blob.type.split("/")[1].replace(/\W.*$/, "")}`, { type: blob.type })];
   } catch {
-    toast("Não consegui puxar essa imagem do site. Copie a imagem e cole aqui com ⌘V, ou baixe e arraste o arquivo.", true);
+    toast(`${host ? `${host} não deixou puxar a imagem` : "Não consegui puxar a imagem"}: ${SITE_TIP}.`, true);
     return [];
   }
 }
@@ -3839,7 +3890,18 @@ function reorderEnd(save) {
 
 // the board: an item card or a task dragged to a person's column
 const isCard = (e) => [...(e.dataTransfer?.types || [])].some((t) => t === "text/sala-item" || t === "text/sala-task");
+const isOrder = (e) => [...(e.dataTransfer?.types || [])].includes("text/sala-order");
+// a reorder whose dragend never came (its card was drawn again while it was dragged) must not swallow the next drag: a
+// file dropped then went to the order instead of the card
+function staleOrder(e) {
+  if (!S.reorder || isOrder(e)) return;
+  S.reorder.el?.classList.remove("reordering");
+  S.reorder = null;
+}
+// a drag that started on this page (a link, an image, a card): dropped off a card it is no upload, so nothing is said
+let innerDrag = false;
 document.addEventListener("dragstart", (e) => {
+  innerDrag = true;
   const g = e.target.closest?.("[data-grip], a[data-order]")?.closest("[data-order]");
   if (g && TEAM) return reorderStart(e, g);
   const c = e.target.closest?.("[data-card], [data-task]");
@@ -3850,11 +3912,13 @@ document.addEventListener("dragstart", (e) => {
   c.classList.add("dragging");
 });
 document.addEventListener("dragend", (e) => {
+  innerDrag = false;
   if (S.reorder) return reorderEnd(false); // dropped outside the page or Esc: a drop on the page saves first
   e.target.closest?.("[data-card], [data-task]")?.classList.remove("dragging");
 });
 document.addEventListener("dragover", (e) => {
-  if (S.reorder) return reorderOver(e);
+  if (S.reorder && isOrder(e)) return reorderOver(e);
+  staleOrder(e);
   let d = null;
   if (isCard(e)) { d = e.target.closest?.("[data-col]"); if (d) e.preventDefault(); }
   else if (hasFiles(e)) { e.preventDefault(); d = e.target.closest?.(TEAM ? "[data-drop], [data-drop-req]" : "[data-drop-req]"); }
@@ -3863,7 +3927,10 @@ document.addEventListener("dragover", (e) => {
 });
 document.addEventListener("dragleave", (e) => { if (!e.relatedTarget || !$app.contains(e.relatedTarget)) document.querySelectorAll(".over").forEach((x) => x.classList.remove("over")); });
 document.addEventListener("drop", (e) => {
-  if (S.reorder) { e.preventDefault(); return reorderEnd(true); }
+  const inner = innerDrag;
+  innerDrag = false;
+  if (S.reorder && isOrder(e)) { e.preventDefault(); return reorderEnd(true); }
+  staleOrder(e);
   document.querySelectorAll(".over").forEach((x) => x.classList.remove("over"));
   if (isCard(e)) {
     const col = e.target.closest?.("[data-col]");
@@ -3880,19 +3947,27 @@ document.addEventListener("drop", (e) => {
     return;
   }
   if (!hasFiles(e)) return;
+  const handled = e.defaultPrevented; // the studio (over the room) takes its own drops
   e.preventDefault();
   const req = e.target.closest?.("[data-drop-req]");
   const item = TEAM && e.target.closest?.("[data-drop]");
-  if (!req && !item) return;
-  droppedFiles(e.dataTransfer).then((files) => {
+  if (!req && !item) {
+    // files from outside that missed: said where they go (a board card is a link to its scene, not a drop)
+    if (!handled && !inner && $app.contains(e.target) && !document.body.classList.contains("est-open")) {
+      toast(!TEAM ? "Solte o arquivo em cima de um pedido." : e.target.closest?.("[data-card]") ? "Aqui não sobe imagem: abra a cena e solte no card de lá." : "Solte em cima de um card pra subir.", true);
+    }
+    return;
+  }
+  filesFrom(e.dataTransfer).then((files) => {
     if (!files.length) return;
     if (req) uploadRequest(req.dataset.dropReq, files);
     else uploadOptions(item.dataset.drop, files);
   });
 });
-// ⌘V pastes copied images into the item or request under the pointer
+// a paste (⌘V or Ctrl+V) puts copied images in the item or request under the pointer: the one under it now, never one
+// it passed before
 let hovered = null;
-document.addEventListener("mouseover", (e) => { hovered = e.target.closest?.(TEAM ? "[data-drop], [data-drop-req]" : "[data-drop-req]") || hovered; });
+document.addEventListener("mouseover", (e) => { hovered = e.target.closest?.(TEAM ? "[data-drop], [data-drop-req]" : "[data-drop-req]") || null; });
 document.addEventListener("mouseleave", () => (hovered = null));
 // the before/after wipe follows the mouse
 document.addEventListener("pointermove", (e) => {
@@ -3902,12 +3977,18 @@ document.addEventListener("pointermove", (e) => {
   w.style.setProperty("--x", `${Math.max(0, Math.min(100, ((e.clientX - r.left) / r.width) * 100))}%`);
 });
 document.addEventListener("paste", (e) => {
-  if (e.target.matches?.("input, textarea")) return;
-  const files = [...(e.clipboardData?.files || [])].filter((f) => /^(image|video)\//.test(f.type));
-  if (!files.length || !hovered || !$app.contains(hovered)) return;
+  const dt = e.clipboardData;
+  if (!dt || e.defaultPrevented || e.target.matches?.("input, textarea") || e.target.isContentEditable || document.body.classList.contains("est-open")) return;
+  // a copied file or image (or a page's HTML with one); plain text is no upload
+  if (!dt.files?.length && !/<(img|video|source)\b/i.test(dt.getData("text/html") || "")) return;
+  const at = hovered && $app.contains(hovered) ? hovered : null;
   e.preventDefault();
-  if (hovered.dataset.dropReq) uploadRequest(hovered.dataset.dropReq, files);
-  else uploadOptions(hovered.dataset.drop, files);
+  if (!at) return toast(`Passe o mouse sobre o card e cole de novo (${PASTE_KEY}).`, true);
+  filesFrom(dt).then((files) => {
+    if (!files.length) return;
+    if (at.dataset.dropReq) uploadRequest(at.dataset.dropReq, files);
+    else uploadOptions(at.dataset.drop, files);
+  });
 });
 
 // ---------- boot ----------
