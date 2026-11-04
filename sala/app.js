@@ -2774,6 +2774,9 @@ function matFilters(where) {
 // scene order, that the client never receives
 const askedReqs = () => S.requests.filter((r) => !r.team_only);
 const sceneReqs = () => S.requests.filter((r) => r.team_only).sort((a, b) => (a.scene ?? 999) - (b.scene ?? 999) || a.sort - b.sort);
+// where a Materiais page is, as links back up: Materiais › Materiais de cena › the package
+const MAT_HOME = () => (TEAM ? "Materiais" : "O que precisamos");
+const crumbs = (...ls) => ls.map(([href, t]) => (href ? `<a href="${href}">${esc(t)}</a>` : esc(t))).join('<span class="crumb" aria-hidden="true">›</span>');
 function materialsPage() {
   const req = S.page.req && S.requests.find((x) => x.id === S.page.req);
   if (req) return packagePage(req);
@@ -2781,12 +2784,17 @@ function materialsPage() {
   const typeOk = (r) => S.matType === "all" || entriesOf(r.id).some((e) => kindOfEntry(e) === S.matType);
   const list = asked.filter((r) => matStateOk(r) && typeOk(r)), mine = TEAM ? sceneReqs().filter(typeOk) : [];
   const f = matFilters("page");
+  // Materiais de cena on their own (#/materiais/cenas): the level between Materiais and a scene's package
+  if (TEAM && S.page.req === "cenas") {
+    return head("Materiais de cena", "Tudo de cada cena pra gerar · só a equipe vê", f.btn, crumbs(["#/materiais", MAT_HOME()])) +
+      `<div class="main-body mat-body" data-keep="main">${f.chips}<div class="hgrid flow mat-cards">${mine.map(matCard).join("")}</div>${mine.length ? "" : '<p class="none">Nenhum pacote de cena com esses filtros.</p>'}</div>`;
+  }
   const sub = TEAM ? `O que pedimos ${AO_CL} e o que já chegou` : "Arraste os arquivos no card do pacote, ou abra o pacote e use ＋ Adicionar";
   const right = progress(sent, asked.length, `${sent} de ${asked.length} enviados`) + f.btn +
     (TEAM && (S.files.length || S.notes.length) ? `<button class="btn hico" data-act="all-zip" title="Baixar todos os materiais ${DA_CL} (.zip)" aria-label="Baixar todos os materiais">${ICON.down}</button>` : "");
   // the scenes' own packages under the client's: everything a scene is made of, for the team only
-  const scenes = mine.length ? `<p class="side-label mat-scenes">Materiais de cena <small>tudo de cada cena · só a equipe vê</small></p><div class="hgrid flow mat-cards">${mine.map(matCard).join("")}</div>` : "";
-  return head(TEAM ? `Materiais ${DA_CL}` : "O que precisamos de vocês", sub, right, "Materiais") +
+  const scenes = mine.length ? `<p class="side-label mat-scenes"><a href="#/materiais/cenas">Materiais de cena</a> <small>tudo de cada cena · só a equipe vê</small></p><div class="hgrid flow mat-cards">${mine.map(matCard).join("")}</div>` : "";
+  return head(TEAM ? `Materiais ${DA_CL}` : "O que precisamos de vocês", sub, right, MAT_HOME()) +
     `<div class="main-body mat-body" data-keep="main">${f.chips}<div class="hgrid flow mat-cards">${list.map(matCard).join("")}${TEAM && !f.on ? matNewCard() : ""}</div>${list.length ? "" : '<p class="none">Nenhum pacote com esses filtros.</p>'}${scenes}</div>`;
 }
 // a package as the room's card: the picture on top (its last photos, its video, its voices, its first text), what it has
@@ -2833,7 +2841,7 @@ function packagePage(r) {
   // ‹ › walk the client's packages, or the scenes' own (team_only) in scene order
   const row = r.team_only ? sceneReqs() : askedReqs(), k = row.indexOf(r), prev = row[k - 1], next = row[k + 1];
   const arrow = (x, d, ico, t) => x ? `<a class="btn hico" data-step="${d}" href="#/materiais/${x.id}" title="${t} (${d < 0 ? "←" : "→"}): ${esc(x.title)}" aria-label="${t}">${ico}</a>` : `<span class="btn hico off" aria-hidden="true">${ico}</span>`;
-  const stepper = `<span class="hgroup"><a class="btn hico" href="#/materiais" title="Todos os pacotes" aria-label="Todos os pacotes">${ICON.grid}</a>${arrow(prev, -1, ICON.prev, "Pacote anterior")}${arrow(next, 1, ICON.next, "Próximo pacote")}</span>`;
+  const stepper = `<span class="hgroup"><a class="btn hico" href="${r.team_only ? "#/materiais/cenas" : "#/materiais"}" title="${r.team_only ? "Todos os pacotes de cena" : "Todos os pacotes"}" aria-label="Todos os pacotes">${ICON.grid}</a>${arrow(prev, -1, ICON.prev, "Pacote anterior")}${arrow(next, 1, ICON.next, "Próximo pacote")}</span>`;
   const f = matFilters("package");
   const team = TEAM ? (r.team_only ? "" : `<button class="btn hico ${r.done ? "on" : ""}" data-act="req-done" data-id="${r.id}" aria-pressed="${r.done}" title="${r.done ? "Recebido: clique para desmarcar" : "Marcar como recebido"}" aria-label="Recebido">${ICO.keep}</button>`)
     + (es.length ? `<button class="btn hico" data-act="req-zip" data-id="${r.id}" title="Baixar o pacote (.zip)" aria-label="Baixar o pacote">${ICON.down}</button>` : "")
@@ -2850,7 +2858,7 @@ function packagePage(r) {
     : `<div class="mat-tiles">${shown.map(matTile).join("")}</div>`;
   const say = r.team_only ? [r.detail, "só a equipe vê"].filter(Boolean).join(" · ") : r.detail;
   const brief = say ? `<span class="h1-brief" title="${esc(say)}">${esc(say)}</span>` : "";
-  return head(`${esc(r.title)}${brief}`, "", `${f.btn}${team}${stepper}${add}`, "Materiais") +
+  return head(`${esc(r.title)}${brief}`, "", `${f.btn}${team}${stepper}${add}`, crumbs(["#/materiais", MAT_HOME()], ...(r.team_only ? [["#/materiais/cenas", "Materiais de cena"]] : []))) +
     `<div class="main-body ov-body mat-body" data-keep="main" data-drop-req="${r.id}">${es.length ? tabs : ""}${f.chips}${up}${body}</div>`;
 }
 function matAddPop(r) {
