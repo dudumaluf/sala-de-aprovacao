@@ -1851,7 +1851,9 @@ async function generate() {
     if (files.length) input.image_urls = files;
     if (m.res.length) input.resolution = E.res;
     if (m.q.length) input.quality = E.quality;
-    if (m.ar.length) input.aspect_ratio = E.aspect;
+    // "auto" keeps the base's aspect only on Nano Banana (Magnific); the Higgsfield models read it as "the model picks"
+    // (GPT 2.5 came out 2048×2048 from a 16:9 base), so with a base they get the closest aspect they have
+    if (m.ar.length) input.aspect_ratio = E.aspect === "auto" && E.base && m.via !== "magnific" ? nearAspect(m.ar.filter((a) => a !== "auto")) : E.aspect;
     const label = [m.label, m.res.length ? E.res.toUpperCase() : "", "estúdio"].filter(Boolean).join(" · ");
     for (let k = 0; k < E.count; k++) {
       const own = E.base?.id && E.base.item_id === E.item.id;
