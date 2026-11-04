@@ -2069,9 +2069,16 @@ body.est-open .update-bar { bottom: auto; top: 6px; height: 40px; }
 /* Filtros › Etiquetas */
 .lab-opt { display: inline-flex; align-items: center; gap: 6px; padding-left: 4px; }
 .lab-opt small { color: var(--dim); font-size: 11px; }
-.lab-editbtn { margin-left: 4px; }
-.lab-edit { display: inline-flex; align-items: center; gap: 8px; width: 100%; }
-.lab-edit .etq { margin-right: auto; }
+/* Editar: one row per etiqueta, its color as a dot (a click moves to the next color), the name, then small icons */
+.lab-edit { display: flex; align-items: center; gap: 4px; width: 100%; }
+.lab-edit .etq { margin: 0 auto 0 4px; }
+.lab-dot { flex: none; width: 16px; height: 16px; padding: 0; border: 2px solid var(--raise); border-radius: 50%; background: var(--lc); box-shadow: 0 0 0 1px var(--line2); cursor: pointer; transition: transform 0.12s; }
+.lab-dot:hover { transform: scale(1.18); }
+.lab-ico { flex: none; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; }
+.lab-ico svg { width: 14px; height: 14px; }
+.lab-ico:hover { background: var(--raise2); color: var(--text); }
+.lab-ico.danger:hover { color: var(--amber); }
+.lab-ico.on { background: var(--accent-soft); color: var(--accent); }
 /* the card's ⋯: every etiqueta, lit where the card has it */
 .mp-labs { align-items: flex-start; padding-top: 5px; padding-bottom: 5px; }
 .mp-labs > span:first-child { padding-top: 3px; }

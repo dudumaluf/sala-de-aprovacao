@@ -1072,15 +1072,18 @@ function filtersOn(ctx) {
   return on;
 }
 // Filtros › Etiquetas: a chip per etiqueta with how many cards of the round have it (more than one picked: a card with any
-// of them shows), ＋ Nova makes one, Editar renames, recolors or deletes them
+// of them shows), ＋ Nova makes one, and the pencil turns the list into one row per etiqueta: its color as a dot (a click
+// moves it to the next color), its name, rename and delete as small icons; the pencil again (lit) ends it
+const PEN_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M10.6 2.9l2.5 2.5-7.4 7.4-3.1.6.6-3.1z" stroke-linejoin="round"/><path d="M9.2 4.3l2.5 2.5"/></svg>';
 function labelOpts(r) {
   const here = new Set(itemsOf(r.id).map((it) => it.id));
   const count = (l) => S.itemLabels.filter((x) => x.label_id === l.id && here.has(x.item_id)).length;
-  if (S.labelEdit && S.labels.length) return S.labels.map((l) => `<span class="lab-edit">${labelChip(l)}<button class="link" data-act="label-ren" data-id="${l.id}">Renomear</button><button class="link" data-act="label-color" data-id="${l.id}" title="Trocar a cor">Cor</button><button class="link danger" data-act="label-del" data-id="${l.id}">Apagar</button></span>`).join("")
-    + '<button class="link" data-act="label-edit">Pronto</button>';
-  return S.labels.map((l) => `<button class="fopt lab-opt ${S.labelF.has(l.id) ? "on" : ""}" data-act="label" data-v="${l.id}" aria-pressed="${S.labelF.has(l.id)}" title="Só os cards com ${esc(l.name)} (junta com as outras marcadas)">${labelChip(l)}<small>${count(l)}</small></button>`).join("")
-    + '<button class="fopt" data-act="label-new" title="Nova etiqueta: depois ponha nos cards pelo ⋯ ou selecionando vários">＋ Nova</button>'
-    + (S.labels.length ? '<button class="link lab-editbtn" data-act="label-edit">Editar</button>' : "");
+  const edit = S.labelEdit && S.labels.length > 0;
+  const pen = S.labels.length ? `<button class="lab-ico ${edit ? "on" : ""}" data-act="label-edit" aria-pressed="${edit}" title="${edit ? "Pronto" : "Editar etiquetas: cor, nome, apagar"}" aria-label="${edit ? "Pronto" : "Editar etiquetas"}">${PEN_ICO}</button>` : "";
+  const list = edit
+    ? S.labels.map((l) => `<span class="lab-edit"><button class="lab-dot" data-act="label-color" data-id="${l.id}" style="--lc:${LABEL_COLORS[l.color] || LABEL_COLORS.gray}" title="Trocar a cor" aria-label="Trocar a cor de ${esc(l.name)}"></button>${labelChip(l)}<button class="lab-ico" data-act="label-ren" data-id="${l.id}" title="Renomear" aria-label="Renomear ${esc(l.name)}">${PEN_ICO}</button><button class="lab-ico danger" data-act="label-del" data-id="${l.id}" title="Apagar" aria-label="Apagar ${esc(l.name)}">${ICO.trash}</button></span>`).join("")
+    : S.labels.map((l) => `<button class="fopt lab-opt ${S.labelF.has(l.id) ? "on" : ""}" data-act="label" data-v="${l.id}" aria-pressed="${S.labelF.has(l.id)}" title="Só os cards com ${esc(l.name)} (junta com as outras marcadas)">${labelChip(l)}<small>${count(l)}</small></button>`).join("");
+  return list + '<button class="fopt" data-act="label-new" title="Nova etiqueta: depois ponha nos cards pelo ⋯ ou selecionando vários">＋ Nova</button>' + pen;
 }
 function filterBar(r, ctx, note = "") {
   if (!TEAM) return "";
