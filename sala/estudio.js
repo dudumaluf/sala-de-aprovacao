@@ -48,6 +48,23 @@ const GUIDE_MAX = 8; // Genjutsu: images with the guide video
 const EDIT_MAX = 5; // Seedance video edit: images with the video it edits
 const TEXT_TO_VIDEO = "bytedance/seedance-2.5/text-to-video";
 const DURS = [4, 5, 6, 8, 10, 12, 15, 20, 30];
+// what a reference is for (Papel, in its circle's right-click menu): Melhorar tells Claude, so the prompt says what each tag
+// supplies and what not to take from it; the card's kit keeps it. [key, the team's word, Claude's words]
+const ROLES = {
+  image: [["first", "Primeiro quadro", "the first frame: the shot opens on this picture"], ["last", "Último quadro", "the last frame: the shot ends on this picture"],
+    ["key", "Quadro-chave", "a keyframe of the shot, in the order the keyframes come"], ["face", "Personagem · rosto", "a character's face and likeness only"],
+    ["costume", "Figurino", "a costume only"], ["place", "Locação", "the location only"], ["product", "Produto", "the product only: its look and its lights"],
+    ["style", "Estilo e luz", "the light and the color only"]],
+  video: [["guide", "Guia de tempo e câmera", "only the timing, the camera moves and the cuts"],
+    ["blocking", "Blocking (bonecos)", "only the camera position and moves; its figures are placeholders, so not their poses or body mechanics"],
+    ["motion", "Movimento", "only how the subject moves"], ["product", "Produto", "only how the product looks and lights up"], ["style", "Estilo e luz", "only the light and the color"]],
+  audio: [["voice", "Voz e tempo das falas", "the voices and the timing of the lines"], ["timing", "Só o tempo das falas", "only the timing of the lines; the voices are generated"],
+    ["music", "Música", "the music"], ["sfx", "Som ambiente", "the ambience and the sound effects"]],
+};
+const roleOf = (r) => (r?.role && (ROLES[r.kind || "image"] || []).find(([k]) => k === r.role)) || null;
+const roleSays = (r) => { const x = roleOf(r); return x ? ` (its role: ${x[2]})` : ""; };
+// a video reference edited from its circle's menu, by model
+const EDIT_SAYS = { "bytedance/seedance-2.5/video-edit": "troca o visual, fica o tempo", "higgsfield/genjutsu/motion-transfer/v1.0": "só o movimento e a câmera", "higgsfield/genjutsu/object-swap/v1.0": "troca uma pessoa ou coisa" };
 const VRES = ["480p", "720p", "1080p"];
 const VMAX = { image: [9, "imagens"], video: [3, "vídeos"], audio: [3, "vozes"] };
 // the room's bucket keeps files up to 50 MB
@@ -2121,6 +2138,7 @@ async function generateVideo() {
     const label = [m.label, E.vres, guide || edit ? "" : `${E.dur}s`, "estúdio"].filter(Boolean).join(" · ");
     for (let k = 0; k < E.count; k++) {
       const { job } = await call("submit", { item_id: E.item.id, base_option: E.base?.id || null, mode: "video", model: id, label, prompt, input, refs, created_by: ctx.myName() });
+      if (E.parent) { SWAPS.set(job.id, E.parent.ref); E.parent.ref.wait = (E.parent.ref.wait || 0) + 1; }
       track(job);
     }
     ctx.toast(E.count > 1 ? `${E.count} vídeos pedidos` : "Vídeo pedido");
@@ -2163,7 +2181,7 @@ async function writeRequest() {
   const baseSmall = E.base && !video ? await basePath("small") : E.base ? E.base.preview_path || E.base.path : null;
   const small = (o) => (o === E.base ? baseSmall : o.preview_path || o.path);
   const images = [], tags = [];
-  const imgRefs = E.refs.filter((r) => (r.kind || "image") === "image").map((r) => ({ path: r.preview || r.path, label: r.label }));
+  const imgRefs = E.refs.filter((r) => (r.kind || "image") === "image").map((r) => ({ path: r.preview || r.path, label: r.label + roleSays(r) }));
   // only an area: Claude sees the crop the model will get for the area the card edits, so what it writes is about that
   // picture, with the notes that fall in it
   const area = !video && areaOn() ? await areaCut(activeArea(), { small: true }) : null;
@@ -2185,12 +2203,12 @@ async function writeRequest() {
       // Genjutsu: up to 8 images in order, and the guide video, which Claude does not see
       images.splice(GUIDE_MAX);
       const v = E.refs.find((r) => r.kind === "video");
-      if (v) tags.push({ tag: "the video", label: `the guide video "${v.label}"` });
+      if (v) tags.push({ tag: "the video", label: `the guide video "${v.label}"${roleSays(v)}` });
     } else {
       // an edit: up to 5 images, and the first video is the one it edits
       if (edit) images.splice(EDIT_MAX);
       const n = { video: 0, audio: 0 };
-      for (const r of E.refs) if (r.kind === "video" || r.kind === "audio") tags.push({ tag: `@${r.kind}${++n[r.kind]}`, label: r.kind === "audio" ? `voice take "${r.label}"` : edit && n.video === 1 ? `the video to edit, the editing master "${r.label}"` : `video "${r.label}"` });
+      for (const r of E.refs) if (r.kind === "video" || r.kind === "audio") tags.push({ tag: `@${r.kind}${++n[r.kind]}`, label: (r.kind === "audio" ? `voice take "${r.label}"` : edit && n.video === 1 ? `the video to edit, the editing master "${r.label}"` : `video "${r.label}"`) + roleSays(r) });
     }
   } else if (E.blocking) {
     images.push({ path: small(E.base), label: "the 3D blocking frame" }, ...imgRefs);
@@ -2238,6 +2256,7 @@ function setPrompt(text) {
 // ---------- the overlay ----------
 function teardown() {
   if (!E.root) return;
+  pvHide(); cmClose(); bigClose();
   window.removeEventListener("keydown", onKey, true);
   E.ro?.disconnect();
   E.fit?.disconnect();
@@ -2340,6 +2359,251 @@ async function swapRef(ref, id) {
   }
   if (E.root) { syncChips(); if (E.parent) syncView(); }
 }
+// a voice take plays or stops (the picker, the @ list and a voice circle's menu); the picker and the @ list show which
+async function togglePlay(path) {
+  const { ctx } = E;
+  const shown = () => { syncPicker(); $(".est-mention")?.querySelectorAll(".est-mplay").forEach((p) => { p.textContent = E.playing === p.dataset.path ? "■" : "▶"; }); };
+  E.audio ||= new Audio();
+  E.audio.onended = () => { E.playing = null; shown(); };
+  if (E.playing === path) { E.audio.pause(); E.playing = null; return shown(); }
+  await ctx.sign([path]);
+  E.audio.src = ctx.urls.get(path) || "";
+  E.playing = path;
+  E.audio.play().catch(() => { E.playing = null; shown(); });
+  return shown();
+}
+
+// ---------- a reference's circle. Hovering shows it big: an image whole, a video playing muted in a loop (a click gives it
+// sound), a voice playing with its time bar. The right button opens what can be done with it: Ver grande, Editar (an
+// image of the room in the studio; a video of the room with Seedance or Genjutsu, the result coming back into the circle),
+// Versão, Papel, Mover (its @ number), Abrir no card, Tirar. Ver grande is a player where a video gives a frame as a new
+// image reference ----------
+const PV = { el: null, i: -1, timer: 0, out: 0, audio: null };
+const refOpt = (r) => (r ? E.ctx.S.options.find((o) => o.path === r.path) : null);
+const refFile = (r) => (r ? (E.ctx.S.files || []).find((f) => f.path === r.path) : null);
+const chipOf = (i) => E.root?.querySelector(`.est-refs .est-chip[data-i="${i}"]`);
+const tagOfChip = (i) => chipOf(i)?.querySelector(".est-tip b")?.textContent || "";
+const secs = (d) => `${(Math.round(d * 10) / 10).toLocaleString("pt-BR")} s`;
+// an image and its edits, oldest first (options.stack points at the original)
+const versionsOf = (o) => { const r = rootOf(o); return r ? E.ctx.S.options.filter((x) => isImg(x) && (x.id === r.id || x.stack === r.id)).sort((a, b) => a.created_at.localeCompare(b.created_at)) : []; };
+async function mediaUrl(path) {
+  await E.ctx.sign([path]).catch(() => {});
+  return E.ctx.urls.get(path) || "";
+}
+function onPvOver(e) {
+  if (e.pointerType === "touch" || !E.root) return;
+  if (e.target.closest?.(".est-pv")) return clearTimeout(PV.out);
+  const chip = e.target.closest?.(".est-refs .est-chip[data-i]");
+  if (!chip || E.cm || E.big) return;
+  clearTimeout(PV.out);
+  const i = +chip.dataset.i;
+  if (PV.el && PV.i === i) return;
+  clearTimeout(PV.timer);
+  PV.timer = setTimeout(() => pvShow(i), PV.el ? 0 : 220);
+}
+function onPvOut(e) {
+  const from = e.target.closest?.(".est-refs .est-chip[data-i], .est-pv"), to = e.relatedTarget;
+  if (!from || (to && (from.contains(to) || to.closest?.(".est-pv, .est-refs .est-chip[data-i]")))) return;
+  clearTimeout(PV.timer);
+  PV.out = setTimeout(pvHide, 160);
+}
+// over the circle (or under it, when there is no room above), inside the window
+function pvPlace(el, chip) {
+  const r = chip.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
+  el.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2))}px`;
+  el.style.top = `${r.top - h - 12 >= 8 ? r.top - h - 12 : Math.min(innerHeight - h - 8, r.bottom + 12)}px`;
+}
+async function pvShow(i) {
+  const r = E.refs[i], chip = chipOf(i);
+  if (!r || !chip || !E.root) return;
+  pvHide();
+  const kind = r.kind || "image", tag = tagOfChip(i), role = roleOf(r), o = refOpt(r);
+  const el = document.createElement("div");
+  el.className = `est-pv est-pv-${kind}`;
+  const wave = Array.from({ length: 30 }, (_, k) => `<i style="height:${Math.round(8 + 22 * Math.abs(Math.sin(k * 1.7)) + 12 * Math.abs(Math.sin(k * 0.6)))}px"></i>`).join("");
+  const how = [role ? `Papel: ${role[1]}` : "", kind === "image" && o ? "clique: editar" : "", "botão direito: mais"].filter(Boolean).join(" · ");
+  el.innerHTML = `<div class="est-pv-m">${kind === "audio" ? `<div class="est-pv-wave">${wave}</div>` : r.thumb ? `<img src="${esc(r.thumb)}" alt="">` : ""}${kind === "image" ? "" : '<i class="est-pv-bar"></i><span class="est-pv-snd"></span>'}</div>
+    <div class="est-pv-i">${tag ? `<b>${esc(tag)}</b>` : ""}${esc(r.label)}<small>${esc(how)}</small></div>`;
+  E.root.append(el);
+  Object.assign(PV, { el, i });
+  chip.classList.add("pv");
+  pvPlace(el, chip);
+  const m = el.querySelector(".est-pv-m"), bar = el.querySelector(".est-pv-bar"), snd = el.querySelector(".est-pv-snd");
+  const info = (d) => { const s = el.querySelector(".est-pv-i small"); if (s && d && isFinite(d)) s.textContent = `${secs(d)} · ${how}`; };
+  const url = await mediaUrl(kind === "image" ? r.preview || r.path : r.path);
+  if (PV.el !== el || !url) return;
+  if (kind === "image") {
+    const img = m.querySelector("img") || m.appendChild(document.createElement("img"));
+    img.onload = () => pvPlace(el, chip);
+    img.src = url;
+  } else if (kind === "video") {
+    const v = document.createElement("video");
+    Object.assign(v, { muted: true, loop: true, playsInline: true, autoplay: true, src: url });
+    v.onloadeddata = () => { m.querySelector("img")?.remove(); pvPlace(el, chip); };
+    v.onloadedmetadata = () => info(v.duration);
+    v.ontimeupdate = () => { if (v.duration) bar.style.width = `${(100 * v.currentTime) / v.duration}%`; };
+    m.prepend(v);
+    snd.textContent = "mudo · clique: com som";
+    el.onclick = () => { v.muted = !v.muted; snd.textContent = v.muted ? "mudo · clique: com som" : "com som · clique: mudo"; };
+    v.play().catch(() => {});
+  } else {
+    const a = new Audio(url);
+    PV.audio = a;
+    a.onloadedmetadata = () => info(a.duration);
+    a.ontimeupdate = () => { if (a.duration) bar.style.width = `${(100 * a.currentTime) / a.duration}%`; };
+    a.onended = () => { snd.textContent = "clique: de novo"; };
+    snd.textContent = "tocando · clique: parar";
+    el.onclick = () => { if (a.paused) { a.play().catch(() => {}); snd.textContent = "tocando · clique: parar"; } else { a.pause(); snd.textContent = "parado · clique: tocar"; } };
+    a.play().catch(() => { snd.textContent = "clique: tocar"; });
+  }
+}
+function pvHide() {
+  clearTimeout(PV.timer); clearTimeout(PV.out);
+  PV.audio?.pause(); PV.audio = null;
+  PV.el?.querySelector("video")?.pause();
+  PV.el?.remove();
+  Object.assign(PV, { el: null, i: -1 });
+  E.root?.querySelectorAll(".est-chip.pv").forEach((c) => c.classList.remove("pv"));
+}
+function onCtx(e) {
+  const chip = e.target.closest?.(".est-refs .est-chip[data-i]");
+  if (!chip) return;
+  e.preventDefault();
+  pvHide();
+  cmOpen(+chip.dataset.i, e.clientX, e.clientY);
+}
+// the menu, by what the circle is: an image, a video or a voice. A file that came from outside the room (a computer, a kit)
+// can be used, looked at and taken out, but not edited: its new version would have no card to live in
+function cmOpen(i, x, y) {
+  cmClose();
+  const r = E.refs[i];
+  if (!r || !E.root) return;
+  const kind = r.kind || "image", o = refOpt(r), f = !o && refFile(r), role = roleOf(r), cur = role?.[0] || "";
+  const it = (k, label, { small = "", dis = false, cls = "", v } = {}) =>
+    `<button type="button" class="est-cm-it ${cls}" data-k="${k}"${v != null ? ` data-v="${esc(v)}"` : ""}${dis ? " disabled" : ""} role="menuitem">${label}${small ? `<small>${esc(small)}</small>` : ""}</button>`;
+  const sub = (label, small, inner) => `<div class="est-cm-it sub" tabindex="0" role="menuitem" aria-haspopup="true">${label}<small>${esc(small)} ▸</small><div class="est-cm-sub" role="menu">${inner}</div></div>`;
+  const sep = '<div class="est-cm-sep"></div>', outside = "veio de fora da sala";
+  const out = [kind === "audio" ? it("cm-play", E.playing === r.path ? "Parar" : "Ouvir") : it("cm-big", "Ver grande")];
+  if (kind === "image") {
+    out.push(it("cm-edit", "Editar com IA", { small: o ? "volta pra bolinha" : outside, dis: !o }));
+    const vers = o ? versionsOf(o) : [], vi = vers.findIndex((x) => x.id === o?.id);
+    if (vers.length > 1 && vi >= 0) out.push(`<div class="est-cm-row"><span>Versão</span><span class="est-cm-step">${it("cm-ver", "‹", { v: vers[(vi - 1 + vers.length) % vers.length].id, cls: "mini" })}<small>${vi + 1}/${vers.length}</small>${it("cm-ver", "›", { v: vers[(vi + 1) % vers.length].id, cls: "mini" })}</span></div>`);
+  }
+  if (kind === "video") {
+    out.push(o ? sub("Editar vídeo", "", VIDEO_MODELS.filter((m) => m.way === "edit" || m.way === "guide").map((m) => it("cm-vedit", m.name, { v: m.id, small: EDIT_SAYS[m.id] || "", cls: "two" })).join(""))
+      : it("cm-vedit", "Editar vídeo", { small: outside, dis: true }));
+    out.push(it("cm-frame", "Tirar um quadro", { small: "vira imagem" }));
+  }
+  out.push(sep, sub("Papel", role ? role[1] : "nenhum", [...(ROLES[kind] || []).map(([k, n]) => it("cm-role", `${k === cur ? "✓ " : ""}${esc(n)}`, { v: k, cls: k === cur ? "on" : "" })), it("cm-role", `${cur ? "" : "✓ "}Sem papel`, { v: "", cls: cur ? "" : "on" })].join("")));
+  out.push(`<div class="est-cm-row"><span>Mover</span><span class="est-cm-step">${it("cm-left", "←", { dis: i === 0, cls: "mini" })}${it("cm-right", "→", { dis: i === E.refs.length - 1, cls: "mini" })}</span></div>`, sep);
+  if (o || f) out.push(it("cm-card", f ? "Abrir nos Materiais" : "Abrir no card", { small: "noutra aba" }));
+  out.push(it("cm-rm", "Tirar", { cls: "x" }));
+  const el = document.createElement("div");
+  el.className = "est-cm";
+  el.setAttribute("role", "menu");
+  el.setAttribute("aria-label", r.label);
+  el.innerHTML = out.join("");
+  E.root.append(el);
+  const w = el.offsetWidth, h = el.offsetHeight;
+  el.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, x))}px`;
+  el.style.top = `${Math.max(8, Math.min(innerHeight - h - 8, y - h))}px`;
+  if (x + w + 240 > innerWidth) el.classList.add("flip");
+  E.cm = { el, i };
+  el.querySelector(".est-cm-it:not([disabled])")?.focus({ preventScroll: true });
+}
+function cmClose() {
+  E.cm?.el.remove();
+  E.cm = null;
+}
+async function cmAct(k, v) {
+  const i = E.cm?.i ?? -1, r = E.refs[i], { ctx } = E;
+  cmClose();
+  if (!r) return;
+  if (k === "cm-big") return bigOpen(i);
+  if (k === "cm-frame") return bigOpen(i, { frame: true });
+  if (k === "cm-play") return togglePlay(r.path);
+  if (k === "cm-edit") return openRef(i);
+  if (k === "cm-vedit") return openVideoRef(i, v);
+  if (k === "cm-ver") return swapRef(r, v);
+  if (k === "cm-role") {
+    if (v) r.role = v; else delete r.role;
+    syncChips();
+    return ctx.toast(v ? `${r.label}: ${roleOf(r)[1]}. O Melhorar escreve no prompt pra que ela serve.` : `${r.label}: sem papel`);
+  }
+  if (k === "cm-left" || k === "cm-right") {
+    const j = k === "cm-left" ? i - 1 : i + 1;
+    if (j < 0 || j >= E.refs.length) return;
+    [E.refs[i], E.refs[j]] = [E.refs[j], E.refs[i]];
+    return syncChips();
+  }
+  if (k === "cm-card") {
+    const o = refOpt(r), f = !o && refFile(r), it = o && ctx.itemOf(o.item_id);
+    const hash = it ? `#/r/${it.round_id}/s/${it.scene}/${it.id}` : f ? `#/materiais/${f.request_id}?f=${f.id}` : "";
+    if (hash) window.open(`${location.pathname}${location.search}${hash}`, "_blank", "noopener");
+    return;
+  }
+  if (k === "cm-rm") { E.refs.splice(i, 1); return syncChips(); }
+}
+// a video of the room opens in the studio with the model picked in the menu (Seedance's edit or a Genjutsu mode), the
+// generation waiting behind it; what it makes lands on the video's card and its newest goes back into the circle (swapRef)
+function openVideoRef(i, vm) {
+  const { ctx } = E, r = E.refs[i], o = r?.kind === "video" ? refOpt(r) : null;
+  if (!o) return ctx.toast("Este vídeo veio de fora da sala: dá pra usar e tirar, ainda não editar.", true);
+  const it = ctx.itemOf(o.item_id);
+  if (!it || !VIDEO_MODELS.some((m) => m.id === vm)) return;
+  const title = E.blocking ? "Render do blocking" : E.mode === "create" ? "Criar" : isVideo() ? "Vídeo com IA" : "Editar com IA";
+  const snap = { ...Object.fromEntries(SESSION.map((k) => [k, E[k]])), prompt: promptText() };
+  teardown();
+  open(ctx, { mode: "create", kind: "video", vmodel: vm, item: it, round: it.round_id, scene: it.scene, base: null, blocking: false,
+    refs: [{ path: o.path, preview: o.preview_path || null, thumb: thumbUrl(o), label: r.label, kind: "video" }], prompt: "", parent: { snap, ref: r, title } });
+}
+// Ver grande: the image, the video or the voice in a player over the studio (Esc or a click outside closes it). A video
+// can give the frame on screen as a new image reference, right after it
+async function bigOpen(i, { frame = false } = {}) {
+  bigClose();
+  const r = E.refs[i];
+  if (!r || !E.root) return;
+  const kind = r.kind || "image", tag = tagOfChip(i), url = await mediaUrl(kind === "image" ? r.preview || r.path : r.path);
+  if (!url) return E.ctx.toast("Não consegui abrir este arquivo.", true);
+  const el = document.createElement("div");
+  el.className = "est-big";
+  el.innerHTML = `<div class="est-big-in" role="dialog" aria-label="${esc(r.label)}"><div class="est-big-top"><span>${tag ? `<b>${esc(tag)}</b>` : ""}${esc(r.label)}</span><span class="est-big-act">${kind === "video" ? `<button type="button" class="est-alt" data-k="big-frame">Usar este quadro como imagem</button>` : ""}<button type="button" class="link" data-k="big-x">Fechar ✕</button></span></div>
+    ${kind === "image" ? `<img src="${esc(url)}" alt="">` : kind === "video" ? `<video controls playsinline crossorigin="anonymous" src="${esc(url)}"></video>` : `<audio controls src="${esc(url)}"></audio>`}
+    ${kind === "video" ? `<p class="est-big-hint">${frame ? "Pare no quadro que quer e clique em Usar este quadro: ele entra como imagem logo depois do vídeo." : "Pausado num quadro, Usar este quadro faz dele uma imagem de referência."}</p>` : ""}</div>`;
+  E.root.append(el);
+  E.big = { el, i };
+  const m = el.querySelector("video, audio");
+  if (m && !frame) m.play().catch(() => {});
+}
+function bigClose() {
+  E.big?.el.querySelectorAll("video, audio").forEach((m) => m.pause());
+  E.big?.el.remove();
+  E.big = null;
+}
+async function bigFrame() {
+  const { ctx } = E, b = E.big, v = b?.el.querySelector("video"), r = b && E.refs[b.i];
+  if (!v || !r) return;
+  if (!v.videoWidth) return ctx.toast("Espere o vídeo carregar.", true);
+  v.pause();
+  const t = v.currentTime, sec = (Math.round(t * 10) / 10).toLocaleString("pt-BR");
+  const c = document.createElement("canvas");
+  c.width = v.videoWidth; c.height = v.videoHeight;
+  let blob;
+  try {
+    c.getContext("2d").drawImage(v, 0, 0);
+    blob = await new Promise((res, rej) => c.toBlob((x) => (x ? res(x) : rej(new Error("o quadro saiu vazio"))), "image/jpeg", 0.92));
+  } catch (err) { return ctx.toast(`Não deu pra tirar o quadro: ${err.message || err}`, true); }
+  try {
+    const m = await ctx.putFile("estudio/refs", new File([blob], `quadro-${sec.replace(",", "_")}s.jpg`, { type: "image/jpeg" }));
+    await ctx.sign([m.thumb_path || m.path]);
+    const ref = { path: m.path, preview: m.preview_path || null, thumb: ctx.urls.get(m.thumb_path || m.path) || "", label: `Quadro ${sec} s · ${r.label}`.slice(0, 48), kind: "image" };
+    const at = E.refs.indexOf(r);
+    E.refs.splice(at >= 0 ? at + 1 : E.refs.length, 0, ref);
+    bigClose();
+    syncChips();
+    ctx.toast(`O quadro de ${sec} s virou uma imagem de referência, logo depois do vídeo`);
+  } catch (err) { ctx.toast(`Não subiu o quadro: ${err.message || err}`, true); }
+}
 // window, capture phase: the studio's own shortcuts, and keys aimed at the page behind never reach the app. Keys typed
 // inside the studio reach their own fields first and stop at the overlay (see open()), so the app never acts on them.
 function onKey(e) {
@@ -2348,7 +2612,7 @@ function onKey(e) {
   const stop = () => { e.preventDefault(); e.stopPropagation(); };
   if (e.key === "Escape" && !e.target.classList?.contains("est-pin-in")) {
     stop();
-    if (E.mention) { E.mention = null; $(".est-mention").hidden = true; } else if (E.pick) { E.pick = false; E.pickBase = false; syncPicker(); } else if (E.soulOpen) { E.soulOpen = false; syncSouls(); } else if (E.camOpen) { E.camOpen = false; syncCam(); } else if (E.redit && E.railMode === "rec" && E.drawer) { E.redit = null; syncRail(); } else if (E.sel) { E.sel = null; redraw(); } else if (areaOn() && !E.view) dropArea(); else close();
+    if (E.big) bigClose(); else if (E.cm) cmClose(); else if (E.mention) { E.mention = null; $(".est-mention").hidden = true; } else if (E.pick) { E.pick = false; E.pickBase = false; syncPicker(); } else if (E.soulOpen) { E.soulOpen = false; syncSouls(); } else if (E.camOpen) { E.camOpen = false; syncCam(); } else if (E.redit && E.railMode === "rec" && E.drawer) { E.redit = null; syncRail(); } else if (E.sel) { E.sel = null; redraw(); } else if (areaOn() && !E.view) dropArea(); else close();
   }
   else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { stop(); E.mode === "draw" ? saveDrawing() : generate(); }
   else if ((e.key === "z" || e.key === "Z") && (e.metaKey || e.ctrlKey) && !typing) { stop(); undo(); }
@@ -2456,6 +2720,10 @@ function open(ctx, init) {
   root.addEventListener("keydown", (e) => e.stopPropagation());
   root.addEventListener("click", onClick);
   root.addEventListener("change", onChange);
+  // a reference's circle: its preview on hover, its menu on the right button
+  root.addEventListener("pointerover", onPvOver);
+  root.addEventListener("pointerout", onPvOut);
+  root.addEventListener("contextmenu", onCtx);
   // a file pasted anywhere else in the studio, or dropped on it, becomes a reference too
   root.addEventListener("paste", (e) => {
     const files = [...(e.clipboardData?.files || [])];
@@ -2711,6 +2979,7 @@ function syncTools() {
 function syncChips() {
   const box = $(".est-refs");
   if (!box) return;
+  pvHide(); cmClose();
   const video = isVideo(), frames = video && vmodel().way === "frames", guide = video && vmodel().way === "guide", edit = video && vmodel().way === "edit", soul = soulOn(), n = { image: 0, video: 0, audio: 0 };
   const tag = (kind) => {
     // Soul 2 takes only the base: the drawing and the references stay out
@@ -2746,7 +3015,7 @@ function syncChips() {
     ...E.refs.map((r, i) => {
       const can = (r.kind || "image") === "image" && E.ctx.S.options.some((o) => o.path === r.path);
       return chip(r.thumb, r.label, r.kind || "image", {
-        cls: `${can ? "can" : ""} ${r.wait ? "wait" : ""}`, rm: true,
+        cls: `${can ? "can" : ""} ${r.wait ? "wait" : ""} ${r.role ? "has-role" : ""}`, rm: true,
         attrs: `data-i="${i}"${can ? ` data-k="ref-open" role="button" tabindex="0" aria-label="Editar ${esc(r.label)} com IA"` : ""}`,
         hint: r.wait ? "<small>gerando a versão nova…</small>" : can ? "<small>clique para editar</small>" : edit && r === E.refs.find((x) => x.kind === "video") ? "<small>é o vídeo editado: o resultado fica com o tempo e o quadro dele</small>" : "",
       });
@@ -3138,9 +3407,14 @@ async function onClick(e) {
   // the faces and the camera's menu close on any click outside them (their own circle or pill toggles them)
   if (E.soulOpen && !e.target.closest('.est-souls, [data-k="soul"]')) { E.soulOpen = false; syncSouls(); }
   if (E.camOpen && !e.target.closest(".est-cam-pop, .est-cam")) { E.camOpen = false; syncCam(); }
+  if (E.cm && !e.target.closest(".est-cm")) cmClose();
+  if (E.big && e.target === E.big.el) return bigClose();
   const b = e.target.closest("[data-k], [data-tool], [data-color]");
   if (!b) { if (E.pick && !e.target.closest(".est-pick")) { E.pick = false; E.pickBase = false; syncPicker(); } return; }
   const { ctx } = E, k = b.dataset.k;
+  if (k?.startsWith("cm-")) return cmAct(k, b.dataset.v);
+  if (k === "big-x") return bigClose();
+  if (k === "big-frame") return bigFrame();
   if (b.dataset.tool) return pickTool(b.dataset.tool);
   // an area's tag: a click gives it the card, + opens the references for it, ✕ takes it away; the card's pill goes to the next
   const ai = b.closest(".est-area")?.dataset.i;
@@ -3217,19 +3491,7 @@ async function onClick(e) {
     else E.refs.push({ path: o.path, preview: o.preview_path || null, thumb: isImg(o) ? thumbUrl(o) : "", label: nameOf(o), kind: isImg(o) ? "image" : "video" });
     syncChips(); return syncPicker();
   }
-  if (k === "play") {
-    const path = b.dataset.path;
-    // the picker and the @ list both show which take is playing
-    const shown = () => { syncPicker(); $(".est-mention")?.querySelectorAll(".est-mplay").forEach((p) => { p.textContent = E.playing === p.dataset.path ? "■" : "▶"; }); };
-    E.audio ||= new Audio();
-    E.audio.onended = () => { E.playing = null; shown(); };
-    if (E.playing === path) { E.audio.pause(); E.playing = null; return shown(); }
-    await ctx.sign([path]);
-    E.audio.src = ctx.urls.get(path) || "";
-    E.playing = path;
-    E.audio.play().catch(() => { E.playing = null; shown(); });
-    return shown();
-  }
+  if (k === "play") return togglePlay(b.dataset.path);
   if (k === "view") { E.view = E.view === b.dataset.id ? null : b.dataset.id; syncStage(); return syncRail(); }
   if (k === "back") { E.view = null; syncStage(); return syncRail(); }
   // Versões: pick one in the drawer, step with ‹ › on the stage, make the one on the stage the card's current version
@@ -3583,7 +3845,7 @@ export async function openKit(ctx, { itemId }) {
   if (!k) return openCreate(ctx, { roundId: it.round_id, scene: it.scene, itemId });
   const list = Array.isArray(k.refs) ? k.refs : [];
   await ctx.sign(list.map((r) => r.thumb_path).filter(Boolean)).catch(() => {});
-  const refs = list.map((r) => ({ path: r.path, preview: r.preview || null, thumb: r.thumb_path ? ctx.urls.get(r.thumb_path) || "" : "", label: r.label || "Referência", kind: r.kind || "image" }));
+  const refs = list.map((r) => ({ path: r.path, preview: r.preview || null, thumb: r.thumb_path ? ctx.urls.get(r.thumb_path) || "" : "", label: r.label || "Referência", kind: r.kind || "image", ...(r.role && { role: r.role }) }));
   const video = k.kind !== "image";
   const known = (list2, id) => (list2.some((m) => m.id === id) ? id : list2[0].id);
   open(ctx, {
@@ -3604,7 +3866,7 @@ async function saveKit() {
     return x ? x.thumb_path || x.preview_path || (kind === "image" ? x.path : null) : kind === "image" ? path : null;
   };
   const base = E.base ? [{ path: E.base.path, preview: E.base.preview_path || null, thumb_path: E.base.thumb_path || E.base.preview_path || E.base.path, label: "Base", kind: "image" }] : [];
-  const refs = [...base, ...E.refs.filter((r) => !r.wait).map((r) => ({ path: r.path, preview: r.preview || null, thumb_path: thumbOf(r.path, r.kind || "image"), label: r.label, kind: r.kind || "image" }))];
+  const refs = [...base, ...E.refs.filter((r) => !r.wait).map((r) => ({ path: r.path, preview: r.preview || null, thumb_path: thumbOf(r.path, r.kind || "image"), label: r.label, kind: r.kind || "image", ...(r.role && { role: r.role }) }))];
   const kit = { kind: video ? "video" : "image", model: video ? E.vmodel : E.model, dur: E.dur, vres: E.vres, vaspect: E.vaspect, sound: !!E.sound, aspect: E.aspect, res: E.res, refs, prompt: promptText() };
   try { await ctx.saveKit(it.id, kit); ctx.toast(`Kit guardado em ${it.title}: o ✦ do card abre assim`); }
   catch (err) { console.error(err); ctx.toast(`Não guardou o kit: ${err.message || err}`, true); }
