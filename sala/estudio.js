@@ -1715,12 +1715,22 @@ function promptHTML(text) {
   const pool = { image: [...(base ? [base] : []), ...imgs], video: E.refs.filter((r) => r.kind === "video"), audio: E.refs.filter((r) => r.kind === "audio") };
   const named = [...(base ? [base] : []), ...E.refs.map((r) => ({ ...r, kind: r.kind || "image" }))].sort((a, b) => b.label.length - a.label.length);
   const alt = named.map((x) => x.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
-  const re = new RegExp(`${tags ? "@(image|video|audio)(\\d+)\\b" : "\\b[Ii]mage (\\d+)\\b(?!\\.\\d)"}${alt ? `|@(${alt})` : ""}`, "g");
+  // Claude often names several references at once ("images 2 and 3", "images 2, 3 and 4"): each number becomes its own
+  // reference too, or the ones it names look dropped from the text
+  const re = new RegExp(`${tags ? "@(image|video|audio)(\\d+)\\b" : "\\b[Ii]mages (\\d+(?:(?:, and |, | and )\\d+)+)\\b|\\b[Ii]mage (\\d+)\\b(?!\\.\\d)"}${alt ? `|@(${alt})` : ""}`, "g");
   let out = "", at = 0;
   for (const m of text.matchAll(re)) {
-    const x = m[tags ? 3 : 2] ? named.find((n) => n.label === m[tags ? 3 : 2]) : tags ? pool[m[1]][m[2] - 1] : files[m[1] - 1];
-    if (!x) continue;
-    out += esc(text.slice(at, m.index)) + tokHTML(x);
+    let html;
+    if (!tags && m[1]) {
+      const parts = m[1].split(/(, and |, | and )/);
+      if (parts.some((x, i) => i % 2 === 0 && !files[x - 1])) continue;
+      html = parts.map((x, i) => (i % 2 ? esc(x) : tokHTML(files[x - 1]))).join("");
+    } else {
+      const x = m[3] ? named.find((n) => n.label === m[3]) : tags ? pool[m[1]][m[2] - 1] : files[m[2] - 1];
+      if (!x) continue;
+      html = tokHTML(x);
+    }
+    out += esc(text.slice(at, m.index)) + html;
     at = m.index + m[0].length;
   }
   return (out + esc(text.slice(at))).replace(/\n/g, "<br>");
