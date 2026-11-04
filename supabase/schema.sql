@@ -363,15 +363,17 @@ create table public.recipes (
 );
 
 -- An etiqueta: a name and a color anyone on the team makes; it shows on the cards that have it and becomes a filter
--- (Filtros › Etiquetas). item_labels says which card (item) has which; deleting an etiqueta or a card takes its marks
--- along, never the other one.
+-- (Filtros › Etiquetas). item_labels says which card (item) has which, option_labels which image (the one a cut used:
+-- with the filter on, that card shows only its marked images); deleting an etiqueta, a card or an image takes its
+-- marks along, never the other one. padrao: the room opens filtered by it.
 create table public.labels (
   id uuid primary key default gen_random_uuid(),
   name text not null check (char_length(btrim(name)) between 1 and 40),
   color text not null default 'teal' check (color in ('teal', 'violet', 'coral', 'amber', 'pink', 'blue', 'green', 'gray')),
   sort double precision not null default extract(epoch from now()),
   created_by text not null default '',
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  padrao boolean not null default false
 );
 create table public.item_labels (
   item_id uuid not null references public.items (id) on delete cascade,
@@ -379,6 +381,13 @@ create table public.item_labels (
   added_by text not null default '',
   added_at timestamptz not null default now(),
   primary key (item_id, label_id)
+);
+create table public.option_labels (
+  option_id uuid not null references public.options (id) on delete cascade,
+  label_id uuid not null references public.labels (id) on delete cascade,
+  added_by text not null default '',
+  added_at timestamptz not null default now(),
+  primary key (option_id, label_id)
 );
 
 create index items_round_idx on public.items (round_id, scene, sort);
@@ -399,6 +408,7 @@ create index blocking_shots_item_idx on public.blocking_shots (item_id, created_
 create index gallery_group_items_option_idx on public.gallery_group_items (option_id);
 create index gallery_group_items_file_idx on public.gallery_group_items (file_id);
 create index item_labels_label_idx on public.item_labels (label_id);
+create index option_labels_label_idx on public.option_labels (label_id);
 
 -- ---------- what the client must not see ----------
 -- true when the client does not see the option. Per version of the round (rounds.version):
@@ -468,6 +478,7 @@ alter table public.souls enable row level security;
 alter table public.recipes enable row level security;
 alter table public.labels enable row level security;
 alter table public.item_labels enable row level security;
+alter table public.option_labels enable row level security;
 
 -- rounds: both sides read; only the team writes (the client confirms through confirm_round())
 create policy rounds_select on public.rounds for select to authenticated using ((select is_team()) or (select is_client()));
@@ -549,6 +560,8 @@ create policy recipes_team on public.recipes for all to authenticated
 create policy labels_team on public.labels for all to authenticated
   using ((select is_team())) with check ((select is_team()));
 create policy item_labels_team on public.item_labels for all to authenticated
+  using ((select is_team())) with check ((select is_team()));
+create policy option_labels_team on public.option_labels for all to authenticated
   using ((select is_team())) with check ((select is_team()));
 
 -- annotations: the team reads and manages all of them and draws as itself. The client draws on the options it can

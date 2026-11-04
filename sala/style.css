@@ -2086,18 +2086,22 @@ body.est-open .update-bar { bottom: auto; top: 6px; height: 40px; }
 .tc-side-head small { margin-left: 4px; color: var(--dim); font-weight: 500; }
 .tc-side .tc-list { max-height: none; flex: 1; min-height: 0; gap: 12px; }
 /* the versions of a video as pills over it (newest first, "atual"); an older one is read-only, its comments apart */
-.vvers { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
-.vvers button { display: inline-flex; align-items: baseline; gap: 6px; height: 28px; padding: 0 12px; border: 1px solid var(--line2); border-radius: 999px; background: none; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; transition: color 0.15s, border-color 0.15s; }
-.vvers button small { color: var(--dim); font-size: 11px; }
-.vvers button:hover { color: var(--text); border-color: var(--muted); }
-.vvers button.on { background: var(--raise2); border-color: var(--line2); color: var(--text); }
-.vvers button.on small { color: var(--accent); }
-.lb-left > .vvers { width: min(1100px, calc(100% - 48px)); margin: 4px auto 10px; }
-.tc-old { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--muted); font-size: 13px; }
-.tc-old .link { padding: 0; color: var(--text); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
-.tc-old .link:hover { color: var(--accent); }
+/* the versions of a video: one small switch "v1 · v2", as tall as the icons it sits with (what each is: its tooltip) */
+.vvers { display: inline-flex; flex: none; gap: 2px; padding: 2px; border: 1px solid var(--line2); border-radius: 999px; }
+.vvers button { height: 28px; min-width: 34px; padding: 0 10px; border: 0; border-radius: 999px; background: none; color: var(--muted); font: 500 12.5px/28px var(--num); cursor: pointer; transition: color 0.15s, background 0.15s; }
+.vvers button:hover { color: var(--text); }
+.vvers button.on { background: var(--raise2); color: var(--text); }
+.vvers-row { display: flex; margin: 0 0 10px; }
+.lb-left > .vvers { align-self: flex-start; margin: 4px 0 10px max(24px, calc((100% - 1100px) / 2)); }
+/* an older version: the same field, off, saying where the new comments go */
+.tc-form.tc-old .tc-in:disabled { opacity: 0.6; cursor: not-allowed; }
+/* a second in a comment of the side panel, for the video on screen: it takes the video there */
+button.tc-chip { border: 0; cursor: pointer; font: inherit; font-family: var(--num); font-size: 12px; line-height: inherit; }
+button.tc-chip:hover { background: var(--amber); color: var(--ink); }
+.lab-pin { display: inline-grid; margin-left: -2px; color: var(--muted); }
+.lab-pin svg { width: 12px; height: 12px; }
 .msgs-old { margin-top: 6px; border-top: 1px solid var(--line); padding-top: 10px; }
-.msgs-old > summary { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; cursor: pointer; }
+.msgs-old > summary { color: var(--muted); font-family: var(--num); font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .msgs-old > summary:hover { color: var(--text); }
 .msgs-old[open] > summary { margin-bottom: 12px; }
 .msgs-old .msg { opacity: 0.85; }

@@ -383,7 +383,43 @@ function labelIdsOf(id) {
 const labelsOf = (id) => S.labels.filter((l) => labelIdsOf(id).has(l.id));
 const labelById = (id) => S.labels.find((l) => l.id === id);
 const labelChip = (l) => `<span class="etq" style="--lc:${LABEL_COLORS[l.color] || LABEL_COLORS.gray}">${esc(l.name)}</span>`;
-const inLabels = (it) => !TEAM || !S.labelF.size || peeked(it.id) || [...labelIdsOf(it.id)].some((id) => S.labelF.has(id));
+// an etiqueta can also mark one image of a card (option_labels, atualizar-2026-11f.sql: the image a cut used). A mark
+// counts for the image's whole stack of versions, so a later version of it stays marked. Per etiqueta, the rounds it
+// marks something in: a picked etiqueta filters only those rounds, so the default one of a round never empties the others
+let olMemo = { k: null };
+function optMarks() {
+  const k = [S.optLabels, S.itemLabels, S.options, S.items];
+  if (!olMemo.k || k.some((x, n) => x !== olMemo.k[n])) {
+    const byOpt = new Map(), byItem = new Map(), rounds = new Map(), optBy = new Map(S.options.map((o) => [o.id, o]));
+    const add = (m, key, v) => (m.get(key) || m.set(key, new Set()).get(key)).add(v);
+    for (const x of S.optLabels || []) {
+      const o = optBy.get(x.option_id);
+      if (!o) continue;
+      add(byOpt, o.stack || o.id, x.label_id);
+      add(byItem, o.item_id, x.label_id);
+      const it = itemOf(o.item_id);
+      if (it) add(rounds, x.label_id, it.round_id);
+    }
+    for (const x of S.itemLabels) { const it = itemOf(x.item_id); if (it) add(rounds, x.label_id, it.round_id); }
+    olMemo = { k, byOpt, byItem, rounds };
+  }
+  return olMemo;
+}
+const optLabelIds = (o) => optMarks().byOpt.get(o.stack || o.id) || NO_LABELS;
+const cardImgLabelIds = (id) => optMarks().byItem.get(id) || NO_LABELS;
+const labelsHere = (it) => [...S.labelF].filter((id) => optMarks().rounds.get(id)?.has(it.round_id));
+const inLabels = (it) => {
+  if (!TEAM || !S.labelF.size || peeked(it.id)) return true;
+  const here = labelsHere(it);
+  return !here.length || here.some((id) => labelIdsOf(it.id).has(id) || cardImgLabelIds(it.id).has(id));
+};
+// with an etiqueta on, a card that has images marked with it shows only those; the others stay one click away (the grid
+// of every version, Mostrar, or Limpar)
+const inOptLabels = (o) => {
+  if (!TEAM || !S.labelF.size || peeked(o.item_id)) return true;
+  const it = itemOf(o.item_id), marks = it ? labelsHere(it).filter((id) => cardImgLabelIds(it.id).has(id)) : [];
+  return !marks.length || marks.some((id) => optLabelIds(o).has(id));
+};
 // "sem a etiqueta Seedance", "sem as etiquetas Seedance ou Yan": what a card the etiquetas filter hides lacks
 function labelsTxt() {
   const names = [...S.labelF].map((id) => labelById(id)?.name).filter(Boolean);
@@ -391,7 +427,7 @@ function labelsTxt() {
 }
 // any filter that can leave a card out: approval, author or etiqueta
 const anyFilter = () => filtering() || (TEAM && S.labelF.size > 0);
-const inView = (o) => (filtering() && S.ver === "now" && !peeked(o.item_id) ? true : inVer(o)) && inAppr(o) && inAuthor(o);
+const inView = (o) => (filtering() && S.ver === "now" && !peeked(o.item_id) ? true : inVer(o)) && inAppr(o) && inAuthor(o) && inOptLabels(o);
 // a card is on screen when something of it passes the filters (an item with no options yet, unless a filter is on)
 const hasView = (it) => !TEAM || (inLabels(it) && (optsOf(it.id).length ? shownOpts(it.id).length > 0 : !filtering()));
 // "Ver todas juntas" and the Versões groups: every version (or the one picked), with the same approval, author and dropped filters
@@ -471,7 +507,7 @@ function parseMmss(v) {
 // past that comes in pages. When the options passed 1000, every newer one was saved but never reached the room (the
 // uploads looked lost). Each page is ordered by the column and then by the table's key, so no row is skipped or repeated
 const PAGE_ROWS = 1000;
-const KEY_OF = { option_reviews: ["option_id"], envio: ["option_id", "version"], item_feedback: ["round_id", "item_id", "version"], item_labels: ["item_id", "label_id"], blocking_shots: ["option_id"], round_notes: ["round_id"] };
+const KEY_OF = { option_reviews: ["option_id"], envio: ["option_id", "version"], item_feedback: ["round_id", "item_id", "version"], item_labels: ["item_id", "label_id"], option_labels: ["option_id", "label_id"], blocking_shots: ["option_id"], round_notes: ["round_id"] };
 async function allRows(t, col, cols = "*") {
   const out = [];
   for (let from = 0; ; from += PAGE_ROWS) {
@@ -491,17 +527,20 @@ async function load(force = false) {
   // drawings (estudio.js): the client gets its own, the team gets all of them
   // the cards' etiquetas (team) come apart: a room whose database has none yet (a job that did not run
   // atualizar-2026-11e.sql) just goes without them
-  const labs = TEAM ? [q("labels", "sort"), q("item_labels", "added_at")] : [];
+  // (and the marks on images, atualizar-2026-11f.sql, likewise)
+  const labs = TEAM ? [q("labels", "sort"), q("item_labels", "added_at"), q("option_labels", "added_at")] : [];
   const got = await Promise.all([q("rounds", "sort"), q("items", "sort"), q("options", "sort"), q("comments", "created_at"), q("requests", "sort"), q("request_files", "created_at"), q("annotations", "created_at"), ...team, ...labs]);
   const res = got.slice(0, got.length - labs.length), lab = got.slice(res.length);
   const bad = res.find((r) => r.error);
   if (bad) throw bad.error;
-  const labelsOn = TEAM && lab.every((r) => !r.error);
-  const sig = JSON.stringify([...res, ...(labelsOn ? lab : [])].map((r) => r.data));
+  const labelsOn = TEAM && !lab[0].error && !lab[1].error, imgMarks = labelsOn && !lab[2].error;
+  const sig = JSON.stringify([...res, ...(labelsOn ? lab.slice(0, 2) : []), ...(imgMarks ? [lab[2]] : [])].map((r) => r.data));
   if (!force && sig === S.sig) return false;
   const [rounds, items, options, comments, requests, files, annotations, reviews = [], feedback = [], wkRefs = [], tasks = [], pendencias = [], roundNotes = [], envio = [], bshots = []] = res.map((r) => r.data);
   Object.assign(S, { rounds, items, options, comments, requests, files, annotations, reviews, feedback, wkRefs, tasks, pendencias, roundNotes, envio, bshots,
-    labels: labelsOn ? lab[0].data : [], itemLabels: labelsOn ? lab[1].data : [], labelsOn, sig });
+    labels: labelsOn ? lab[0].data : [], itemLabels: labelsOn ? lab[1].data : [], optLabels: imgMarks ? lab[2].data : [], labelsOn, imgMarks, sig });
+  // the etiquetas marked padrão filter the room as it opens: once per tab, so a filter someone took off stays off
+  if (labelsOn && !S.labelInit) { S.labelInit = true; if (!S.labelF.size) for (const l of S.labels) if (l.padrao) S.labelF.add(l.id); }
   // an etiqueta someone deleted leaves the filter, a card someone deleted leaves the selection
   for (const id of S.labelF) if (!S.labels.some((l) => l.id === id)) S.labelF.delete(id);
   for (const id of S.sel) if (!S.items.some((it) => it.id === id)) S.sel.delete(id);
@@ -810,7 +849,8 @@ const drawsOf = (o) => S.annotations.filter((a) => a.option_id === o.id && !a.re
 const tcOf = (o) => S.comments.filter((c) => c.option_id === o.id && c.t_sec != null).sort((a, b) => a.t_sec - b.t_sec);
 const tcFmt = (t) => mmss(Math.floor(t || 0));
 // a comment's text, its second first; on a video with versions the second also says which version ("v1 · 0:42")
-const cBody = (c, ver = "") => `${c.t_sec != null ? `<span class="tc-chip">${ver ? `${ver} · ` : ""}${tcFmt(c.t_sec)}</span> ` : ""}${esc(c.body)}`;
+// (on the version on screen the second is a button: it takes the video there)
+const cBody = (c, ver = "", seek = false) => `${c.t_sec != null ? (seek ? `<button class="tc-chip" data-act="tc-seek" data-t="${c.t_sec}" title="Ir pra esse momento do vídeo">${ver ? `${ver} · ` : ""}${tcFmt(c.t_sec)}</button> ` : `<span class="tc-chip">${ver ? `${ver} · ` : ""}${tcFmt(c.t_sec)}</span> `) : ""}${esc(c.body)}`;
 // a card of videos only (the animatic and its new cuts): each video is a version of it, the newest first. The newest
 // is on screen unless another one was picked (S.vsel); the older ones stay to look back at, each with the comments made
 // on it, since a second of one cut is not the same moment in the next
@@ -821,13 +861,22 @@ const vidVers = (it) => {
 const vidOn = (it, vv = vidVers(it)) => vv.find((o) => o.id === S.vsel?.[it.id]) || vv[0];
 const vidName = (vv, o) => `Versão ${vv.length - vv.indexOf(o)}`;
 const vidShort = (vv, o) => `v${vv.length - vv.indexOf(o)}`;
-// the versions as pills over the video: the newest says "atual", an older one how many comments it got
-const vidPills = (it, vv, on) => vv.length < 2 ? "" : `<div class="vvers" role="tablist" aria-label="Versões do vídeo">${vv.map((o, i) => {
-  const n = tcOf(o).length;
-  return `<button class="${o === on ? "on" : ""}" data-act="vsel" data-id="${it.id}" data-opt="${o.id}" role="tab" aria-selected="${o === on}">${vidName(vv, o)}<small>${i === 0 ? "atual" : n ? plural(n, "comentário", "comentários") : "anterior"}</small></button>`;
-}).join("")}</div>`;
+// the versions as one small switch, oldest first ("v1 · v2"); what each one is (the current one, how many comments an
+// older one got) says itself in its tooltip, so the switch stays as small as the icons beside it
+const vidPills = (it, vv, on) => vv.length < 2 ? "" : `<span class="vvers" role="tablist" aria-label="Versões do vídeo">${[...vv].reverse().map((o) => {
+  const n = tcOf(o).length, cur = o === vv[0];
+  return `<button class="${o === on ? "on" : ""}" data-act="vsel" data-id="${it.id}" data-opt="${o.id}" role="tab" aria-selected="${o === on}" title="${vidName(vv, o)}${cur ? " · atual" : ` · anterior${n ? ` · ${plural(n, "comentário", "comentários")}` : ""}`}">${vidShort(vv, o)}</button>`;
+}).join("")}</span>`;
 // what was said about a version of an item: the comments on its videos or images (option_id) and the card's own ones
 const saidIn = (it, v) => commentsOf(it.id).filter((c) => { const o = v != null && c.option_id ? S.options.find((x) => x.id === c.option_id) : null; return !o || verOf(o) === v; });
+// the comments a card counts: on a video with versions, those of the version on screen and the card's own (an older
+// version's stay in their own group in the panel, so "21" never reads as the new cut's)
+const commentsNow = (it) => {
+  const vv = vidVers(it);
+  if (vv.length < 2) return commentsOf(it.id);
+  const on = vidOn(it, vv);
+  return commentsOf(it.id).filter((c) => !c.option_id || c.option_id === on.id || !vv.some((o) => o.id === c.option_id));
+};
 async function signed(path, name, download) {
   const { data, error } = await sb.storage.from(BUCKET).createSignedUrl(path, 3600, download ? { download: name || true } : undefined);
   if (error) throw error;
@@ -1148,14 +1197,17 @@ function filtersOn(ctx) {
 // of them shows), ＋ Nova makes one, and the pencil turns the list into one row per etiqueta: its color as a dot (a click
 // moves it to the next color), its name, rename and delete as small icons; the pencil again (lit) ends it
 const PEN_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M10.6 2.9l2.5 2.5-7.4 7.4-3.1.6.6-3.1z" stroke-linejoin="round"/><path d="M9.2 4.3l2.5 2.5"/></svg>';
+const PIN_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M5.8 2.5h4.4l-.7 3.5 2.4 2.6H4.1l2.4-2.6z" stroke-linejoin="round"/><path d="M8 8.6v5"/></svg>';
 function labelOpts(r) {
-  const here = new Set(itemsOf(r.id).map((it) => it.id));
-  const count = (l) => S.itemLabels.filter((x) => x.label_id === l.id && here.has(x.item_id)).length;
+  // the cards of this round with the etiqueta, on the card or on one of its images
+  const count = (l) => itemsOf(r.id).filter((it) => labelIdsOf(it.id).has(l.id) || cardImgLabelIds(it.id).has(l.id)).length;
   const edit = S.labelEdit && S.labels.length > 0;
-  const pen = S.labels.length ? `<button class="lab-ico ${edit ? "on" : ""}" data-act="label-edit" aria-pressed="${edit}" title="${edit ? "Pronto" : "Editar etiquetas: cor, nome, apagar"}" aria-label="${edit ? "Pronto" : "Editar etiquetas"}">${PEN_ICO}</button>` : "";
+  const pen = S.labels.length ? `<button class="lab-ico ${edit ? "on" : ""}" data-act="label-edit" aria-pressed="${edit}" title="${edit ? "Pronto" : "Editar etiquetas: cor, nome, padrão, apagar"}" aria-label="${edit ? "Pronto" : "Editar etiquetas"}">${PEN_ICO}</button>` : "";
+  // the pin: a padrão etiqueta is the filter the room opens with (on the rounds it marks something in)
+  const pin = (l) => (S.imgMarks ? `<button class="lab-ico ${l.padrao ? "on" : ""}" data-act="label-pad" data-id="${l.id}" aria-pressed="${!!l.padrao}" title="${l.padrao ? "Padrão: a sala abre filtrada por esta etiqueta. Clique pra deixar de ser" : "Tornar padrão: a sala abre filtrada por esta etiqueta"}" aria-label="Padrão">${PIN_ICO}</button>` : "");
   const list = edit
-    ? S.labels.map((l) => `<span class="lab-edit"><button class="lab-dot" data-act="label-color" data-id="${l.id}" style="--lc:${LABEL_COLORS[l.color] || LABEL_COLORS.gray}" title="Trocar a cor" aria-label="Trocar a cor de ${esc(l.name)}"></button>${labelChip(l)}<button class="lab-ico" data-act="label-ren" data-id="${l.id}" title="Renomear" aria-label="Renomear ${esc(l.name)}">${PEN_ICO}</button><button class="lab-ico danger" data-act="label-del" data-id="${l.id}" title="Apagar" aria-label="Apagar ${esc(l.name)}">${ICO.trash}</button></span>`).join("")
-    : S.labels.map((l) => `<button class="fopt lab-opt ${S.labelF.has(l.id) ? "on" : ""}" data-act="label" data-v="${l.id}" aria-pressed="${S.labelF.has(l.id)}" title="Só os cards com ${esc(l.name)} (junta com as outras marcadas)">${labelChip(l)}<small>${count(l)}</small></button>`).join("");
+    ? S.labels.map((l) => `<span class="lab-edit"><button class="lab-dot" data-act="label-color" data-id="${l.id}" style="--lc:${LABEL_COLORS[l.color] || LABEL_COLORS.gray}" title="Trocar a cor" aria-label="Trocar a cor de ${esc(l.name)}"></button>${labelChip(l)}${pin(l)}<button class="lab-ico" data-act="label-ren" data-id="${l.id}" title="Renomear" aria-label="Renomear ${esc(l.name)}">${PEN_ICO}</button><button class="lab-ico danger" data-act="label-del" data-id="${l.id}" title="Apagar" aria-label="Apagar ${esc(l.name)}">${ICO.trash}</button></span>`).join("")
+    : S.labels.map((l) => `<button class="fopt lab-opt ${S.labelF.has(l.id) ? "on" : ""}" data-act="label" data-v="${l.id}" aria-pressed="${S.labelF.has(l.id)}" title="Só os cards com ${esc(l.name)} (junta com as outras marcadas)${l.padrao ? " · padrão: a sala abre com ela" : ""}">${labelChip(l)}${l.padrao ? `<i class="lab-pin" aria-hidden="true">${PIN_ICO}</i>` : ""}<small>${count(l)}</small></button>`).join("");
   return list + '<button class="fopt" data-act="label-new" title="Nova etiqueta: depois ponha nos cards pelo ⋯ ou selecionando vários">＋ Nova</button>' + pen;
 }
 function filterBar(r, ctx, note = "") {
@@ -1409,7 +1461,7 @@ function optFace(it, o, { size, by = false, act = "ov-open", del = false, plain 
   const tr = lab || state ? `<span class="hz-tr">${lab ? `<b class="hz-lab" title="${off ? "O cliente não vê esta imagem" : "A letra que o cliente vê"}">${lab}</b>` : ""}${state}</span>` : "";
   const judge = TEAM && !quiet ? `<div class="hz-judge">${extra ? `${extra(o)}<span class="sep"></span>` : ""}${Object.keys(REVIEW).map((v) => `<button class="rv ${rv.verdict === v ? "on" : ""}" data-act="review" data-id="${o.id}" data-v="${v}" aria-pressed="${rv.verdict === v}" title="${REVIEW[v]}${v === "drop" ? " (o cliente não vê)" : ""}">${ICO[v]}</button>`).join("")}${del ? `<span class="sep"></span><button class="hz-del" data-act="opt-del" data-id="${o.id}" title="Apagar esta imagem">${ICO.trash}</button>` : ""}</div>`
     : extra ? `<div class="hz-judge">${extra(o)}</div>` : "";
-  const nc = commentsOf(it.id).length, nd = TEAM ? drawsOf(o) : 0;
+  const nc = commentsNow(it).length, nd = TEAM ? drawsOf(o) : 0;
   const meta = [by && o.created_by ? esc(o.created_by.split(" ")[0]) : "", TEAM && roundVers(it.round_id).length > 1 ? `v${verOf(o)}` : ""].filter(Boolean).join(" · ");
   const bl = `<span class="hz-bl"><button class="hz-chip ${nc ? "" : "hz-hover"}" data-act="drawer" data-id="${it.id}" title="${nc ? plural(nc, "comentário", "comentários") : "Comentar"}" aria-label="Comentários">${CHAT}${nc || ""}</button>${nd ? `<b class="hz-chip" title="${plural(nd, "desenho", "desenhos")} em aberto">${Estudio.ICONS.pen}${nd}</b>` : ""}${meta ? `<span class="hz-meta" title="Quem fez · versão">${meta}</span>` : ""}${rv.verdict === "drop" && rv.note ? `<span class="hz-meta" title="${dropWhy(rv)}">${esc(rv.note)}</span>` : ""}</span>`;
   const br = tools ? `<div class="hz-br">${TEAM && AI && !o.mime.startsWith("video/") ? `<button data-act="estudio" data-id="${o.id}" title="Editar com IA: esta imagem é a base" aria-label="Editar com IA">${Estudio.ICONS.spark}</button>` : ""}${vsCan(o) ? `<button data-act="vs-open" data-id="${it.id}" data-i="${i}" title="${blockOf(o) ? "Comparar com o blocking 3D" : "Comparar com a versão anterior"}" aria-label="Comparar">${ICON.vs}</button>` : ""}<button data-act="download" data-id="${o.id}" title="Baixar o original" aria-label="Baixar">${ICO.down}</button></div>` : "";
@@ -1499,7 +1551,7 @@ const MARK = { keep: `Equipe: vai/foi ${AO_CL}`, redo: "Equipe: refazer" };
 const dropWhy = (rv) => `Descartada: ${A_CL} não vê${rv?.note ? ` · ${esc(rv.note)}` : ""}`;
 const dropTag = (rv) => `<b class="hero-drop" title="${dropWhy(rv)}">${ICO.drop}Descartada${rv?.note ? `<small>${esc(rv.note)}</small>` : ""}</b>`;
 // the card's signals stay on the image at all times (top left); its tools live in the bar that shows on hover
-const talkTag = (it) => { const n = commentsOf(it.id).length; return n ? `<b class="hero-talk" title="${plural(n, "comentário", "comentários")}">${CHAT}${n}</b>` : ""; };
+const talkTag = (it) => { const n = commentsNow(it).length; return n ? `<b class="hero-talk" title="${plural(n, "comentário", "comentários")}">${CHAT}${n}</b>` : ""; };
 // before/after pairs: options named "<chave>__blocking.*" and "<chave>__ia.*" show as one image with a hover wipe
 // (blocking left of the line, the AI result right of it; the line follows the mouse); arrows and dots step through pairs.
 // "<chave>__sem.*" / "<chave>__com.*" is the same wipe for a look change on one plate (without / with sun), labelled by the captions.
@@ -1598,7 +1650,7 @@ function trioRow(r, it, { tools = false } = {}) {
       : f?.status === "aprovado" || (!f && t.pick) ? '<p class="trio-note">Aprovada: fica assim</p>'
       : group("todo", "O que fizemos", ghost(f?.status === "espera" ? `Esperando ${A_CL}` : "Ninguém fez ainda")));
   }
-  const n = commentsOf(it.id).length, more = S.more === it.id;
+  const n = commentsNow(it).length, more = S.more === it.id;
   const kit = tools ? `<span class="trio-tools">${shotBtn(it)}
       <button class="ibtn ${S.drawer === it.id ? "on" : ""} ${n ? "has" : ""}" data-act="drawer" data-id="${it.id}" title="Comentários" aria-label="Comentários">${CHAT}${n ? `<b>${n}</b>` : ""}</button>
       <label class="ibtn" title="Adicionar opções (ou arraste os arquivos para cá)" aria-label="Adicionar opções"><input type="file" multiple hidden accept="image/*,video/*" data-upload-item="${it.id}">+</label>
@@ -1730,7 +1782,7 @@ function boardCard(it) {
   const o = optsOf(it.id)[0];
   const authors = authorsOf(optsOf(it.id));
   const [cls, label] = stageOf(it);
-  const n = commentsOf(it.id).length;
+  const n = commentsNow(it).length;
   const r = roundOf(it.round_id), news = r ? todoOf(it, r).unrev.length : 0;
   return `<a class="bcard" href="${sceneHref(it.round_id, it.scene, it.id)}" draggable="true" data-card="${it.id}" title="Clique para abrir · arraste para outra pessoa"><button class="bcard-add" data-act="task-new" data-item="${it.id}" data-who="${it.assignee || ""}" title="Nova tarefa neste card" aria-label="Nova tarefa neste card">${ICON.plus}</button>
     <div class="bthumb">${o ? media(o, "thumb") : "sem opção"}</div>
@@ -1922,8 +1974,11 @@ function scenePage(r, n) {
     return s !== undefined ? `<a class="btn hico" data-step="${d}" href="${sceneHref(r.id, s)}" title="${t} (${d < 0 ? "←" : "→"}): ${tag(s)} ${esc(sceneName(s))}" aria-label="${t}">${ico}</a>` : `<span class="btn hico off" aria-hidden="true">${ico}</span>`;
   };
   const fb = TEAM && items.length ? sceneFilter(r, items) : null;
+  // the client's scene of one video (the animatic) is laid out as the round's own page: its icons in the head, the
+  // card bare under it
+  const solo = !TEAM && items.length === 1 && items[0].kind === "video" ? items[0] : null;
   const right = TEAM ? `${sceneArrow(prev, -1)}${sceneArrow(next, 1)}${create}${addButton(n)}${fb ? fb.btn : ""}${dlButton()}${sendButton(r)}`
-    : `${progress(approved, items.length, `${approved} de ${items.length} aprovados`)}${dlButton()}`;
+    : `${progress(approved, items.length, `${approved} de ${items.length} aprovados`)}${solo ? videoHeadActions(solo) : ""}${dlButton()}`;
   const look = lookOf(n);
   // a later round (the shots of A2) shows the kit its scene is made of, approved in an earlier one
   const kit = TEAM ? kitList(kitOfScene(n)) : [];
@@ -1932,7 +1987,7 @@ function scenePage(r, n) {
     look ? `<span class="look"><span class="sw">${(look.palette || []).map((c) => `<i style="background:${esc(c)}"></i>`).join("")}</span>${esc(look.label || "")}</span>` : "",
     TEAM && look ? `<button class="link copy" data-act="copy-look" data-v="${n}" title="${esc(lookPrompt(n))}">Copiar prompt da cena</button>` : ""].filter(Boolean).join(" · ");
   return head(`<span class="num">${tag(n)}</span>${esc(sceneName(n))}`, TEAM ? "" : line, right, `${esc(r.code)} · ${esc(r.title)}`) +
-    `<div class="main-body ${TEAM && items.length ? "fbody" : ""}" data-keep="main">${!items.length ? `<p class="empty">Nenhum item nesta cena.${TEAM ? ' <button class="link" data-act="add-item" data-scene="' + n + '">Criar um</button>' : ""}</p>` : TEAM ? sceneBody(r, items, fb) :`<div class="items">${items.map(clientRow).join("")}</div>`}${TEAM ? "" : `<nav class="cnav">${prev !== undefined ? `<a class="btn" href="${sceneHref(r.id, prev)}">← ${tag(prev)} ${esc(sceneName(prev))}</a>` : `<a class="btn" href="#/r/${r.id}">← Apresentação</a>`}<span class="grow"></span>${next !== undefined ? `<a class="btn primary" href="${sceneHref(r.id, next)}">Próxima: ${tag(next)} ${esc(sceneName(next))} →</a>` : `<a class="btn primary" href="#/r/${r.id}/resumo">Ver o resumo e confirmar →</a>`}</nav>`}</div>`;
+    `<div class="main-body ${TEAM && items.length ? "fbody" : ""}" data-keep="main">${!items.length ? `<p class="empty">Nenhum item nesta cena.${TEAM ? ' <button class="link" data-act="add-item" data-scene="' + n + '">Criar um</button>' : ""}</p>` : TEAM ? sceneBody(r, items, fb) :`<div class="items">${solo ? clientRow(solo, true) : items.map((it) => clientRow(it)).join("")}</div>`}${TEAM ? "" : `<nav class="cnav">${prev !== undefined ? `<a class="btn" href="${sceneHref(r.id, prev)}">← ${tag(prev)} ${esc(sceneName(prev))}</a>` : `<a class="btn" href="#/r/${r.id}">← Apresentação</a>`}<span class="grow"></span>${next !== undefined ? `<a class="btn primary" href="${sceneHref(r.id, next)}">Próxima: ${tag(next)} ${esc(sceneName(next))} →</a>` : `<a class="btn primary" href="#/r/${r.id}/resumo">Ver o resumo e confirmar →</a>`}</nav>`}</div>`;
 }
 // one card on its own (team, from the menu): the card at full width, every version of it underneath, and the
 // arrows (and ← →) going to the previous or next card of the page
@@ -1950,14 +2005,14 @@ function focusPage(r, n, items, it) {
   const st = f ? `<span class="fb ${f.status}">${FB[f.status]}</span>` : it.decision === "approved" ? '<span class="fb aprovado">Aprovado</span>' : "";
   const sub = [KINDS[it.kind] ? `<span class="ihead-kind">${KINDS[it.kind]}</span>` : "", st, f?.summary ? esc(f.summary) : it.brief ? esc(it.brief) : "", whoChip(it),
     ts.length ? `<span class="ihead-n" title="Tarefas feitas">${ts.filter((t) => t.done).length}/${ts.length} tarefas</span>` : ""].filter(Boolean).join(" ");
-  const counts = { versoes: optsOf(it.id).filter((o) => !dropped(o) && !isAngle(o)).length, pedido: commentsOf(it.id).length + (f ? lines(f.client_extra).length : 0), refs: S.wkRefs.filter((x) => x.item_id === it.id).length + refsOf(it).length, cena3d: optsOf(it.id).filter((o) => isAngle(o) && !dropped(o)).length };
+  const counts = { versoes: optsOf(it.id).filter((o) => !dropped(o) && !isAngle(o)).length, pedido: commentsNow(it).length + (f ? lines(f.client_extra).length : 0), refs: S.wkRefs.filter((x) => x.item_id === it.id).length + refsOf(it).length, cena3d: optsOf(it.id).filter((o) => isAngle(o) && !dropped(o)).length };
   // the tab of the address, else the one last used on any card unless this card has nothing in it (an empty
   // Referências in front of an animatic looked like the video was gone), else Versões
   const tab = tabsOf[S.page.tab] ? S.page.tab : tabsOf[S.itemTab] && (S.itemTab === "versoes" || counts[S.itemTab]) ? S.itemTab : "versoes";
   const VIEW = { versoes: [ICON.grid, "Versões"], refs: [CLIP, "Referências"], cena3d: [CUBE, "Cena 3D"] };
   const views = `<span class="hgroup seg-ico">${Object.keys(tabsOf).filter((k2) => VIEW[k2]).map((k2) => `<a class="btn hico ${tab === k2 || (k2 === "versoes" && tab === "pedido") ? "on" : ""}" href="${sceneHref(r.id, n, it.id)}/${k2}" title="${VIEW[k2][1]}${counts[k2] ? ` · ${counts[k2]}` : ""}" aria-label="${VIEW[k2][1]}">${VIEW[k2][0]}</a>`).join("")}</span>`;
   // the request and the comments open in the panel, as from a card's yellow line
-  const ask = TEAM ? askOf(it) : null, said = commentsOf(it.id).length;
+  const ask = TEAM ? askOf(it) : null, said = commentsNow(it).length;
   const panel = `<button class="btn hico ${S.drawer === it.id ? "on" : ""}" data-act="${TEAM && lastFbOf(it.id) ? "pedido" : "drawer"}" data-id="${it.id}" title="${ask ? `${esc(ask.label)}${ask.note ? ` · ${esc(ask.note)}` : ""}` : "Pedido e comentários"}${said ? ` · ${plural(said, "comentário", "comentários")}` : ""}" aria-label="Pedido e comentários">${ICO.note}${ask ? '<i class="dot warn"></i>' : said ? `<b class="badge">${said}</b>` : ""}</button>`;
   const fb = tab === "versoes" || tab === "pedido" ? filterBar(r, { dropped: optsOf(it.id).some(dropped), bare: true }) : null;
   const body = tab === "cena3d" ? cena3dSlot(it) : tab === "refs" ? itemRefs(r, it) : itemVersions(r, it, fb?.chips || "");
@@ -1979,18 +2034,23 @@ function voicesLine(it) {
 function compareButton(it) {
   return refsOf(it).length && optsOf(it.id).length ? `<button class="chat" data-act="compare" data-id="${it.id}" title="Ver lado a lado com as fotos originais">${CMP}Comparar</button>` : "";
 }
-// the video-only round's header: ask for a change as an icon, approve as the one word; the timecoded comments under the
-// video replace the comments button
+// the video-only page's header (the round's page, or a scene of one video): the versions switch, the comments (the
+// panel at the side: the version on screen's first, an older one's closed under them), ask for a change as an icon,
+// approve as the one word
 const tcSideOn = () => (S.tcSide ??= store.get("sala-tcside") === "1");
-const tcSideButton = (o) => { const n = tcOf(o).length; return `<button class="btn hico ${tcSideOn() ? "on" : ""}" data-act="tc-side" aria-pressed="${tcSideOn()}" title="${tcSideOn() ? "Fechar" : "Abrir"} os comentários do vídeo" aria-label="Comentários do vídeo">${CHAT}${n ? `<span class="badge">${n}</span>` : ""}</button>`; };
-const videoHeadActions = (it) => ((vidOn(it) || optsOf(it.id)[0]) ? tcSideButton(vidOn(it) || optsOf(it.id)[0]) : "") + (it.decision !== "pending"
+const videoComments = (it) => {
+  const vv = vidVers(it), on = vv.length ? vidOn(it, vv) : null, n = commentsNow(it).length;
+  const what = on && vv.length > 1 ? `Comentários da ${vidShort(vv, on)}, a versão na tela (as outras versões, fechadas embaixo)` : "Comentários do vídeo";
+  return `<button class="btn hico ${S.drawer === it.id ? "on" : ""}" data-act="drawer" data-id="${it.id}" aria-pressed="${S.drawer === it.id}" title="${what}" aria-label="Comentários">${CHAT}${n ? `<span class="badge">${n}</span>` : ""}</button>`;
+};
+const videoHeadActions = (it) => vidPills(it, vidVers(it), vidOn(it)) + videoComments(it) + (it.decision !== "pending"
   ? `<button class="btn" data-act="undo" data-id="${it.id}">Mudar decisão</button>`
   : `<button class="btn hico" data-act="ask-change" data-id="${it.id}" title="Pedir ajuste: escreva o que mudar" aria-label="Pedir ajuste">${ICO.redo}</button><button class="btn primary" data-act="approve" data-id="${it.id}">Aprovar</button>`)
   + (ADMIN ? `<button class="btn hico wk-rm-item" data-act="wk-item-off" data-id="${it.id}" title="Tirar o item: ${esc(A_CL)} deixa de ver o item inteiro. Só você vê este botão." aria-label="Tirar o item">${ICO.drop}</button>` : "");
 // the team's admin only, in the client's room: the client stops seeing the whole item
 const itemOffButton = (it) => (ADMIN ? `<button class="chat wk-rm-item" data-act="wk-item-off" data-id="${it.id}" title="${esc(cap(A_CL))} deixa de ver o item inteiro. Só você vê este botão.">${ICO.drop}Tirar o item</button>` : "");
 function chatButton(it) {
-  const n = commentsOf(it.id).length;
+  const n = commentsNow(it).length;
   return `<button class="chat ${S.drawer === it.id ? "on" : ""}" data-act="drawer" data-id="${it.id}" title="Comentários">${CHAT}${n || "Comentar"}</button>`;
 }
 // approve, ask for a change, or undo: under the client's card, or in the page header for the video-only round
@@ -2020,7 +2080,7 @@ function clientRow(it, bare = false) {
   return `<article class="citem ${S.flash === it.id ? "flash" : ""}" id="item-${it.id}">
     ${bare ? "" : `<header class="citem-head"><span class="kind">${KINDS[it.kind] || ""}</span><h3>${esc(it.title)}</h3><span class="state ${cls}">${label}</span><span class="grow"></span>${compareButton(it)}${chatButton(it)}${itemOffButton(it)}</header>`}
     ${voicesLine(it)}
-    ${vid ? (() => { const side = !bare || tcSideOn(); return `<div class="cvideo cvsplit tcwrap ${side ? "side-on" : ""}"><div class="cv-left">${vidPills(it, vv, vid)}${media(vid, "big").replace(" autoplay", "")}${tcBlock(it, vid, false)}</div>${side ? `<aside class="tc-side" aria-label="Comentários no vídeo"><p class="tc-side-head">Comentários ${vv.length > 1 ? `na ${vidName(vv, vid).toLowerCase()}` : "no vídeo"} <small>${tcOf(vid).length || ""}</small></p>${tcList(vid)}</aside>` : ""}</div>`; })() : ""}
+    ${vid ? `<div class="cvideo cvsplit tcwrap"><div class="cv-left">${bare || vv.length < 2 ? "" : `<div class="vvers-row">${vidPills(it, vv, vid)}</div>`}${media(vid, "big").replace(" autoplay", "")}${tcBlock(it, vid, false)}</div></div>` : ""}
     <div class="ctiles n${Math.min(opts.length, 3)} ${canPick ? "pickable" : ""}" ${vid ? "hidden" : ""}>${opts.map((o, i) => `<figure class="ctile ${o.id === it.chosen_option ? "chosen" : ""}">
       <button class="ctile-img" data-act="${canPick ? "choose" : "zoom"}" data-id="${it.id}" data-opt="${o.id}" data-i="${i}" aria-label="${canPick ? (o.id === it.chosen_option ? "Desfazer a escolha" : `Escolher a opção ${letter(i)}`) : "Ver em tela cheia"}" ${canPick && o.id === it.chosen_option ? 'title="Clique de novo para desfazer"' : ""}>${media(o)}${vplayBtn(o)}</button>
       ${single ? "" : `<span class="lab">${letter(i)}</span>`}
@@ -2101,7 +2161,7 @@ function teamRow(it, { scene = false, ov = false } = {}) {
   const fb = it.visible && (it.decision !== "pending" || L)
     ? `${esc(CL)} ${it.decision === "approved" ? "aprovou" : it.decision === "changes" ? "pediu ajuste" : "escolheu"}${L ? ` ${L}` : ""}` : "";
   const fbBy = fb && it.decided_by ? ` · ${esc(it.decided_by)}, ${fmtTime(it.decided_at)}` : "";
-  const n = commentsOf(it.id).length;
+  const n = commentsNow(it).length;
   const open = S.more === it.id;
   const sheet = sheetOpts(it);
   const grid = S.sheet[it.id] || (all.length && !opts.length);
@@ -2566,23 +2626,25 @@ function drawer() {
   const comments = commentsOf(it.id);
   const changes = S.mode[it.id] === "changes";
   const f = TEAM ? lastFbOf(it.id) : null, tab = f && S.drawerTab === "pedido" ? "pedido" : "comentarios";
-  const headHtml = `<div class="drawer-head"><div><p><span class="num">${two(it.scene)}</span> ${esc(sceneName(it.scene))} · ${KINDS[it.kind] || ""}</p><h2>${esc(it.title)}</h2></div><button class="link" data-act="drawer-close" aria-label="Fechar">Fechar ✕</button></div>`;
+  // a video with versions: the head says which one is on screen, the one these comments go with
+  const vv = vidVers(it), on = vv.length > 1 ? vidOn(it, vv) : null, shown = vv.length ? vidOn(it, vv) : null;
+  const headHtml = `<div class="drawer-head"><div><p><span class="num">${two(it.scene)}</span> ${esc(sceneName(it.scene))} · ${KINDS[it.kind] || ""}${on ? ` · <b class="hero-ver now" title="A versão na tela">${vidShort(vv, on)}</b>` : ""}</p><h2>${esc(it.title)}</h2></div><button class="link" data-act="drawer-close" aria-label="Fechar">Fechar ✕</button></div>`;
   const tabs = f ? `<nav class="drawer-tabs" aria-label="Painel">${[["pedido", "Pedido"], ["comentarios", `Comentários${comments.length ? ` <small>${comments.length}</small>` : ""}`]].map(([k, t]) => `<button data-act="drawer-tab" data-v="${k}" class="${tab === k ? "on" : ""}" aria-pressed="${tab === k}">${t}</button>`).join("")}</nav>` : "";
   if (tab === "pedido") {
     const o = S.options.find((x) => x.id === (f.base_option || it.chosen_option));
     return `<aside class="drawer wide" aria-label="Pedido">${headHtml}${tabs}<div class="drawer-body">${retPanel(roundOf(f.round_id), it, f, o)}</div></aside>`;
   }
   // a video with versions: the comments of the version on screen (and the card's own) first; each older version's in a
-  // closed group under them, every second saying its version, so a note on the old cut never reads as one on the new
-  const vv = vidVers(it), on = vv.length > 1 ? vidOn(it, vv) : null;
+  // closed group under them, every second saying its version, so a note on the old cut never reads as one on the new.
+  // A second of the video on screen is a button: it takes the video there
   const verOfC = (c) => (on && c.option_id ? vv.find((o) => o.id === c.option_id) : null);
-  const msg = (c) => { const o = verOfC(c); return `<div class="msg ${c.side}"><p class="meta"><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)} · ${fmtTime(c.created_at)}</p><p class="body">${cBody(c, o ? vidShort(vv, o) : "")}</p></div>`; };
+  const msg = (c) => { const o = verOfC(c); return `<div class="msg ${c.side}"><p class="meta"><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)} · ${fmtTime(c.created_at)}</p><p class="body">${cBody(c, o ? vidShort(vv, o) : "", !!shown && c.option_id === shown.id)}</p></div>`; };
   const olds = on ? vv.filter((o) => o !== on).map((o) => [o, comments.filter((c) => c.option_id === o.id)]).filter(([, l]) => l.length) : [];
   const here = on ? comments.filter((c) => !olds.some(([o]) => o.id === c.option_id)) : comments;
   return `<aside class="drawer" aria-label="Comentários">
     ${headHtml}${tabs}
     <div class="msgs" data-keep="msgs">${here.map(msg).join("") || (olds.length ? `<p class="none">Nenhum comentário na ${vidName(vv, on).toLowerCase()} ainda.</p>` : '<p class="none">Nenhum comentário ainda.</p>')}
-      ${olds.map(([o, l]) => `<details class="msgs-old" data-k="${o.id}" ${S.oldOpen?.has(o.id) ? "open" : ""}><summary>${vidName(vv, o)} · ${plural(l.length, "comentário", "comentários")}</summary>${l.map(msg).join("")}</details>`).join("")}</div>
+      ${olds.map(([o, l]) => `<details class="msgs-old" data-k="${o.id}" ${S.oldOpen?.has(o.id) ? "open" : ""}><summary title="${vidName(vv, o)}, a versão anterior: ${plural(l.length, "comentário", "comentários")}">${vidShort(vv, o)} · ${l.length}</summary>${l.map(msg).join("")}</details>`).join("")}</div>
     <form class="compose" data-comment="${it.id}" data-mode="${changes ? "changes" : ""}">
       ${changes ? '<p class="hintline">Conte o que ajustar. O item fica marcado como “Ajuste pedido”.</p>' : ""}
       <textarea class="field" name="body" rows="3" placeholder="${changes ? "O que vocês querem ajustar?" : "Escreva um comentário"}" required maxlength="4000" aria-label="Comentário"></textarea>
@@ -2751,7 +2813,7 @@ function tcBlock(it, o, withList = true) {
   const vv = vidVers(it), cur = vv.length > 1 && vv.includes(o) && o !== vv[0] ? vv[0] : null;
   return `<div class="tc" data-tc="${o.id}">
     <div class="tc-bar" data-act="tc-bar" title="Clique pra ir até esse ponto do vídeo">${cs.map((c) => `<button class="tc-mark ${c.side}" data-act="tc-seek" data-t="${c.t_sec}" style="${at(c.t_sec)}" title="${tcFmt(c.t_sec)} · ${esc(c.author)}: ${esc(c.body.slice(0, 90))}" aria-label="Ir pra ${tcFmt(c.t_sec)}"></button>`).join("")}<i class="tc-head" aria-hidden="true" style="${at(now)}"></i></div>
-    ${cur ? `<p class="tc-old"><span class="tc-now">${tcFmt(now)}</span><span>${vidName(vv, o)}, só pra consulta. Os comentários novos vão na <button class="link" data-act="vsel" data-id="${it.id}" data-opt="${cur.id}">${vidName(vv, cur).toLowerCase()}</button>.</span></p>`
+    ${cur ? `<div class="tc-form tc-old"><span class="tc-now">${tcFmt(now)}</span><input class="tc-in" disabled placeholder="A ${vidShort(vv, o)} é só pra consulta: os comentários novos vão na ${vidShort(vv, cur)}" aria-label="Versão anterior, só pra consulta"><button type="button" class="btn small" data-act="vsel" data-id="${it.id}" data-opt="${cur.id}">Ir pra ${vidShort(vv, cur)}</button></div>`
       : `<form class="tc-form" data-tc-form="${it.id}" data-opt="${o.id}"><span class="tc-now" title="O comentário fica preso neste momento">${tcFmt(now)}</span><input class="tc-in" name="body" autocomplete="off" placeholder="Pause onde quiser e escreva o comentário deste momento…" aria-label="Comentário neste momento do vídeo"><button class="btn primary small">Comentar</button></form>`}
     ${withList ? tcList(o) : ""}
   </div>`;
@@ -2993,6 +3055,7 @@ function infoPanel(it, o, { note = "" } = {}) {
       <input class="rv-note" data-rv="${o.id}" value="${esc(rv.note || "")}" placeholder="Por quê? O que melhorar?" maxlength="2000" aria-label="Nota do time">
       ${rv.author && (rv.note || rv.verdict) ? `<small class="dim">${esc(rv.author)} · ${fmtTime(rv.updated_at)}</small>` : ""}
     </div>
+    ${S.imgMarks && S.labels.length ? `<div class="lb-sec"><p class="side-label">Etiquetas desta imagem</p><span class="labs">${S.labels.map((l) => { const on = optLabelIds(o).has(l.id); return `<button class="lab-tog ${on ? "on" : ""}" data-act="label-img" data-id="${o.id}" data-v="${l.id}" aria-pressed="${on}" title="${on ? "Tirar" : "Pôr"} ${esc(l.name)} nesta imagem: com o filtro dela, o card mostra esta">${labelChip(l)}</button>`; }).join("")}</span></div>` : ""}
     ${refsBlock(o)}
     <div class="lb-sec"><p class="side-label">Por que esta opção</p><textarea class="field lb-reason" data-reason="${o.id}" rows="3" maxlength="1000" placeholder="O raciocínio desta imagem: por que ela funciona para a cena">${esc(o.reasoning || "")}</textarea></div>
     ${o.prompt ? `<div class="lb-sec"><p class="side-label">Prompt</p><p class="lb-text lb-ptext">${esc(o.prompt)}</p></div>` : `<div class="lb-sec"><p class="side-label">Prompt</p><p class="lb-text dim">Sem prompt registrado.</p></div>`}
@@ -3152,6 +3215,31 @@ const ACTS = {
     const { error } = await sb.from("labels").update({ color }).eq("id", l.id);
     if (error) { S.labels = S.labels.map((x) => (x.id === l.id ? l : x)); render(true); toast(`Não trocou a cor: ${error.message}`, true); }
   },
+  // the pin: a padrão etiqueta is the filter the room opens with; turning it on here also turns its filter on now
+  async "label-pad"(el) {
+    const l = labelById(el.dataset.id);
+    if (!l) return;
+    const padrao = !l.padrao;
+    S.labels = S.labels.map((x) => (x.id === l.id ? { ...x, padrao } : x));
+    if (padrao) S.labelF.add(l.id);
+    render(true);
+    const { error } = await sb.from("labels").update({ padrao }).eq("id", l.id);
+    if (error) { S.labels = S.labels.map((x) => (x.id === l.id ? l : x)); render(true); return toast(`Não mudou: ${error.message}`, true); }
+    toast(padrao ? `${l.name}: a sala abre filtrada por ela` : `${l.name} não é mais a padrão`);
+  },
+  // an etiqueta on one image (Ver grande): with its filter on, the card shows that image. A mark counts for the image's
+  // stack of versions, so taking it off takes it off every version of it
+  async "label-img"(el) {
+    const o = S.options.find((x) => x.id === el.dataset.id), l = labelById(el.dataset.v);
+    if (!o || !l) return;
+    const root = o.stack || o.id, members = S.options.filter((x) => x.id === root || x.stack === root).map((x) => x.id);
+    const on = !optLabelIds(o).has(l.id);
+    S.optLabels = on ? [...(S.optLabels || []), { option_id: o.id, label_id: l.id }] : (S.optLabels || []).filter((x) => !(x.label_id === l.id && members.includes(x.option_id)));
+    render(true);
+    const { error } = on ? await sb.from("option_labels").upsert({ option_id: o.id, label_id: l.id, added_by: myName() }, { onConflict: "option_id,label_id", ignoreDuplicates: true })
+      : await sb.from("option_labels").delete().eq("label_id", l.id).in("option_id", members);
+    if (error) { toast(`Não mudou a etiqueta: ${error.message}`, true); await refresh(); }
+  },
   // deleting an etiqueta takes it off its cards; the cards themselves never change
   async "label-del"(el) {
     const l = labelById(el.dataset.id);
@@ -3258,7 +3346,7 @@ const ACTS = {
     render(true);
   },
   // timecoded comments: a time or a mark jumps the video there and pauses; a click on the bar goes to that point
-  "tc-seek"(el) { const v = el.closest(".tcwrap, .lb")?.querySelector("video"); if (!v) return; v.pause(); v.currentTime = +el.dataset.t; tcSync(v); },
+  "tc-seek"(el) { const v = (el.closest(".tcwrap, .lb") || document.querySelector(".lb, .tcwrap"))?.querySelector("video"); if (!v) return; v.pause(); v.currentTime = +el.dataset.t; tcSync(v); },
   "tc-bar"(el, e) { const v = el.closest(".tcwrap, .lb")?.querySelector("video"); if (!v || !v.duration || e.target !== el) return; const r = el.getBoundingClientRect(); v.currentTime = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * v.duration; tcSync(v); },
   "lb-step"(el) { step(+el.dataset.v); },
   // the originals of an item (what the client sees on their side; the team gets everything but the dropped ones)
