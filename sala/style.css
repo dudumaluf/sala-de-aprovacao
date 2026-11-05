@@ -745,6 +745,8 @@ button.hcard-ask:hover { text-decoration: underline; text-underline-offset: 2px;
 /* a Seedance draft (480p): finalized at 1080p from its ✦ */
 .hz-lab.hz-draft { width: auto; background: #E8A33D; color: #141414; font: 800 11px var(--num); letter-spacing: 0.02em; pointer-events: auto; }
 .vm-note { margin: 0; padding: 8px 12px; font-size: 12px; opacity: 0.7; }
+/* a video's resolution (team), next to its kind */
+.hz-lab.hz-res { width: auto; font: 800 11px var(--num); letter-spacing: 0.02em; }
 .hz-kind svg { width: 13px; height: 13px; flex: none; }
 .hz-kind span { font: 900 12px var(--num); }
 .csh-tile .hz-kind { padding: 0 6px; gap: 4px; }

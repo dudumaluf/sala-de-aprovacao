@@ -352,6 +352,8 @@ const BTN3D_T = "Abrir a Cena 3D de onde este blocking veio, pra mudar e exporta
 // a Seedance draft from the studio (Rascunho 480p): its ✦ finalizes it at 1080p, within 7 days of being made
 const isDraft = (o) => / · rascunho 480p · /.test(o?.model || "");
 const draftUntil = (o) => new Date(Date.parse(o.created_at) + 7 * 864e5);
+// a video's resolution as the studio labels it (Seedance · 720p · …, rascunho 480p, 1080p · finalizado): the card shows it in its corner
+const resOf = (o) => (o?.mime?.startsWith("video/") ? (/(?:^| · )(?:rascunho )?(480p|720p|1080p)(?: · |$)/.exec(o.model || "") || [])[1] || "" : "");
 const shownOpts = (id) => optsOf(id).filter((o) => !isAngle(o) && (showDrop(o) || !dropped(o)) && inView(o)).sort((a, b) => verOf(b) - verOf(a));
 // versions: inside a delivery round, each round of client feedback is a version (v1 the first delivery, v2 the answer
 // to the first feedback…); the team's own redos are just options. New uploads take the round's version. The team
@@ -1707,7 +1709,9 @@ function optFace(it, o, { size, by = false, act = "ov-open", del = false, plain 
   const tagTitle = `${kd ? KIND_SAY[kd] : ""}${kd && lab ? " · " : ""}${lab ? (off ? "o cliente não vê" : "a letra que o cliente vê") : ""}`;
   const tag = kd ? `<b class="hz-lab hz-kind" title="${tagTitle}" aria-label="${tagTitle}">${KIND_ICO[kd]}${lab || word ? `<span>${lab || word}</span>` : ""}</b>`
     : lab ? `<b class="hz-lab" title="${off ? "O cliente não vê esta imagem" : "A letra que o cliente vê"}">${lab}</b>` : "";
-  const dchip = TEAM && isDraft(o) ? `<b class="hz-lab hz-draft" title="Rascunho 480p: no ✦ do vídeo, Finalizar em 1080p (até ${draftUntil(o).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })})">Rascunho</b>` : "";
+  const vres = TEAM ? resOf(o) : "";
+  const dchip = TEAM && isDraft(o) ? `<b class="hz-lab hz-draft" title="Rascunho 480p: no ✦ do vídeo, Finalizar em 1080p (até ${draftUntil(o).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })})">Rascunho · 480p</b>`
+    : vres ? `<b class="hz-lab hz-res" title="Resolução do vídeo">${vres}</b>` : "";
   const tr = tag || state || dchip ? `<span class="hz-tr">${tag}${dchip}${state}</span>` : "";
   const judge = TEAM && !quiet ? `<div class="hz-judge">${extra ? `${extra(o)}<span class="sep"></span>` : ""}${Object.keys(REVIEW).map((v) => `<button class="rv ${rv.verdict === v ? "on" : ""}" data-act="review" data-id="${o.id}" data-v="${v}" aria-pressed="${rv.verdict === v}" title="${REVIEW[v]}${v === "drop" ? " (o cliente não vê)" : ""}">${ICO[v]}</button>`).join("")}${del ? `<span class="sep"></span><button class="hz-del" data-act="opt-del" data-id="${o.id}" title="Apagar esta imagem">${ICO.trash}</button>` : ""}</div>`
     : extra ? `<div class="hz-judge">${extra(o)}</div>` : "";
