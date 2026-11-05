@@ -799,9 +799,26 @@ document.addEventListener("pointerout", (e) => {
 });
 
 // ---------- uploads ----------
+// a video's still: a frame a little in (the first ones are often black), taken in the browser from the file itself
+function videoFrame(file, at = 1) {
+  return new Promise((ok, no) => {
+    const v = document.createElement("video"), url = URL.createObjectURL(file);
+    let over = false;
+    const end = (fn, x) => { if (over) return; over = true; clearTimeout(t); URL.revokeObjectURL(url); fn(x); };
+    const t = setTimeout(() => end(no, new Error("o vídeo não abriu a tempo")), 20000);
+    v.muted = true; v.playsInline = true; v.preload = "auto";
+    v.onloadedmetadata = () => { v.currentTime = Math.min(at, (v.duration || 2) / 2); };
+    v.onseeked = () => createImageBitmap(v).then((b) => end(ok, b), (e) => end(no, e));
+    v.onerror = () => end(no, new Error("o navegador não abriu o vídeo"));
+    v.src = url;
+  });
+}
+// the preview and the small copy of an image, or of a video's still (its frame 1 s in): the cards and the Galeria show
+// these, so a video never comes in as a black tile
 async function resized(file) {
-  if (!/^image\/(jpeg|png|webp|avif|bmp|tiff)$/.test(file.type)) return null;
-  const bmp = await createImageBitmap(file);
+  const vid = /^video\//.test(file.type);
+  if (!vid && !/^image\/(jpeg|png|webp|avif|bmp|tiff)$/.test(file.type)) return null;
+  const bmp = vid ? await videoFrame(file) : await createImageBitmap(file);
   const jpeg = (max, q) => {
     const k = Math.min(1, max / Math.max(bmp.width, bmp.height));
     const c = document.createElement("canvas");
