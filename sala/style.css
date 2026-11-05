@@ -743,10 +743,14 @@ button.hcard-ask:hover { text-decoration: underline; text-underline-offset: 2px;
 /* team: what the file is, its icon before the letter (or a short word: 3D, corte, voz) */
 .hz-lab.hz-kind { display: inline-flex; align-items: center; gap: 5px; pointer-events: auto; }
 /* a Seedance draft (480p): finalized at 1080p from its ✦ */
-.hz-lab.hz-draft { width: auto; background: #E8A33D; color: #141414; font: 800 11px var(--num); letter-spacing: 0.02em; pointer-events: auto; }
+.hz-lab.hz-draft { flex: none; width: auto; background: #E8A33D; color: #141414; font: 800 11px var(--num); letter-spacing: 0.02em; pointer-events: auto; }
 .vm-note { margin: 0; padding: 8px 12px; font-size: 12px; opacity: 0.7; }
-/* a video's resolution (team), next to its kind */
+/* a video's resolution (team): bottom right, where the tools come on hover */
 .hz-lab.hz-res { width: auto; font: 800 11px var(--num); letter-spacing: 0.02em; }
+.hz-res-br { position: absolute; right: 10px; bottom: 10px; z-index: 3; pointer-events: none; transition: opacity 0.15s; }
+.hero:hover .hz-res-br, .hero:focus-within .hz-res-br { opacity: 0; }
+.csh-tile .hz-res-br { right: 6px; bottom: 6px; }
+@media (hover: none) { .hz-res-br { display: none; } }
 .hz-kind svg { width: 13px; height: 13px; flex: none; }
 .hz-kind span { font: 900 12px var(--num); }
 .csh-tile .hz-kind { padding: 0 6px; gap: 4px; }

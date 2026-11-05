@@ -1709,19 +1709,20 @@ function optFace(it, o, { size, by = false, act = "ov-open", del = false, plain 
   const tagTitle = `${kd ? KIND_SAY[kd] : ""}${kd && lab ? " · " : ""}${lab ? (off ? "o cliente não vê" : "a letra que o cliente vê") : ""}`;
   const tag = kd ? `<b class="hz-lab hz-kind" title="${tagTitle}" aria-label="${tagTitle}">${KIND_ICO[kd]}${lab || word ? `<span>${lab || word}</span>` : ""}</b>`
     : lab ? `<b class="hz-lab" title="${off ? "O cliente não vê esta imagem" : "A letra que o cliente vê"}">${lab}</b>` : "";
+  // team: a video's resolution in the bottom right corner (the tools take it on hover), a draft's label bottom left
   const vres = TEAM ? resOf(o) : "";
-  const dchip = TEAM && isDraft(o) ? `<b class="hz-lab hz-draft" title="Rascunho 480p: no ✦ do vídeo, Finalizar em 1080p (até ${draftUntil(o).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })})">Rascunho · 480p</b>`
-    : vres ? `<b class="hz-lab hz-res" title="Resolução do vídeo">${vres}</b>` : "";
-  const tr = tag || state || dchip ? `<span class="hz-tr">${tag}${dchip}${state}</span>` : "";
+  const dchip = TEAM && isDraft(o) ? `<b class="hz-lab hz-draft" title="Rascunho 480p: no ✦ do vídeo, Finalizar em 1080p (até ${draftUntil(o).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })})">Rascunho</b>` : "";
+  const rchip = vres ? `<span class="hz-res-br"><b class="hz-lab hz-res" title="Resolução do vídeo">${vres}</b></span>` : "";
+  const tr = tag || state ? `<span class="hz-tr">${tag}${state}</span>` : "";
   const judge = TEAM && !quiet ? `<div class="hz-judge">${extra ? `${extra(o)}<span class="sep"></span>` : ""}${Object.keys(REVIEW).map((v) => `<button class="rv ${rv.verdict === v ? "on" : ""}" data-act="review" data-id="${o.id}" data-v="${v}" aria-pressed="${rv.verdict === v}" title="${REVIEW[v]}${v === "drop" ? " (o cliente não vê)" : ""}">${ICO[v]}</button>`).join("")}${del ? `<span class="sep"></span><button class="hz-del" data-act="opt-del" data-id="${o.id}" title="Apagar esta imagem">${ICO.trash}</button>` : ""}</div>`
     : extra ? `<div class="hz-judge">${extra(o)}</div>` : "";
   const nc = commentsNow(it).length, nd = TEAM ? drawsOf(o) : 0;
   const meta = [by && o.created_by ? esc(o.created_by.split(" ")[0]) : "", TEAM && roundVers(it.round_id).length > 1 ? `v${verOf(o)}` : ""].filter(Boolean).join(" · ");
-  const bl = `<span class="hz-bl"><button class="hz-chip ${nc ? "" : "hz-hover"}" data-act="drawer" data-id="${it.id}" title="${nc ? plural(nc, "comentário", "comentários") : "Comentar"}" aria-label="Comentários">${CHAT}${nc || ""}</button>${nd ? `<b class="hz-chip" title="${plural(nd, "desenho", "desenhos")} em aberto">${Estudio.ICONS.pen}${nd}</b>` : ""}${meta ? `<span class="hz-meta" title="Quem fez · versão">${meta}</span>` : ""}${rv.verdict === "drop" && rv.note ? `<span class="hz-meta" title="${dropWhy(rv)}">${esc(rv.note)}</span>` : ""}</span>`;
+  const bl = `<span class="hz-bl">${dchip}<button class="hz-chip ${nc ? "" : "hz-hover"}" data-act="drawer" data-id="${it.id}" title="${nc ? plural(nc, "comentário", "comentários") : "Comentar"}" aria-label="Comentários">${CHAT}${nc || ""}</button>${nd ? `<b class="hz-chip" title="${plural(nd, "desenho", "desenhos")} em aberto">${Estudio.ICONS.pen}${nd}</b>` : ""}${meta ? `<span class="hz-meta" title="Quem fez · versão">${meta}</span>` : ""}${rv.verdict === "drop" && rv.note ? `<span class="hz-meta" title="${dropWhy(rv)}">${esc(rv.note)}</span>` : ""}</span>`;
   // each file's own ✦: an image goes into the studio as the base; a video opens the menu of the models that edit a video
   const br = tools ? `<div class="hz-br">${TEAM && AI ? (o.mime.startsWith("video/") ? veditBtn(o) : `<button data-act="estudio" data-id="${o.id}" title="Editar com IA: esta imagem é a base" aria-label="Editar com IA">${Estudio.ICONS.spark}</button>`) : ""}${vsCan(o) ? `<button data-act="vs-open" data-id="${it.id}" data-i="${i}" title="${blockOf(o) ? "Comparar com o blocking 3D" : "Comparar com a versão anterior"}" aria-label="Comparar">${ICON.vs}</button>` : ""}${TEAM && o.mime.startsWith("video/") ? `<button data-act="frame-grab" data-id="${o.id}" title="${FRAME_T}" aria-label="Tirar o quadro">${FRAME_ICO}</button>` : ""}${src3d(o) ? `<button data-act="open-3d" data-id="${o.id}" title="${BTN3D_T}" aria-label="Abrir a Cena 3D">${CUBE}</button>` : ""}<button data-act="download" data-id="${o.id}" title="Baixar o original" aria-label="Baixar">${ICO.down}</button></div>` : "";
   return `<button class="hero-img" data-act="${act}" data-id="${it.id}" data-i="${i}" aria-label="Abrir ${esc(it.title)} ${lab} grande"${off && !dropped(o) ? ' title="Fora do que o cliente vê nesta versão"' : ""}>${media(o, size)}${vplayBtn(o)}</button>
-    ${tr}${judge}${bl}${br}${verPill(o)}`;
+    ${tr}${judge}${bl}${br}${rchip}${verPill(o)}`;
 }
 // the history of an image edited in the studio, on its card's top right while hovered: ‹ 2/3 › steps through its
 // versions (1 is the original), and the one shown becomes the card's face. Variations (A, B…) keep the big arrows and dots.
