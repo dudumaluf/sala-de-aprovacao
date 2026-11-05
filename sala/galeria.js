@@ -123,7 +123,8 @@ function entries() {
       text: fold([f.name, r?.title, f.uploaded_by, it?.title, cena ? "materiais de cena" : C.CL].join(" ")),
     };
   };
-  const all = [...S.options.map(opt), ...S.files.map(file).filter(Boolean)];
+  // images and videos only: a card's audio (a scene's voices) stays on its card
+  const all = [...S.options.filter((o) => !o.mime?.startsWith("audio/")).map(opt), ...S.files.map(file).filter(Boolean)];
   const map = new Map(all.map((e) => [e.k, e]));
   // the same file in several places (S.twins, file_twins: a scene package's copy, a file taken into a card) is one tile:
   // the card's first (not ✕, the client's pick, the team's ✓), then the client's material, then the scenes' in scene order.

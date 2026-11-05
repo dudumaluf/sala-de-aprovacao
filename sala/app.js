@@ -739,6 +739,13 @@ async function hydrate() {
 const srcAttr = (p) => (urls.has(p) ? ` src="${esc(urls.get(p))}"` : "");
 // size: "thumb" for cards, "tile" for scene pages, "big" for the lightbox
 function media(o, size = "tile") {
+  // a voice or any audio: its wave and its name; big (Ver grande), with the player
+  if (o.mime.startsWith("audio/")) {
+    const name = esc((o.name || "Áudio").replace(/\.[^.]+$/, ""));
+    return size === "big"
+      ? `<div class="aud-big"><i class="aud-wave">${REF_WAVE}</i><b>${name}</b><audio data-path="${esc(o.path)}" controls preload="metadata"${srcAttr(o.path)}></audio></div>`
+      : `<div class="aud-tile" title="${name}"><i class="aud-wave">${REF_WAVE}</i><span>${name}</span></div>`;
+  }
   if (o.mime.startsWith("video/")) {
     // a video with a still (its poster, like a motion render's last frame) shows it until it plays
     const pp = o.preview_path, poster = pp ? ` data-poster="${esc(pp)}"${urls.has(pp) ? ` poster="${esc(urls.get(pp))}"` : ""}` : "";
@@ -1625,7 +1632,7 @@ const toCurate = (it) => it.mode !== "set" && keptOf(it).length > 3;
 // plain: no "–" on an option the client does not see (new work that has not gone yet)
 // what a file is, at a glance (team): the animatic's cut (options.role), a 3D blocking (an angle or its video), a video,
 // a voice, an image. Its icon goes in the corner tag with the letter; with no letter, a short word says it
-const fileType = (o) => (o.role === "animatic" ? "corte" : isAngle(o) ? "3d" : o.mime?.startsWith("video/") ? "video" : o.mime?.startsWith("audio/") ? "voz" : "image");
+const fileType = (o) => (o.role === "animatic" ? "corte" : /^Blocking 3D/.test(o.model || "") ? "3d" : o.mime?.startsWith("video/") ? "video" : o.mime?.startsWith("audio/") ? "voz" : "image");
 const KIND_SAY = { corte: "Corte do animatic", "3d": "Blocking 3D", video: "Vídeo", voz: "Voz", image: "Imagem" };
 const KIND_WORD = { corte: "corte", "3d": "3D", voz: "voz", video: "", image: "" };
 const KIND_ICO = {
