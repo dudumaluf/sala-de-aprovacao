@@ -135,6 +135,7 @@ function attach() {
   fit();
   startLoop();
   shotFromUrl();
+  altFromUrl();
   // a render waiting in the studio for a new angle of this set: the 3D takes the window and its save goes back to it
   const h = held(), hk = h ? String(h.n) : "";
   if (E.ready && hk !== E.heldKey) { E.heldKey = hk; if (h) full(true); else toolbar(); }
@@ -146,8 +147,11 @@ function attach() {
 const held = () => { const h = E.ctx?.heldRender?.(); return h && h.loc === E.itemId ? h : null; };
 // the shot's card (kind plano) whose 3D button opened this set: #/…/cena3d/<shot>/<card id>, "-" for a shot with no
 // planned camera. Renderizar saves the frame as an angle and sends its blocking render straight to that card
+// the route's parts and the query a link may carry after them (#/…/cena3d/<shot>?alt=1: a version of the cut)
+const route = () => location.hash.replace(/^#\/?/, "").split("?")[0].split("/").filter(Boolean);
+const routeQuery = () => new URLSearchParams(location.hash.split("?")[1] || "");
 const origin = () => {
-  const id = decodeURIComponent(location.hash.replace(/^#\/?/, "").split("/").filter(Boolean)[7] || "");
+  const id = decodeURIComponent(route()[7] || "");
   const it = id && !held() ? E.ctx?.itemOf?.(id) : null;
   return it?.kind === "plano" ? it : null;
 };
@@ -179,7 +183,7 @@ function fitAsk(ta) { ta.style.height = "auto"; ta.style.height = `${Math.min(ta
 // A link can open the set right on one of its shots: #/r/<round>/s/<scene>/<item>/cena3d/<shot id> (the room's router
 // stops at the tab). It is applied once per item and shot, at once (no flight), and saves nothing by itself. A saved
 // angle's id there brings back its camera and its scene (the studio sends a render's blocking here to be changed).
-const urlShot = () => decodeURIComponent(location.hash.replace(/^#\/?/, "").split("/").filter(Boolean)[6] || "");
+const urlShot = () => decodeURIComponent(route()[6] || "");
 function shotFromUrl() {
   const id = urlShot(), h = held();
   const key = `${E.itemId}/${id}${h ? `/${h.n}` : ""}`;
@@ -190,6 +194,16 @@ function shotFromUrl() {
   E.camShot = null;
   setCam(c, true);
   shotsBar(); side(); hud();
+}
+// …and a version of the cut: ?alt=<i> (sets.js `alts`, 0 = the cut itself), as its chip in the timeline does: once per
+// item and link, saving nothing (the cube on a blocking video exported from a version opens it on that version)
+function altFromUrl() {
+  const v = routeQuery().get("alt");
+  if (v == null || !E.ready || !E.tl?.has()) return;
+  const key = `${E.itemId}/${v}`;
+  if (E.urlAlt === key) return;
+  E.urlAlt = key;
+  E.tl.useCut(+v);
 }
 
 // ---------- the editor shell ----------
@@ -1051,13 +1065,17 @@ function onKey(e) {
   const k = e.key.toLowerCase();
   // Esc also when the page itself has the focus (the 3D just came up and the pointer has not moved onto it yet)
   const inside = E.hover || E.el.contains(document.activeElement) || E.el.classList.contains("full") || (k === "escape" && document.activeElement === document.body);
-  if (!inside) return;
+  // the pointer anywhere on the 3D (its timeline, its side panel): the timeline's keys (Space plays and pauses, K,
+  // Delete) work too, and the page's own Space shortcut stays out; outside the 3D the page keeps its keys
+  const onTl = !inside && !!E.el.matches?.(":hover") && !!E.tl?.shown?.();
+  if (!inside && !onTl) return;
   const mod = e.metaKey || e.ctrlKey;
   const take = () => { e.preventDefault(); e.stopImmediatePropagation(); };
   if (E.tl?.busy != null) { take(); return; } // the scene's video is being made: nothing changes meanwhile
   if (mod && k === "z") { take(); undo(e.shiftKey); return; }
   if (mod) return;
   if (E.tl?.onKey(e, k, take)) return;
+  if (onTl) return;
   // Esc goes one step back each time: the selection, the name box, the prompt box, a full window opened with ⤢ or F,
   // then out of the 3D as its ✕ does (a render waiting in the studio gets back its angle unchanged). The room's
   // popovers and panel first

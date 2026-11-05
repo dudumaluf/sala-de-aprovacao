@@ -87,6 +87,13 @@ export function createTimeline(H) {
   const cuts = () => (E.set?.cut ? [E.set.cut, ...(E.set.alts || []).map((a) => ({ ...E.set.cut, ...a }))] : []);
   const cut = () => cuts()[T.data?.alt || 0] || E.set?.cut || null;
   T.cut = () => cut();
+  // another version of the cut (its chip, or a link's ?alt=<i>): its timeline as the set brings it, from its first
+  // second; nothing is saved by the switch
+  T.useCut = (i) => {
+    if (!T.data || !Number.isInteger(i) || i < 0 || i >= cuts().length || i === (T.data.alt || 0)) return false;
+    T.pause(); T.sel = null; T.data = defaults(i); T.render(); T.seek(span()[0]);
+    return true;
+  };
   const esc = (s) => H.esc(String(s ?? ""));
   const $ = (s) => T.el?.querySelector(s);
 
@@ -636,7 +643,7 @@ export function createTimeline(H) {
       else if (k === "export-go") { T.menu = false; T.render(); H.exportScene?.(b.dataset.v); }
       else if (k === "loop") { T.loop = !T.loop; head(); }
       // another version of the cut: its timeline from the set (it is saved with the scene only once something is edited in it)
-      else if (k === "cut") { const i = +b.dataset.v; if (i !== (T.data.alt || 0)) { T.pause(); T.sel = null; T.data = defaults(i); T.render(); T.seek(span()[0]); } }
+      else if (k === "cut") T.useCut(+b.dataset.v);
       else if (k === "key") T.addKey();
       else if (k === "close") { T.sel = null; T.menu = false; T.render(); }
       else if (k === "del") delKey();
