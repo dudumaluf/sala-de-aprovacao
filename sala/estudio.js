@@ -4162,6 +4162,33 @@ export async function openVideoEdit(ctx, { optionId, vm }) {
   return openDrafted(ctx, { mode: "create", kind: "video", vmodel: vm, item: it, round: it.round_id, scene: it.scene, base: null, blocking: false, prompt: "",
     refs: [{ path: o.path, preview: o.preview_path || null, thumb_path: o.thumb_path || null, thumb: thumbUrl(o), label: refName(o), kind: "video" }] }, `vedit:${o.id}:${vm}`);
 }
+// team: a result of the studio opens the studio again as it was generated (its job, found by the option it became: the
+// model, the prompt as it was sent, the references in their order, the duration, the size and the sound), on the card the
+// result is on now, to change something and generate another version there. Its draft (again:<option>) keeps the changes
+export async function openAgain(ctx, { optionId }) {
+  E.ctx = ctx;
+  const { S } = ctx, o = S.options.find((x) => x.id === optionId), it = o && ctx.itemOf(o.item_id);
+  if (!o || !it) return;
+  const { data, error } = await ctx.sb.from("estudio_jobs").select("model, prompt, input, refs, base_option").contains("imported", JSON.stringify([optionId])).limit(1); // imported is jsonb: cs.["<id>"]
+  const job = !error && data?.[0];
+  if (!job) return ctx.toast("Não achei como este arquivo foi gerado: só o que saiu do estúdio guarda isso.", true);
+  const inp = job.input || {}, video = VIDEO_MODELS.some((m) => m.id === job.model);
+  // an image edit keeps its base (if it is still in the room); the rest come back as circles, in the order they were sent
+  const base = !video && job.base_option ? S.options.find((x) => x.id === job.base_option) || null : null;
+  const kindOf = (r) => r.kind || (/\.(mp4|mov|webm)$/i.test(r.path) ? "video" : /\.(mp3|wav|m4a|aac|ogg|opus)$/i.test(r.path) ? "audio" : "image");
+  const found = (p) => S.options.find((x) => x.path === p) || S.files.find((f) => f.path === p);
+  const refs = (Array.isArray(job.refs) ? job.refs : []).filter((r) => r?.path && !(base && r.path === base.path)).map((r) => {
+    const kind = kindOf(r);
+    return { path: r.path, preview: found(r.path)?.preview_path || null, thumb_path: refThumb(r.path, kind), label: r.label || "Referência", kind };
+  });
+  await ctx.sign([...refs.map((r) => r.thumb_path), base && (base.thumb_path || base.preview_path || base.path)].filter(Boolean)).catch(() => {});
+  for (const r of refs) r.thumb = r.thumb_path ? ctx.urls.get(r.thumb_path) || "" : "";
+  return openDrafted(ctx, {
+    mode: base ? "edit" : "create", base, item: it, round: it.round_id, scene: it.scene, refs, prompt: job.prompt || inp.prompt || "",
+    ...(video ? { kind: "video", vmodel: job.model, vaspect: inp.aspect_ratio || "16:9", vres: inp.resolution || "720p", dur: DURS.includes(inp.duration) ? inp.duration : 5, sound: inp.generate_audio ?? true }
+      : { kind: "image", ...(MODELS.some((m) => m.id === job.model) && { model: job.model }), aspect: inp.aspect_ratio || "auto", res: inp.resolution || "2k" }),
+  }, `again:${optionId}`);
+}
 // team: a card's kit (item_kits: what Guardar no card saved) opens the studio already like that, its result landing on
 // the card. The references come back in their order, so @image1, @video1, @audio1… still name the same ones; a card
 // without a kit opens as Criar com IA does

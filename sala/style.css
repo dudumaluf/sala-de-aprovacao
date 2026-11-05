@@ -751,6 +751,7 @@ button.hcard-ask:hover { text-decoration: underline; text-underline-offset: 2px;
 .vm-pop button { display: block; width: 100%; padding: 7px 10px; border: 0; border-radius: 7px; background: none; color: var(--text); text-align: left; font: 500 13.5px var(--sans); cursor: pointer; }
 .vm-pop button:hover, .vm-pop button:focus-visible { background: var(--raise2); outline: none; }
 .vm-pop small { display: block; margin-top: 1px; color: var(--muted); font-size: 11.5px; font-weight: 400; }
+.vm-pop .vm-sep { display: block; height: 1px; margin: 4px 6px; background: var(--line2); }
 .hz-st { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; background: rgba(5, 7, 6, 0.72); color: var(--text); font-size: 13px; font-weight: 700; }
 .hz-st svg { width: 13px; height: 13px; }
 .hz-st.keep { background: var(--accent); color: var(--ink); }

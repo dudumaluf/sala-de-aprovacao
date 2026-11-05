@@ -1597,15 +1597,19 @@ const KIND_ICO = {
   voz: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="6" y="2" width="4" height="8" rx="2"/><path d="M3.6 8a4.4 4.4 0 0 0 8.8 0M8 12.4V14"/></svg>',
 };
 // a video's ✦ (its own tools, or the card's when it shows one): a menu of the models that edit a video, then the studio
-const veditBtn = (o, cls = "") => `<button ${cls ? `class="${cls}" ` : ""}data-act="vedit-menu" data-id="${o.id}" title="Editar este vídeo com IA: Seedance ou Genjutsu" aria-label="Editar este vídeo com IA" aria-haspopup="menu">${Estudio.ICONS.spark}</button>`;
+// a result of the studio (its model says "estúdio") can also open again as it was generated: Gerar de novo
+const fromStudio = (o) => /estúdio/i.test(o?.model || "");
+const veditBtn = (o, cls = "") => `<button ${cls ? `class="${cls}" ` : ""}data-act="vedit-menu" data-id="${o.id}" title="${fromStudio(o) ? "Gerar de novo como foi gerado, ou editar este vídeo com IA (Seedance, Genjutsu)" : "Editar este vídeo com IA: Seedance ou Genjutsu"}" aria-label="Editar este vídeo com IA" aria-haspopup="menu">${Estudio.ICONS.spark}</button>`;
 function veditMenu(btn, id) {
   document.querySelector(".vm-pop")?.remove();
-  const models = Estudio.videoEditModels();
-  if (!models.length) return toast("Nenhum modelo de edição de vídeo está ligado na sala.", true);
+  const models = Estudio.videoEditModels(), again = fromStudio(S.options.find((x) => x.id === id));
+  if (!models.length && !again) return toast("Nenhum modelo de edição de vídeo está ligado na sala.", true);
   const el = document.createElement("div");
   el.className = "vm-pop";
   el.setAttribute("role", "menu");
-  el.innerHTML = models.map((m) => `<button type="button" role="menuitem" data-vm="${esc(m.id)}"><b>${esc(m.name)}</b>${m.says ? `<small>${esc(m.says)}</small>` : ""}</button>`).join("");
+  // first, for a result of the studio: the studio again as it was generated (the prompt, the references, the model)
+  el.innerHTML = (again ? `<button type="button" role="menuitem" data-vm="again"><b>Gerar de novo</b><small>abre o estúdio como foi gerado: o prompt, as referências e o modelo</small></button>${models.length ? '<i class="vm-sep"></i>' : ""}` : "")
+    + models.map((m) => `<button type="button" role="menuitem" data-vm="${esc(m.id)}"><b>${esc(m.name)}</b>${m.says ? `<small>${esc(m.says)}</small>` : ""}</button>`).join("");
   document.body.append(el);
   const r = btn.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
   el.style.left = `${Math.max(8, Math.min(innerWidth - w - 8, r.right - w))}px`;
@@ -1615,7 +1619,13 @@ function veditMenu(btn, id) {
   const esc_ = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
   addEventListener("pointerdown", away, true);
   addEventListener("keydown", esc_, true);
-  el.onclick = (e) => { const b = e.target.closest("[data-vm]"); if (!b) return; close(); Estudio.openVideoEdit(estCtx(), { optionId: id, vm: b.dataset.vm }); };
+  el.onclick = (e) => {
+    const b = e.target.closest("[data-vm]");
+    if (!b) return;
+    close();
+    if (b.dataset.vm === "again") Estudio.openAgain(estCtx(), { optionId: id });
+    else Estudio.openVideoEdit(estCtx(), { optionId: id, vm: b.dataset.vm });
+  };
   el.querySelector("button")?.focus({ preventScroll: true });
 }
 function optFace(it, o, { size, by = false, act = "ov-open", del = false, plain = false, quiet = false, extra = null, tools = true } = {}) {
