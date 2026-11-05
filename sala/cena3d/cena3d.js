@@ -254,7 +254,7 @@ function build() {
   orbit.zoomSpeed = DOLLY; // a pinch on a touch screen; the wheel is ours (onWheel)
   orbit.minDistance = NEAR;
   orbit.screenSpacePanning = true;
-  gizmo.addEventListener("dragging-changed", (e) => { orbit.enabled = !e.value; if (!e.value) commit(); });
+  gizmo.addEventListener("dragging-changed", (e) => { orbit.enabled = !e.value; if (!e.value) { keyDragged(); commit(); } });
   gizmo.addEventListener("objectChange", onGizmo);
   gizmo.addEventListener("change", () => (E.needs = true));
   orbit.addEventListener("start", () => { stopGlide(); E.tl?.release(); });
@@ -906,6 +906,13 @@ function placeProxy() {
   E.proxy.position.copy(p);
   E.proxy.quaternion.copy(handleQuat(fig, h));
   E.proxy.updateMatrixWorld(true);
+}
+// a figure with keys on the timeline, dropped somewhere (moved or turned, or a handle posed): its key at the playhead
+// takes it (timeline.js keyFig), so the timeline doesn't pull it back to where it was (Dudu, 05/11)
+function keyDragged() {
+  const s = E.sel;
+  if (!s?.fig || !E.tl?.keyFig || E.mode === "scale") return;
+  E.tl.keyFig(s.fig, s.type === "handle" ? "pose" : "place");
 }
 function onGizmo() {
   const s = E.sel;

@@ -445,6 +445,26 @@ export function createTimeline(H) {
     H.commit();
     T.render(); pop();
   };
+  // a keyed figure dragged somewhere (the gizmo on it, or one of its handles): its key where the playhead stands takes
+  // it, so the timeline doesn't pull it back. A key there gets the new place and turn (a handle: the new pose); with no
+  // key there, a new one, with the pose and the ease of the key before it, so a run stays a run. A figure without keys
+  // stays free: where it is dropped is where it stands.
+  T.keyFig = (f, what = "place") => {
+    const ks = T.data?.figs?.[f.key];
+    if (!f || !ks?.length) return false;
+    const t = +T.t.toFixed(2), place = { pos: r3(f.root.position.toArray()), ry: +(f.root.rotation.y / D2R).toFixed(2) };
+    let k = ks.find((x) => Math.abs(x.t - t) < 0.04);
+    if (k) Object.assign(k, place);
+    else {
+      const s = sorted(ks), prev = [...s].reverse().find((x) => x.t <= t) || s[0];
+      k = { t, ...place, ease: prev.ease || "suave", ...(prev.preset ? { preset: prev.preset } : {}), ...(prev.pose ? { pose: prev.pose } : {}) };
+      ks.push(k);
+    }
+    if (what === "pose") k.pose = poseOf(f);
+    T.sel = { row: `fig:${f.key}`, i: ks.indexOf(k) };
+    T.render(); pop();
+    return true;
+  };
   function delKey() {
     if (!T.sel) return;
     const ks = keysOf(T.sel.row);
