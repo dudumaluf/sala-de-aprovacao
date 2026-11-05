@@ -880,6 +880,14 @@ button.hcard-ask:hover { text-decoration: underline; text-underline-offset: 2px;
 .lb-info svg { width: 16px; height: 16px; }
 .lb-info:hover { color: var(--text); border-color: var(--muted); }
 .lb-info.on { color: var(--accent); border-color: var(--accent-edge); background: var(--accent-soft); }
+/* Ver grande: the comments' bubble shows how many, and their panel takes the info panel's side */
+.lb-info.lb-cmtb { position: relative; }
+.lb-info .lb-n { position: absolute; top: -5px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent); color: #0e0b09; font: 700 10px/16px var(--num); }
+.lb-cmts { display: flex; flex-direction: column; min-height: 0; }
+.lb-cmts .tc-list { max-height: none; flex: 1; min-height: 0; gap: 12px; }
+.lb-cmts .msgs { flex: 1; min-height: 0; overflow: auto; display: grid; align-content: start; gap: 10px; }
+.lb-cmt-write { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; align-self: flex-start; }
+.lb-cmt-write svg { width: 14px; height: 14px; }
 .lb-split { position: relative; overflow: hidden; transition: grid-template-columns 0.18s ease; }
 .lb-split.info-off { grid-template-columns: minmax(0, 1fr) 0; }
 .lb-split.info-off .lb-panel { position: absolute; top: 0; right: 0; bottom: 0; width: 380px; z-index: 3; background: var(--bg); transform: translateX(100%); visibility: hidden; transition: transform 0.18s ease, visibility 0s linear 0.18s; }
@@ -1293,6 +1301,7 @@ textarea.ret-notes { display: block; height: auto; min-height: 80px; margin-top:
 .hud.keep.on { background: var(--accent); color: #0e0b09; }
 .hud.redo.on { background: var(--amber); color: #0e0b09; }
 .hud.drop.on { background: #c8322b; color: #fff; }
+.hud.tcb.on { background: var(--accent-soft); color: var(--accent); }
 .hud.danger:hover { color: #ff7a6b; }
 /* the ver grande's history: the image's versions under it ("atual" = the card's), and Ajustar sem IA over it. While
    adjusting, the picture sits in a box of its own shape that clips it, and the bar stays on */

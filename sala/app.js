@@ -103,7 +103,7 @@ const S = {
   // Materiais: the page's filters (state, kind), a package's tab and who-sent filter, the ＋ Adicionar popover, the new package card
   matState: "all", matType: "all", matTab: "all", matSide: "all", matAdd: null, matNew: false, notes: [], notesOn: false,
   ov: { kinds: new Set(), curate: false, dropped: store.get("sala-dropped") === "1", view: store.get("sala-ov-view2") === "grid" ? "grid" : "hero" }, ovList: [], ovSel: (() => { try { return JSON.parse(store.get(`sala-ovsel-${SIDE}`) || "{}") || {}; } catch { return {}; } })(),
-  more: null, dl: false, filt: false, sheet: {}, wipe: {}, sideOff: store.get("sala-side-off") === "1", scenesOff: store.get("sala-scenes-off") === "1", infoOff: store.get("sala-info-off") === "1",
+  more: null, dl: false, filt: false, sheet: {}, wipe: {}, sideOff: store.get("sala-side-off") === "1", scenesOff: store.get("sala-scenes-off") === "1", infoOff: store.get("sala-info-off") === "1", lbCmt: store.get("sala-lb-cmt") === "1", lbTc: store.get("sala-lb-tc") === "1",
   navPages: (() => { try { return JSON.parse(store.get("sala-nav-pages") || "{}"); } catch { return {}; } })(),
   ver: "now", peek: new Set(), vcmp: {},
   // no approval filter any more (Atual shows the client's choice next to our work), and the author filter starts off on every
@@ -633,7 +633,7 @@ function applyLink(p) {
   }
   // the second: the video waits there, paused, with the comments panel open (the link's comment lit in it)
   if (q.t && shown?.mime.startsWith("video/")) S.seekTo = { opt: shown.id, t: Math.max(0, +q.t || 0) };
-  if (q.c || q.t) { S.drawer = it.id; S.drawerTab = "comentarios"; S.litComment = q.c || null; }
+  if (q.c || q.t) { S.drawer = it.id; S.drawerTab = "comentarios"; S.litComment = q.c || null; if (TEAM && S.lightbox) S.lbCmt = true; }
 }
 // after the page is drawn: the link's comment in view, lit for a few seconds; and the second the link asked for, once
 // its video is on the page and knows its length (looked for a few times, then let go)
@@ -677,6 +677,7 @@ function linkTo({ item, opt = null, v = null, t = null, c = null, client = false
   return `${base}${sceneHref(it.round_id, it.scene, it.id)}${s ? `?${s}` : ""}`;
 }
 function onRoute() {
+  S.addrBase = null;
   resolvePage();
   // the team opens a card on its own (its own page); the client still scrolls to it on the page and flashes it
   const key = `${S.page.kind}/${S.page.round}/${S.page.scene}${TEAM ? `/${S.page.item || ""}` : ""}${S.page.req ? `/${S.page.req}` : ""}`;
@@ -1106,6 +1107,26 @@ function keyOf(el) {
   const form = el.closest("[data-form]");
   return form && el.name ? `${form.dataset.form}:${el.name}` : null;
 }
+// the address bar follows what is open big (team): a card's file in Ver grande gets its own link, as Copiar o link makes it
+// (without the second), and a file of Materiais its ?f=; closing gives back the address the page had. replaceState: no
+// new history entry and no hashchange, so the room does not route again (a real navigation starts over: onRoute)
+function syncAddress() {
+  if (!TEAM) return;
+  const lb = S.lightbox;
+  const put = (h) => { if (h !== location.hash) history.replaceState(history.state, "", `${location.pathname}${location.search}${h}`); };
+  if (!lb) { if (S.addrBase != null) { const b = S.addrBase; S.addrBase = null; put(b); } return; }
+  if (S.addrBase == null) S.addrBase = location.hash.split("?")[0] || "#/";
+  if (lb.req) { const id = lb.ids?.[lb.i]; if (id) put(`#/materiais/${lb.req}?f=${id}`); return; }
+  if (lb.id == null || lb.wipe || lb.cmp || lb.ref || lb.pair) return;
+  const it = itemOf(lb.id), card = it && optsOf(it.id)[lb.i], o = card && lbShown(card);
+  if (!o) return;
+  const vv = vidVers(it), isVer = vv.includes(o), q = new URLSearchParams();
+  // a video's versions go by v (v1 is the first cut) when there are several; anything else by its id, so the link
+  // opens Ver grande on it again (a card with one video included)
+  if (isVer && vv.length > 1) q.set("v", String(vv.length - vv.indexOf(o)));
+  else q.set("o", o.id);
+  put(`${sceneHref(it.round_id, it.scene, it.id)}${q.toString() ? `?${q}` : ""}`);
+}
 function render(force = false, newPage = false) {
   const a = document.activeElement;
   const typing = a && $app.contains(a) && (a.tagName === "TEXTAREA" || (a.tagName === "INPUT" && a.type !== "file"));
@@ -1129,6 +1150,7 @@ function render(force = false, newPage = false) {
   });
 
   $app.innerHTML = `<div class="shell ${S.sideOff ? "side-off" : ""}">${sidebar()}<div class="main">${mobileBar()}${page()}${selBar()}${S.drawer ? drawer() : ""}</div></div>${S.navOpen ? '<div class="scrim" data-act="nav"></div>' : ""}${S.lightbox ? lightbox() : ""}${S.modal ? modal() : ""}`;
+  syncAddress();
 
   $app.querySelectorAll("img[data-path], video[data-path], audio[data-path]").forEach((el) => {
     const old = kept.get(mediaKey(el))?.shift();
@@ -3372,11 +3394,12 @@ function teamLightbox(it, opts, card, i) {
   const more = `${hist.length > 1 && o.id !== face.id && !adj ? `<button class="btn small" data-act="vpick" data-id="${root.id}" data-v="${o.id}" title="O card passa a mostrar esta versão">Tornar atual</button>` : ""}`
     + `${o.mime.startsWith("video/") ? "" : `<button class="lb-info ${adj ? "on" : ""}" data-act="lbx" aria-pressed="${adj}" title="${adj ? "Sair do ajuste sem salvar (Esc)" : "Ajustar sem IA: espelhar, girar ou mudar a escala, e salvar como versão nova"}" aria-label="Ajustar">${Estudio.ICONS.crop}</button>`}`
     + `${can ? `<button class="lb-info ${vs ? "on" : ""}" data-act="vs-toggle" aria-pressed="${!!vs}" title="${vs ? "Sair da comparação" : "Comparar com a versão anterior"} (C)" aria-label="Comparar com a versão anterior">${ICON.vs}</button>` : ""}`
-    + `${adj ? "" : `<button class="lb-info" data-act="copy-link" data-id="${it.id}" data-opt="${o.id}" title="Copiar o link ${o.mime.startsWith("video/") ? "deste vídeo, nesta versão e neste segundo" : "desta imagem, nesta versão"}" aria-label="Copiar o link">${LINK_ICO}</button>`}`;
-  const tools = lbTools().replace('<span class="lb-tools">', `<span class="lb-tools">${more}`);
+    + `${adj ? "" : `<button class="lb-info" data-act="copy-link" data-id="${it.id}" data-opt="${o.id}" title="Copiar o link ${o.mime.startsWith("video/") ? "deste vídeo, nesta versão e neste segundo" : "desta imagem, nesta versão"}" aria-label="Copiar o link">${LINK_ICO}</button>`}`
+    + `${adj ? "" : (() => { const n = lbCmtCount(it, o); return `<button class="lb-info lb-cmtb ${S.lbCmt ? "on" : ""}" data-act="lb-cmt" aria-pressed="${!!S.lbCmt}" title="${S.lbCmt ? "Esconder" : "Mostrar"} os comentários${n ? ` (${n})` : ""}" aria-label="Comentários">${CHAT}${n ? `<b class="lb-n">${n}</b>` : ""}</button>`; })()}`;
+  const tools = lbTools(S.lbCmt && !adj).replace('<span class="lb-tools">', `<span class="lb-tools">${more}`);
   return `<div class="lb lb-team" data-act="lb-bg" role="dialog" aria-modal="true" aria-label="${esc(it.title)}">
     <div class="lb-top"><span><b>${esc(it.title)}</b> · ${lab}${vers}${hist.length > 1 ? ` · versão ${vi + 1}/${hist.length}${o.id === face.id ? " (atual)" : ""}` : ""}${o.created_by ? ` · por ${esc(o.created_by)}` : ""}${pos >= 0 ? ` · ${pos + 1} de ${S.ovList.length} nesta página` : ""}</span>${tools}</div>
-    <div class="lb-split ${S.infoOff ? "info-off" : ""}">
+    <div class="lb-split ${S.infoOff && !S.lbCmt ? "info-off" : ""}">
       <div class="lb-left">
         ${vidPills(it, vidVers(it), o)}
         <div class="lb-stage">
@@ -3384,14 +3407,29 @@ function teamLightbox(it, opts, card, i) {
           ${frame}
         </div>
         ${vs && !vs.duo ? vsPicker(it, o, vs) : !adj && hist.length > 1 ? verStrip(hist, o, face) : ""}
-        ${adj ? "" : tcBlock(it, o)}
+        ${adj || !S.lbTc ? "" : tcBlock(it, o, false)}
       </div>
-      ${infoPanel(it, o, { note: refsSec(it, o, vs) + pedidoSec(it, o, vs) })}
+      ${S.lbCmt && !adj ? cmtPanel(it, o) : infoPanel(it, o, { note: refsSec(it, o, vs) + pedidoSec(it, o, vs) })}
     </div>
   </div>`;
 }
+// Ver grande (team): the comments at the side, opened by the speech bubble at the top. A video's are its comments by
+// time (each one jumps the video there; the bubble in the bar under the video opens the field to write one); an image's,
+// its card's
+const lbCmtCount = (it, o) => (o.mime.startsWith("video/") ? tcOf(o).length : commentsNow(it).length);
+const cmtRow = (c) => `<div class="msg ${c.side}${S.litComment === c.id ? " lit" : ""}" data-c="${c.id}"><p class="meta"><b>${esc(c.author)}</b> · ${c.side === "time" ? esc(PROJECT.studio) : esc(CL)} · ${fmtTime(c.created_at)}${cacts(c)}</p>${S.cEdit === c.id ? cEditForm(c) : `<p class="body">${esc(c.body)}</p>`}</div>`;
+function cmtPanel(it, o) {
+  const vid = o.mime.startsWith("video/"), n = lbCmtCount(it, o);
+  const body = vid ? tcList(o) : `<div class="msgs">${commentsNow(it).map(cmtRow).join("") || '<p class="none">Nenhum comentário no card ainda.</p>'}</div>`;
+  return `<aside class="lb-panel lb-cmts" data-keep="lbc">
+    <p class="tc-side-head">${vid ? "Comentários no vídeo" : "Comentários do card"} <small>${n}</small></p>
+    ${body}
+    ${vid && !S.lbTc ? `<button class="link lb-cmt-write" data-act="lb-tc">${CHAT}Comentar neste momento do vídeo</button>` : ""}
+  </aside>`;
+}
 // the info button and Fechar, top right of every team lightbox; the panel starts closed and only a click (or I) opens it
-const lbTools = () => `<span class="lb-tools"><button class="lb-info ${S.infoOff ? "" : "on"}" data-act="lb-info" aria-pressed="${!S.infoOff}" title="${S.infoOff ? "Mostrar" : "Esconder"} as informações (I)" aria-label="Informações">${ICON.info}</button><button class="link" data-act="lb-close">Fechar ✕</button></span>`;
+// (cmt: the comments hold the side instead, so the info shows as off)
+const lbTools = (cmt = false) => { const on = !S.infoOff && !cmt; return `<span class="lb-tools"><button class="lb-info ${on ? "on" : ""}" data-act="lb-info" aria-pressed="${on}" title="${on ? "Esconder" : "Mostrar"} as informações (I)" aria-label="Informações">${ICON.info}</button><button class="link" data-act="lb-close">Fechar ✕</button></span>`; };
 // the verdict and the actions as a row of icons over the image, shown on hover
 function lbHud(it, o, { del = false } = {}) {
   const rv = reviewOf(o.id) || {};
@@ -3401,6 +3439,7 @@ function lbHud(it, o, { del = false } = {}) {
       <button class="hud" data-act="desenhar" data-id="${o.id}" title="Desenhar e escrever o que mudar${drawsOf(o) ? ` · ${plural(drawsOf(o), "desenho", "desenhos")} em aberto` : ""}" aria-label="Desenhar">${Estudio.ICONS.pen}</button>
       ${AI ? `<button class="hud" data-act="estudio" data-id="${o.id}" title="Editar com IA (estúdio)" aria-label="Editar com IA">${Estudio.ICONS.spark}</button>` : ""}
     </span>`}
+    ${o.mime.startsWith("video/") && TEAM ? `<span class="lb-hud-g"><button class="hud tcb ${S.lbTc ? "on" : ""}" data-act="lb-tc" aria-pressed="${!!S.lbTc}" title="${S.lbTc ? "Esconder o campo de comentar" : "Comentar neste momento do vídeo"}" aria-label="Comentar no vídeo">${CHAT}</button></span>` : ""}
     <span class="lb-hud-g">
       ${o.prompt ? `<button class="hud" data-act="copy-prompt" data-id="${o.id}" title="Copiar prompt" aria-label="Copiar prompt">${ICO.copy}</button>` : ""}
       <button class="hud" data-act="download" data-id="${o.id}" title="Baixar original" aria-label="Baixar original">${ICO.down}</button>
@@ -3703,6 +3742,14 @@ const ACTS = {
   },
   side() { S.sideOff = !S.sideOff; store.set("sala-side-off", S.sideOff ? "1" : "0"); render(true); },
   "lb-info"() { toggleInfo(); },
+  // the comments at the side of Ver grande (they take the info panel's place) and the field to comment a video by time
+  "lb-cmt"() { S.lbCmt = !S.lbCmt; store.set("sala-lb-cmt", S.lbCmt ? "1" : "0"); render(true); },
+  "lb-tc"() {
+    S.lbTc = !S.lbTc;
+    store.set("sala-lb-tc", S.lbTc ? "1" : "0");
+    render(true);
+    if (S.lbTc) setTimeout(() => $app.querySelector(".lb .tc-in")?.focus({ preventScroll: true }), 30);
+  },
   "ov-view"(el) { S.ov.view = el.dataset.v; store.set("sala-ov-view2", S.ov.view); render(); },
   "modal-close"() { S.modal = null; render(true); },
   drawer(el) { const id = el.dataset.id; S.drawer = S.drawer === id && !S.mode[id] && S.drawerTab !== "pedido" ? null : id; S.drawerTab = "comentarios"; delete S.mode[id]; render(true); focusCompose(); },
@@ -4108,6 +4155,8 @@ function step(d) {
   render(true);
 }
 function toggleInfo() {
+  // the comments share the side with the info: opening the info closes them
+  if (S.lbCmt) { S.lbCmt = false; store.set("sala-lb-cmt", "0"); S.infoOff = false; store.set("sala-info-off", "0"); return render(true); }
   S.infoOff = !S.infoOff;
   store.set("sala-info-off", S.infoOff ? "1" : "0");
   $app.querySelector(".lb-split")?.classList.toggle("info-off", S.infoOff);
