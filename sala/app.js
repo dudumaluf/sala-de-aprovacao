@@ -950,7 +950,8 @@ const estCtx = () => ({ sb, SIDE, TEAM, S, esc, itemOf, optsOf, letterOf, letter
   // studio's unless config.js says otherwise (estudio → souls, sala-estudio → sala-souls)
   soulsUrl: `${SUPABASE_URL}/functions/v1/${ESTUDIO.souls || (ESTUDIO.fn || "estudio").replace(/estudio$/, "souls")}`,
   // a render's blocking opens in its location's Cena 3D on that angle; the 3D's save hands the new angle back to the render
-  openCena3d: (o) => { const it = itemOf(o.item_id); if (it) location.hash = `${sceneHref(it.round_id, it.scene, it.id)}/cena3d/${o.id}`; },
+  // (a blocking VIDEO lives on its A3 card: it opens its source set instead, from the line its export wrote)
+  openCena3d: (o) => { const h = src3d(o); if (h) { location.hash = h; return; } const it = itemOf(o.item_id); if (it) location.hash = `${sceneHref(it.round_id, it.scene, it.id)}/cena3d/${o.id}`; },
   heldRender: () => Estudio.heldRender(), takeAngle: (id) => Estudio.takeAngle(estCtx(), id), dropHeld: () => Estudio.dropHeld(estCtx()),
   // a 3D opened from a shot's card: Renderizar sends the new angle's render to that card (how: its prompt box's text and
   // Fiel / Solto); ✕ and Esc go back (leave3d)

@@ -373,7 +373,8 @@ function openCard(e) {
   if (!it) return C.toast("Esta imagem não está em nenhum card.", true);
   // a 3D angle opens in its location's Cena 3D; a version that is not on the card, in the card's Versões
   const at = C.sceneHref(it.round_id, it.scene, it.id);
-  location.hash = e.angle ? `${at}/cena3d/${e.o.id}` : e.stack && !e.stack.face ? `${at}/versoes` : at;
+  // (a blocking video is not an angle of the location: it opens the set it was exported from, by the line its export wrote)
+  location.hash = e.angle ? (e.video && C.src3d?.(e.o)) || `${at}/cena3d/${e.o.id}` : e.stack && !e.stack.face ? `${at}/versoes` : at;
 }
 // the studio: one image of the room is the base (the result comes back to its card); the rest come in as references.
 // With only the client's photos it opens Criar, in the scene of the card that cites them
@@ -550,7 +551,7 @@ function menuItems(list) {
   const items = [
     one && ["open", one.f ? "Abrir em Materiais" : one.angle ? "Abrir na Cena 3D" : "Abrir no card", "open"],
     one && ["view", "Ver grande", "view", "Espaço"],
-    one?.o && C.src3d?.(one.o) && ["open3d", "Abrir a Cena 3D de origem", "open"],
+    one?.o && !one.angle && C.src3d?.(one.o) && ["open3d", "Abrir a Cena 3D de origem", "open"],
     C.ai && ["edit", pics.length > 14 ? "Editar com IA · as 14 primeiras" : pics.length > 1 ? `Editar com IA · ${pics.length - 1} como referência` : "Editar com IA", "spark", "", !pics.length && "Só imagens"],
     "-",
     ["group", "Agrupar…", "group"],
