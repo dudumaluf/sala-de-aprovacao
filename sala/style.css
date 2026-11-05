@@ -749,6 +749,8 @@ button.hcard-ask:hover { text-decoration: underline; text-underline-offset: 2px;
 .hz-lab.hz-res { width: auto; font: 800 11px var(--num); letter-spacing: 0.02em; }
 .hz-res-br { position: absolute; right: 10px; bottom: 10px; z-index: 3; pointer-events: none; transition: opacity 0.15s; }
 .hero:hover .hz-res-br, .hero:focus-within .hz-res-br { opacity: 0; }
+/* the draft label too, at rest only (Dudu 05/11): on hover the comments and the meta take the corner */
+.hero:hover .hz-bl .hz-draft, .hero:focus-within .hz-bl .hz-draft { display: none; }
 .csh-tile .hz-res-br { right: 6px; bottom: 6px; }
 @media (hover: none) { .hz-res-br { display: none; } }
 .hz-kind svg { width: 13px; height: 13px; flex: none; }
