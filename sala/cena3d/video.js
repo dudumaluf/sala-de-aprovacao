@@ -264,7 +264,7 @@ function castColors(E) {
   });
 }
 function summary(E, H, plan, out, files, withCast) {
-  const c = E.set.cut, fps = plan.fps, N = plan.frames.length, t0 = plan.F0 / fps;
+  const c = E.tl?.cut?.() || E.set.cut, fps = plan.fps, N = plan.frames.length, t0 = plan.F0 / fps;
   const vs = (f) => n2(f / fps);
   const ledName = (v) => (H.LED_STATES.find((x) => x[0] === v)?.[1] || v || "").toLowerCase();
   const cast = withCast ? castColors(E) : [];
@@ -310,7 +310,7 @@ function summary(E, H, plan, out, files, withCast) {
 
 // ---------- to the card ----------
 async function save(E, H, plan, out, withCast) {
-  const { ctx } = E, card = H.card(), prefix = `items/${card.id}`, base = H.slug(`${E.set.name}-${E.set.cut?.name || "cena"}-${withCast ? "com-elenco" : "sem-elenco"}`);
+  const { ctx } = E, card = H.card(), prefix = `items/${card.id}`, base = H.slug(`${E.set.name}-${(E.tl?.cut?.() || E.set.cut)?.name || "cena"}-${withCast ? "com-elenco" : "sem-elenco"}`);
   const vfile = new File([out.video], `blocking-${base}.mp4`, { type: "video/mp4" });
   const v = await ctx.putFile(prefix, vfile);
   // each shot's first frame (the room makes its preview and thumb); the first one is the video's poster
@@ -330,7 +330,7 @@ async function save(E, H, plan, out, withCast) {
   const V = ctx.roundOf(card.round_id)?.version || 1;
   const { data: o, error } = await ctx.sb.from("options").insert({
     item_id: card.id, path: v.path, preview_path: poster?.preview_path || null, thumb_path: poster?.thumb_path || null, mime: "video/mp4", name: vfile.name,
-    created_by: ctx.myName(), version: V, model: H.MODEL, caption: `Cena 3D · ${E.set.cut?.name || "a cena"} · ${data.duration.toFixed(1).replace(".", ",")} s · ${withCast ? "com o elenco" : "sem o elenco"}`,
+    created_by: ctx.myName(), version: V, model: H.MODEL, caption: `Cena 3D · ${(E.tl?.cut?.() || E.set.cut)?.name || "a cena"} · ${data.duration.toFixed(1).replace(".", ",")} s · ${withCast ? "com o elenco" : "sem o elenco"}`,
     prompt: text,
     reasoning: `O blocking 3D da cena inteira, como a timeline está: ${data.shots.length} ${data.shots.length === 1 ? "plano" : "planos"}${data.cuts_at.length ? ", com os cortes secos nos segundos do corte" : ""}, ${withCast ? "com o elenco" : "sem o elenco (só o cenário e a câmera)"}, ${data.size.join("×")} a ${data.fps} fps, sem som. O resumo em JSON, com o primeiro quadro de cada plano, está em ${json}.`,
   }).select().single();

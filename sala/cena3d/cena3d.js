@@ -30,7 +30,7 @@ const CL = PROJECT?.client;
 const ART = CL ? { a: ["a ", "da "], o: ["o ", "do "] }[PROJECT.clientArticle] || ["", "de "] : ["o ", "do "];
 const CLIENT = `${ART[0]}${CL || "cliente"}`, CLIENT_OF = `${ART[1]}${CL || "cliente"}`;
 const MODEL = "Blocking 3D";
-const CSS_V = 14; // bump when cena3d.css changes, so an open tab does not keep the old styles
+const CSS_V = 15; // bump when cena3d.css changes, so an open tab does not keep the old styles
 const LENSES = [14, 16, 18, 21, 24, 28, 32, 35, 40, 50, 65, 75, 85, 100, 135];
 // lens in mm on a full-frame (36 mm wide) sensor framed 16:9 ↔ vertical field of view
 const fovOf = (mm) => THREE.MathUtils.radToDeg(2 * Math.atan(36 / (16 / 9) / 2 / mm));
@@ -1538,7 +1538,7 @@ async function doSave(to = null) {
 // the timeline's Exportar a cena: the scene's blocking videos (video.js), with the cast, without it (the set and the
 // camera only) or both, go to the scene's card in the animation round (the set's cut.card), else to this location's
 // card; the 3D does not take clicks or keys until they are done
-const exportCard = () => (E.set?.cut?.card && E.ctx.itemOf(E.set.cut.card)) || E.item;
+const exportCard = () => { const c = E.tl?.cut?.() || E.set?.cut; return (c?.card && E.ctx.itemOf(c.card)) || E.item; };
 async function runExport(which = "both") {
   if (E.busy || !E.tl?.has()) return;
   const runs = which === "cast" ? [true] : which === "set" ? [false] : [true, false], done = [];

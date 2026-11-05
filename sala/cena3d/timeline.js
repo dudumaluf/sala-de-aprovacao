@@ -78,13 +78,17 @@ const lerpAngle = (a, b, u) => a + (((b - a + 540) % 360) - 180) * u;
 export function createTimeline(H) {
   const { E } = H;
   const T = { data: null, t: 0, playing: false, loop: false, sel: null, hold: false, touched: false, el: null, last: 0 };
-  const cut = () => E.set?.cut || null;
+  // the set's cut, or one of its versions (`alts`: the same cut done another way, e.g. one continuous take), each merged
+  // over the cut (it keeps the cut's card, sound and lines unless it says otherwise); the timeline remembers which (alt)
+  const cuts = () => (E.set?.cut ? [E.set.cut, ...(E.set.alts || []).map((a) => ({ ...E.set.cut, ...a }))] : []);
+  const cut = () => cuts()[T.data?.alt || 0] || E.set?.cut || null;
+  T.cut = () => cut();
   const esc = (s) => H.esc(String(s ?? ""));
   const $ = (s) => T.el?.querySelector(s);
 
   // ---------- data ----------
-  function defaults() {
-    const c = cut();
+  function defaults(alt = 0) {
+    const c = cuts()[alt];
     if (!c?.shots?.length) return null;
     const cam = [], figs = {}, dev = [], move = [];
     c.shots.forEach((s, i) => {
@@ -105,7 +109,7 @@ export function createTimeline(H) {
     }
     for (const [t, led, ry, at] of c.device || []) dev.push({ t, led, ...(ry != null ? { ry } : {}), ...(at ? { at } : {}) });
     if (E.set.motion) move.push({ t: c.shots[0].in, amp: 1, ease: "suave" });
-    return { v: 1, shots: c.shots.map((s) => ({ cam: s.cam, title: s.title || s.cam, in: s.in, out: s.out, ride: !!s.ride, ...(s.view ? { view: s.view } : {}) })), cam, figs, dev, move };
+    return { v: 1, ...(alt ? { alt } : {}), shots: c.shots.map((s) => ({ cam: s.cam, title: s.title || s.cam, in: s.in, out: s.out, ride: !!s.ride, ...(s.view ? { view: s.view } : {}) })), cam, figs, dev, move };
   }
   const shots = () => T.data?.shots || [];
   const span = () => { const s = shots(); return s.length ? [s[0].in, s[s.length - 1].out] : [0, 1]; };
@@ -458,6 +462,7 @@ export function createTimeline(H) {
     h.innerHTML = `<button class="c3d-tplay${T.playing ? " on" : ""}" data-tk="play" title="${T.playing ? "Pausar" : "Tocar a cena"} (espaço)" aria-label="${T.playing ? "Pausar" : "Tocar"}">${T.playing ? '<svg viewBox="0 0 16 16"><rect x="4" y="3" width="3" height="10" rx=".8"/><rect x="9" y="3" width="3" height="10" rx=".8"/></svg>' : '<svg viewBox="0 0 16 16"><path d="M5 3.2v9.6L13 8z"/></svg>'}</button>
       <button class="c3d-tchip${T.loop ? " on" : ""}" data-tk="loop" title="Repetir só o plano da agulha">repetir o plano</button>
       <span class="c3d-ttime"><b>${fmt(T.t)}</b> · ${esc(s?.title || "")}</span>
+      ${cuts().length > 1 ? `<span class="c3d-tcuts">${cuts().map((x, i) => `<button class="c3d-tchip${(T.data.alt || 0) === i ? " on" : ""}" data-tk="cut" data-v="${i}" title="${esc(i ? `Outra versão do corte: ${x.name} (a timeline dessa versão, como o set a traz)` : `O corte como o animatic: ${x.name}`)}">${esc(x.name)}</button>`).join("")}</span>` : ""}
       <span class="c3d-tinfo">${esc(c?.name || "Corte")} · ${fmt(a).replace(" s", "")}–${fmt(b)}</span>
       <span class="c3d-tsp"></span>
       <button class="c3d-tchip acc" data-tk="key" title="Gravar um keyframe no segundo da agulha: do que estiver selecionado (uma pessoa, o produto) ou, sem seleção, da câmera (K)"><i class="c3d-tdia"></i>Keyframe</button>
@@ -608,6 +613,8 @@ export function createTimeline(H) {
       else if (k === "export") { T.menu = !T.menu; T.sel = null; T.render(); }
       else if (k === "export-go") { T.menu = false; T.render(); H.exportScene?.(b.dataset.v); }
       else if (k === "loop") { T.loop = !T.loop; head(); }
+      // another version of the cut: its timeline from the set (it is saved with the scene only once something is edited in it)
+      else if (k === "cut") { const i = +b.dataset.v; if (i !== (T.data.alt || 0)) { T.pause(); T.sel = null; T.data = defaults(i); T.render(); T.seek(span()[0]); } }
       else if (k === "key") T.addKey();
       else if (k === "close") { T.sel = null; T.menu = false; T.render(); }
       else if (k === "del") delKey();
