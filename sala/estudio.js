@@ -2275,6 +2275,7 @@ function teardown() {
   listeners.delete(syncRail);
   // not closed: a Gerar sent just before closing may still be cutting its areas from it
   E.orig = null;
+  if (draftWait) draftSave(true);
   E.root.remove();
   E.root = null;
   document.body.classList.remove("est-open");
@@ -2291,7 +2292,7 @@ function close() {
 // waits as it was: the text, the drawing, the references and the settings
 const SESSION = ["mode", "item", "base", "refs", "strokes", "notes", "hist", "tool", "color", "scene", "round", "blocking", "view", "areas", "ai", "xf",
   "model", "aspect", "res", "quality", "count", "kind", "vmodel", "vaspect", "vres", "dur", "sound", "dest", "parent", "recipeKey", "cam", "camWoven",
-  "recipes", "recWoven", "railMode"];
+  "recipes", "recWoven", "railMode", "draftKey", "draftBase"];
 async function openRef(i) {
   const { ctx } = E, r = E.refs[i];
   if (!r) return;
@@ -2308,6 +2309,95 @@ function goBack() {
   const { snap } = E.parent;
   teardown();
   open(E.ctx, snap);
+}
+// ---------- the draft: what was being set up survives a reload or a close ----------
+// One per session, in this browser only (localStorage): a card's ✦ or Criar com IA (card:<item>, or create:<round>:<scene>
+// with no card), an image edited (edit:<option>), a video edited (vedit:<option>:<model>). It keeps the prompt as written
+// (@Nome), the circles in their order with their roles, the destination card, and the model with its settings; not the
+// drawing. Written 0.7 s after a change, on close and when the tab goes away, and only after a person changed something and
+// while it differs from how the studio opened. Opening the same session brings it back with a toast to start over; a
+// card's kit saved after it wins. At most DRAFT_MAX are kept, the oldest dropped
+const DRAFT = "sala-est-draft:";
+const DRAFT_MAX = 40;
+let draftWait = null;
+const draftGet = (key) => { try { return JSON.parse(localStorage.getItem(DRAFT + key) || "null"); } catch { return null; } };
+const draftDrop = (key) => { try { if (key) localStorage.removeItem(DRAFT + key); } catch {} };
+// a room image or file is shown by its small copy; a file uploaded in the studio, by itself (an image) or by its icon
+function refThumb(path, kind) {
+  const { S } = E.ctx, x = S.options.find((o) => o.path === path) || S.files.find((f) => f.path === path);
+  return x ? x.thumb_path || x.preview_path || (kind === "image" ? x.path : null) : kind === "image" ? path : null;
+}
+const draftState = () => ({
+  kind: E.kind, model: E.model, aspect: E.aspect, res: E.res, quality: E.quality, vmodel: E.vmodel, vaspect: E.vaspect, vres: E.vres, dur: E.dur, sound: !!E.sound,
+  item: E.item?.id || null,
+  refs: E.refs.filter((r) => !r.wait).map((r) => ({ path: r.path, preview: r.preview || null, thumb_path: r.thumb_path || refThumb(r.path, r.kind || "image"), label: r.label, kind: r.kind || "image", ...(r.role && { role: r.role }) })),
+  prompt: promptText(),
+});
+const draftSig = () => JSON.stringify(draftState());
+function draftPrune() {
+  const keys = [];
+  for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k?.startsWith(DRAFT)) keys.push(k); }
+  if (keys.length <= DRAFT_MAX) return;
+  const at = (k) => { try { return JSON.parse(localStorage.getItem(k))?.at || 0; } catch { return 0; } };
+  keys.map((k) => [k, at(k)]).sort((a, b) => a[1] - b[1]).slice(0, keys.length - DRAFT_MAX).forEach(([k]) => localStorage.removeItem(k));
+}
+function draftSave(now = false) {
+  clearTimeout(draftWait);
+  draftWait = null;
+  if (!E.draftKey || !E.root || E.draftBase == null || E.draftHold || !E.draftDirty) return;
+  const write = () => {
+    draftWait = null;
+    if (!E.draftKey || !E.root || E.draftBase == null) return;
+    const s = draftState(), key = E.draftKey;
+    try {
+      if (JSON.stringify(s) === E.draftBase) return draftDrop(key);
+      localStorage.setItem(DRAFT + key, JSON.stringify({ at: Date.now(), s }));
+      draftPrune();
+    } catch {}
+  };
+  if (now) write();
+  else draftWait = setTimeout(write, 700);
+}
+addEventListener("pagehide", () => draftSave(true));
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") draftSave(true); });
+// the draft over the studio just opened: the settings, the circles (their small copies signed again), the card, the text
+async function applyDraft(s) {
+  const { ctx } = E, list = (Array.isArray(s.refs) ? s.refs : []).filter((r) => r?.path);
+  await ctx.sign(list.map((r) => r.thumb_path).filter(Boolean)).catch(() => {});
+  if (!E.root) return;
+  const has = (models, id) => models.some((m) => m.id === id);
+  Object.assign(E, {
+    kind: s.kind === "video" ? "video" : "image",
+    ...(has(MODELS, s.model) && { model: s.model }), ...(has(VIDEO_MODELS, s.vmodel) && { vmodel: s.vmodel }),
+    ...(s.aspect && { aspect: s.aspect }), ...(s.res && { res: s.res }), ...(s.quality && { quality: s.quality }),
+    ...(s.vaspect && { vaspect: s.vaspect }), ...(s.vres && { vres: s.vres }), ...(DURS.includes(s.dur) && { dur: s.dur }), sound: s.sound ?? E.sound,
+    refs: list.map((r) => ({ path: r.path, preview: r.preview || null, thumb_path: r.thumb_path || null, thumb: r.thumb_path ? ctx.urls.get(r.thumb_path) || "" : "", label: r.label || "Referência", kind: r.kind || "image", ...(r.role && { role: r.role }) })),
+  });
+  const it = s.item && E.mode === "create" && ctx.itemOf(s.item);
+  if (it) E.item = it;
+  E.draftHold = true;
+  syncHead();
+  syncAll();
+  putPrompt(s.prompt || "");
+  E.draftHold = false;
+  clearTimeout(draftWait);
+  draftWait = null;
+}
+// open a session that keeps a draft: as it would open, then this browser's draft of it on top (unless something saved
+// after it, since: a card's kit), with a toast that starts over from how it would have opened
+async function openDrafted(ctx, init, key, since = 0) {
+  const fresh = () => ({ ...init, refs: (init.refs || []).map((r) => ({ ...r })), draftKey: key });
+  open(ctx, fresh());
+  const d = key && draftGet(key);
+  if (!d?.s) return;
+  if (since && d.at < since) return draftDrop(key);
+  await applyDraft(d.s);
+  if (!E.root || E.draftKey !== key) return;
+  const t = new Date(d.at), day = t.toDateString() === new Date().toDateString() ? "" : `${t.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} `;
+  ctx.toast(`Rascunho de ${day}${t.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })} de volta: o texto, as referências e o modelo`, false, {
+    label: "Começar do zero",
+    fn: () => { clearTimeout(draftWait); draftWait = null; E.draftKey = null; draftDrop(key); open(ctx, fresh()); },
+  });
 }
 // the blocking frame of a render opens at its source, the location's Cena 3D on that angle (a click on the base's circle).
 // The render waits here; the 3D's Salvar e voltar brings the new frame back as the base (takeAngle), with the text, the
@@ -2865,6 +2955,7 @@ function open(ctx, init) {
     drawer: drawerPref(), barOn: barPref(), barBig: bigPref(), dest: init?.blocking ? "card" : "ver", parent: null, recipeKey: "",
     cam: camPref(), camWoven: null, camOpen: false, camMore: false, camHtml: "",
     recipes: [], recWoven: null, railMode: "vers", rq: "", rcat: "all", redit: null, rflash: null, sentOpen: new Set(), vprompt: false,
+    draftKey: null, draftBase: null, draftDirty: false, draftHold: false,
   }, init);
   const root = document.createElement("div");
   root.className = rootClass();
@@ -2878,6 +2969,8 @@ function open(ctx, init) {
     <div class="est-mid"><div class="est-stage">${frameHtml()}</div><aside class="est-rail" data-keep="est-rail"></aside></div>
     <div class="est-bar">${barHtml()}</div>`;
   document.body.append(root);
+  // the draft (draftSave) keeps only what a person changed: any input, click, drop or paste in the studio counts
+  for (const t of ["input", "change", "click", "drop", "paste"]) root.addEventListener(t, () => { E.draftDirty = true; }, true);
   document.body.classList.add("est-open");
   E.root = root;
   window.addEventListener("keydown", onKey, true);
@@ -2934,10 +3027,11 @@ function open(ctx, init) {
     // the face's strength (Soul 2), said as it moves
     if (t.dataset?.k === "soul-k") { E.soulK = Number(t.value) / 100; t.parentElement.querySelector("b").textContent = `${t.value}%`; syncChips(); return; }
     if (!t.matches?.(".est-prompt")) return;
-    if (!t.isContentEditable) { E.prompt = t.value; fit(t); return; }
+    if (!t.isContentEditable) { E.prompt = t.value; fit(t); draftSave(); return; }
     t.classList.toggle("empty", !t.textContent.trim() && !t.querySelector(".est-tok"));
     E.prompt = promptText();
     syncMention();
+    draftSave();
   });
   bindEditor();
   // the videos in the rail and the picker play while the pointer is on them
@@ -2956,6 +3050,8 @@ function open(ctx, init) {
   if (E.mode !== "draw") { loadJobs(); loadKeys(); loadSouls().catch(() => {}); loadRecipes().catch(() => {}); }
   // areas brought back (a reference edited over this generation, then back here) need the base's size again
   if (E.areas.length) loadOrig().catch(() => {});
+  // the state it opened with: a draft is kept only while it differs from it (draftSave)
+  if (E.draftKey && E.draftBase == null) E.draftBase = draftSig();
   setTimeout(() => $(".est-prompt")?.focus(), 30);
 }
 // the prompt box's own keys: with the @ list open, Tab and ⇧Tab go through its tabs, ↑ ↓ choose (↓ past the last line brings
@@ -3194,6 +3290,7 @@ function syncChips() {
   // the tag over the area being edited shows the same references; the camera's pill says whether it goes (not with areas)
   syncAreas();
   syncCam();
+  draftSave();
 }
 function syncBar() {
   if (!E.root) return;
@@ -3287,6 +3384,7 @@ function syncBar() {
   if (sv) { sv.disabled = E.busy; sv.textContent = E.busy ? "Salvando…" : "Salvar desenho"; }
   syncCam();
   fitStage();
+  draftSave();
 }
 async function loadJobs() {
   if (!E.item) return;
@@ -3979,8 +4077,11 @@ export async function openStudio(ctx, { optionId, itemId = null }) {
   if (!o || !isImg(o)) return ctx.toast("O estúdio edita imagens.", true);
   E.ctx = ctx;
   const recipe = o.model === BLOCKING ? await blockingRecipe(ctx, o).catch((e) => { console.error(e); return null; }) : null;
-  open(ctx, { mode: "edit", base: o, item: (itemId && ctx.itemOf(itemId)) || recipe?.shotItem || ctx.itemOf(o.item_id), ...(recipe && { blocking: true, kind: "image", model: MODELS[0].id, aspect: "16:9", refs: recipe.refs, prompt: recipe.prompt }) });
-  if (recipe) E.recipeKey = recipeKey();
+  const init = { mode: "edit", base: o, item: (itemId && ctx.itemOf(itemId)) || recipe?.shotItem || ctx.itemOf(o.item_id), ...(recipe && { blocking: true, kind: "image", model: MODELS[0].id, aspect: "16:9", refs: recipe.refs, prompt: recipe.prompt }) };
+  // a blocking render follows its recipe; any other edit comes back as it was left (the draft)
+  if (!recipe) return openDrafted(ctx, init, `edit:${o.id}`);
+  open(ctx, init);
+  E.recipeKey = recipeKey();
 }
 // team, from Cena 3D's Renderizar (its 3D opened from a shot's card): the angle just saved goes through the blocking
 // recipe with no studio in between, sent as Gerar sends it (Nano Banana 2.1, 2K, 16:9). Its result lands on that card
@@ -4039,7 +4140,8 @@ export async function openCreate(ctx, { roundId, scene, itemId }) {
   const item = (itemId && ctx.itemOf(itemId)) || items[0] || null, shot = item?.kind === "plano" ? item : null;
   const cast = subject || product ? `${subject}${product}.` : "";
   const prompt = !all.length && !shot ? "" : [shot ? `${shot.title}, cena ${name}: ${shot.brief}` : cast ? `Plano do filme, cena ${name}:` : "", cast, look ? `Luz: ${look}.` : ""].filter(Boolean).join("\n").replace(/:\n(?=@)/, ": ");
-  open(ctx, { mode: "create", round: roundId, scene, item, refs, prompt, aspect: "16:9", ...(item?.kind === "video" && { kind: "video", vmodel: VIDEO_MODELS[0].id, vaspect: "16:9" }) });
+  return openDrafted(ctx, { mode: "create", round: roundId, scene, item, refs, prompt, aspect: "16:9", ...(item?.kind === "video" && { kind: "video", vmodel: VIDEO_MODELS[0].id, vaspect: "16:9" }) },
+    itemId ? `card:${itemId}` : `create:${roundId}:${scene}`);
 }
 // team, a video's ✦ on its card: the models that edit a video (Seedance's edit, the Genjutsu modes), as the circles'
 // Editar vídeo lists them; picking one opens the studio with that video as its master, the result landing on its card
@@ -4049,15 +4151,15 @@ export async function openVideoEdit(ctx, { optionId, vm }) {
   const o = ctx.S.options.find((x) => x.id === optionId), it = o && ctx.itemOf(o.item_id);
   if (!o || !it || !o.mime?.startsWith("video/") || !VIDEO_MODELS.some((m) => m.id === vm)) return;
   await ctx.sign([o.thumb_path || o.preview_path || o.path]).catch(() => {});
-  open(ctx, { mode: "create", kind: "video", vmodel: vm, item: it, round: it.round_id, scene: it.scene, base: null, blocking: false, prompt: "",
-    refs: [{ path: o.path, preview: o.preview_path || null, thumb_path: o.thumb_path || null, thumb: thumbUrl(o), label: refName(o), kind: "video" }] });
+  return openDrafted(ctx, { mode: "create", kind: "video", vmodel: vm, item: it, round: it.round_id, scene: it.scene, base: null, blocking: false, prompt: "",
+    refs: [{ path: o.path, preview: o.preview_path || null, thumb_path: o.thumb_path || null, thumb: thumbUrl(o), label: refName(o), kind: "video" }] }, `vedit:${o.id}:${vm}`);
 }
 // team: a card's kit (item_kits: what Guardar no card saved) opens the studio already like that, its result landing on
 // the card. The references come back in their order, so @image1, @video1, @audio1… still name the same ones; a card
 // without a kit opens as Criar com IA does
 export async function openKit(ctx, { itemId }) {
   E.ctx = ctx;
-  const it = ctx.itemOf(itemId), k = ctx.kitOf?.(itemId)?.kit;
+  const it = ctx.itemOf(itemId), row = ctx.kitOf?.(itemId), k = row?.kit;
   if (!it) return;
   if (!k) return openCreate(ctx, { roundId: it.round_id, scene: it.scene, itemId });
   const list = Array.isArray(k.refs) ? k.refs : [];
@@ -4065,25 +4167,20 @@ export async function openKit(ctx, { itemId }) {
   const refs = list.map((r) => ({ path: r.path, preview: r.preview || null, thumb_path: r.thumb_path || null, thumb: r.thumb_path ? ctx.urls.get(r.thumb_path) || "" : "", label: r.label || "Referência", kind: r.kind || "image", ...(r.role && { role: r.role }) }));
   const video = k.kind !== "image";
   const known = (list2, id) => (list2.some((m) => m.id === id) ? id : list2[0].id);
-  open(ctx, {
+  return openDrafted(ctx, {
     mode: "create", round: it.round_id, scene: it.scene, item: it, refs, prompt: k.prompt || "", kind: video ? "video" : "image",
     ...(video ? { vmodel: known(VIDEO_MODELS, k.model), vaspect: k.vaspect || "16:9", vres: k.vres || "720p", dur: DURS.includes(k.dur) ? k.dur : 5, sound: k.sound ?? true }
       : { model: known(MODELS, k.model), aspect: k.aspect || "16:9", res: k.res || "2k" }),
-  });
+  }, `card:${it.id}`, Date.parse(row.updated_at || "") || 0);
 }
 // Guardar no card: the studio as it is (the base, if any, first; then the references in their order, the prompt as
 // written with @Nome, the model, the duration, the resolution) becomes the card's kit
 async function saveKit() {
   const { ctx } = E, it = E.item;
   if (!it || !ctx.saveKit) return;
-  const { S } = ctx, video = isVideo();
-  // a room image or file is shown by its small copy; a file uploaded in the studio, by itself (an image) or by its icon
-  const thumbOf = (path, kind) => {
-    const x = S.options.find((o) => o.path === path) || S.files.find((f) => f.path === path);
-    return x ? x.thumb_path || x.preview_path || (kind === "image" ? x.path : null) : kind === "image" ? path : null;
-  };
+  const video = isVideo();
   const base = E.base ? [{ path: E.base.path, preview: E.base.preview_path || null, thumb_path: E.base.thumb_path || E.base.preview_path || E.base.path, label: "Base", kind: "image" }] : [];
-  const refs = [...base, ...E.refs.filter((r) => !r.wait).map((r) => ({ path: r.path, preview: r.preview || null, thumb_path: r.thumb_path || thumbOf(r.path, r.kind || "image"), label: r.label, kind: r.kind || "image", ...(r.role && { role: r.role }) }))];
+  const refs = [...base, ...E.refs.filter((r) => !r.wait).map((r) => ({ path: r.path, preview: r.preview || null, thumb_path: r.thumb_path || refThumb(r.path, r.kind || "image"), label: r.label, kind: r.kind || "image", ...(r.role && { role: r.role }) }))];
   const kit = { kind: video ? "video" : "image", model: video ? E.vmodel : E.model, dur: E.dur, vres: E.vres, vaspect: E.vaspect, sound: !!E.sound, aspect: E.aspect, res: E.res, refs, prompt: promptText() };
   // the button itself says it: Guardando… while it goes, ✓ Guardado for a few seconds (a toast can hide behind another)
   const btn = $('[data-k="kit-save"]'), say = (t, cls) => { const s = btn?.querySelector("span"); if (s) s.textContent = t; btn?.classList.toggle("done", cls === "done"); if (btn) btn.disabled = cls === "busy"; };
@@ -4091,6 +4188,8 @@ async function saveKit() {
   say("Guardando…", "busy");
   try {
     await ctx.saveKit(it.id, kit);
+    // the kit now holds what the draft kept
+    if (E.draftKey === `card:${it.id}`) { draftDrop(E.draftKey); E.draftBase = draftSig(); E.draftDirty = false; }
     say("✓ Guardado no card", "done");
     E.kitTimer = setTimeout(() => say("Guardar no card", ""), 3500);
     ctx.toast(`Kit guardado em ${it.title}: o ✦ do card abre assim`);
