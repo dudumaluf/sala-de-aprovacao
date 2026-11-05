@@ -427,6 +427,9 @@ function optMarks() {
 const optLabelIds = (o) => optMarks().byOpt.get(o.stack || o.id) || NO_LABELS;
 const cardImgLabelIds = (id) => optMarks().byItem.get(id) || NO_LABELS;
 const labelsHere = (it) => [...S.labelF].filter((id) => optMarks().rounds.get(id)?.has(it.round_id));
+// on a page, only the picked etiquetas that mark something in its round are on: the others don't show as a chip, don't
+// count on the Filtros badge and don't make the page "filtered" (the padrão Animatic 005 is A2's; A3 opens unfiltered)
+const labelsOnIn = (rid = S.page.round || defaultRound()) => [...S.labelF].filter((id) => optMarks().rounds.get(id)?.has(rid));
 const inLabels = (it) => {
   if (!TEAM || !S.labelF.size || peeked(it.id)) return true;
   const here = labelsHere(it);
@@ -445,7 +448,7 @@ function labelsTxt() {
   return names.length ? `sem ${names.length > 1 ? "as etiquetas" : "a etiqueta"} ${names.join(" ou ")}` : "";
 }
 // any filter that can leave a card out: approval, author or etiqueta
-const anyFilter = () => filtering() || (TEAM && S.labelF.size > 0);
+const anyFilter = () => filtering() || (TEAM && labelsOnIn().length > 0);
 const inView = (o) => (filtering() && S.ver === "now" && !peeked(o.item_id) ? true : inVer(o)) && inAppr(o) && inAuthor(o) && inOptLabels(o);
 // a card is on screen when something of it passes the filters (an item with no options yet, unless a filter is on)
 const hasView = (it) => !TEAM || (inLabels(it) && (optsOf(it.id).length ? shownOpts(it.id).length > 0 : !filtering()));
@@ -1350,7 +1353,7 @@ function filtersOn(ctx) {
   if (S.ver !== "now") on.push(["ver", S.ver === "all" ? "Todas as rodadas" : `Só a v${S.ver}`]);
   if (S.appr !== "all") on.push(["appr", APPR[S.appr]]);
   for (const a of S.authors) on.push([`author:${a}`, a]);
-  for (const id of S.labelF) { const l = labelById(id); if (l) on.push([`label:${id}`, l.name]); }
+  for (const id of labelsOnIn()) { const l = labelById(id); if (l) on.push([`label:${id}`, l.name]); }
   if (ctx.kinds?.length > 1) for (const k of S.ov.kinds) if (ctx.kinds.includes(k)) on.push([`kind:${k}`, KINDS[k]]);
   if (ctx.curate && S.ov.curate) on.push(["curate", "Só o que falta curar"]);
   if (ctx.dropped && S.ov.dropped) on.push(["dropped", "Com descartadas"]);
@@ -1581,7 +1584,7 @@ function boardFilters(r, all, roundTasks) {
     ${group("Tarefas", [opt("b-tasks", "now", "Atuais", now, `As do último retorno ${DA_CL} (v${cur}) e as que vieram depois`), ...(vers.length > 1 ? vers.map((v) => opt("b-tasks", String(v), `Da v${v}`, v === tv, `Só as tarefas do que ${A_CL} pediu na v${v}`)) : []), opt("b-tasks", "all", "Todas", !now && tv == null, "As tarefas de todas as versões")].join(""))}
     <section class="filt-group filt-togs"><button class="filt-tog ${S.bDone ? "on" : ""}" role="switch" aria-checked="${S.bDone}" data-act="b-done" title="As tarefas feitas e os cards prontos ou já mandados ${AO_CL}"><span class="filt-sw" aria-hidden="true"></span>Mostrar feitas e prontas</button></section>
   </div>` : "";
-  const on = [...[...S.labelF].map((id) => labelById(id)).filter(Boolean).map((l) => [`label:${l.id}`, l.name]), ...[...S.ov.kinds].filter((k) => kinds.includes(k)).map((k) => [`kind:${k}`, KINDS[k]]),
+  const on = [...labelsOnIn(r.id).map((id) => labelById(id)).filter(Boolean).map((l) => [`label:${l.id}`, l.name]), ...[...S.ov.kinds].filter((k) => kinds.includes(k)).map((k) => [`kind:${k}`, KINDS[k]]),
     now ? ["tasks", `Tarefas atuais (v${cur}${vers.some((v) => v > cur) ? " em diante" : ""})`] : tv == null ? null : ["tasks", `Tarefas da v${tv}`], S.bDone ? null : ["done", "Sem feitas e prontas"]].filter(Boolean);
   const hi = all.length - items.length, ht = roundTasks.length - tasks.length;
   const out = [hi ? plural(hi, "card", "cards") : "", ht ? plural(ht, "tarefa", "tarefas") : ""].filter(Boolean).join(" e ");
