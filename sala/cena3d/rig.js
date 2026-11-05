@@ -69,6 +69,9 @@ export const POSES = {
   cut: { label: "Agachado, mexendo em algo no chão", hips: [0, -0.5, -0.05], lThigh: [-115, 0, 12], rThigh: [-115, 0, -12], lShin: [125, 0, 0], rShin: [125, 0, 0], spine: [30, 0, 0], chest: [15, 0, 0],
     lUpper: [-60, 0, 8], lFore: [-40, 0, 0], neck: [8, 0, 0], head: [10, 0, 0], ik: { rArm: [-0.1, -0.3, 0.42, [-100, 0, 0], [-1, -0.4, -0.5]] } },
   headset: { label: "Mão no headset", ...ARMS_DOWN, head: [2, -8, 4], ik: { rArm: [-0.15, 0.32, 0, [0, 0, 170], [-1, -0.2, 0.1]] } },
+  // crouched over something on the floor, the right hand at it, looking ahead (at the lens, at someone across)
+  cutLook: { label: "Agachado, mexendo em algo no chão, olhando pra frente", hips: [0, -0.5, -0.05], lThigh: [-115, 0, 12], rThigh: [-115, 0, -12], lShin: [125, 0, 0], rShin: [125, 0, 0], spine: [38, 0, 0], chest: [16, 0, 0],
+    lUpper: [-60, 0, 8], lFore: [-40, 0, 0], neck: [-20, 0, 0], head: [-20, 0, 0], ik: { rArm: [-0.1, -0.34, 0.56, [-100, 0, 0], [-1, -0.4, -0.5]] } },
   // looking ahead, something held to the chest in the left hand, the right arm free to swing
   runHold: { label: "Correndo, segurando algo numa mão", lThigh: [35, 0, 0], rThigh: [-60, 0, 0], lShin: [70, 0, 0], rShin: [45, 0, 0], rUpper: [40, 0, -8], rFore: [-75, 0, 0],
     spine: [12, 0, 0], chest: [6, 0, 0], neck: [-10, 0, 0], head: [-6, 0, 0], hips: [0, -0.07, 0], ik: { lArm: [0.07, -0.08, 0.2, [0, 0, -90], [1, -0.6, -0.4]] } },

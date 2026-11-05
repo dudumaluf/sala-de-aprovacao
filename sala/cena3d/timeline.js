@@ -5,7 +5,7 @@
 // state (cena3d.state.timeline), so undo, redo and the autosave cover it.
 // A set gets one when sets.js gives it a `cut`: { name, shots: [{ cam, title, in, out, ride, shake, end, ease, view }],
 // figs: { name: [[t, pose preset, where, facing, ease]] }, device: [[t, led, ry]], lines: [[in, out, who, text]],
-// audio: { option }, env: { t0, dt, v }, card }. A device key may also turn the product where it stands (ry, degrees).
+// audio: { option }, env: { t0, dt, v }, card }. A device key may also turn the product where it stands (ry, degrees) or place it ([x, y, z]).
 // A figure key may carry where the figure stands ([x, y, z]) and its facing (degrees): a figure that covers ground in a
 // moving pose (running, walking, a bear's gallop) strides by the meters it covers (rig.js gait). A shot's `ease` is its
 // camera's ("linear" follows someone running at an even pace); its `view` lets it see farther ({ near, far, fog: [near,
@@ -103,7 +103,7 @@ export function createTimeline(H) {
       const ci = E.set.cast.find((x) => x.name === name);
       if (ci) figs[`${ci.item}:${ci.name}`] = list.map(([t, preset, pos, ry, ease]) => ({ t, preset, ...(pos ? { pos } : {}), ...(ry != null ? { ry } : {}), ease: ease || "suave" }));
     }
-    for (const [t, led, ry] of c.device || []) dev.push(ry == null ? { t, led } : { t, led, ry });
+    for (const [t, led, ry, at] of c.device || []) dev.push({ t, led, ...(ry != null ? { ry } : {}), ...(at ? { at } : {}) });
     if (E.set.motion) move.push({ t: c.shots[0].in, amp: 1, ease: "suave" });
     return { v: 1, shots: c.shots.map((s) => ({ cam: s.cam, title: s.title || s.cam, in: s.in, out: s.out, ride: !!s.ride, ...(s.view ? { view: s.view } : {}) })), cam, figs, dev, move };
   }
@@ -319,11 +319,13 @@ export function createTimeline(H) {
     if (!d) return;
     const ks = sorted(T.data.dev || []);
     if (ks.length) {
-      let k = ks[0], ry = ks.find((x) => x.ry != null)?.ry ?? null;
-      for (const x of ks) if (x.t <= t + EPS) { k = x; if (x.ry != null) ry = x.ry; }
+      let k = ks[0], ry = ks.find((x) => x.ry != null)?.ry ?? null, at = ks.find((x) => x.at)?.at ?? null;
+      for (const x of ks) if (x.t <= t + EPS) { k = x; if (x.ry != null) ry = x.ry; if (x.at) at = x.at; }
       if (k.led && d.userData.led !== k.led) H.setLed(d, k.led);
-      // a key may also turn it where it stands (where its light faces), from that key on
+      // a key may also turn it where it stands (where its light faces) or set it somewhere else (at, when it stands
+      // on its own), from that key on
       if (ry != null) d.rotation.y = ry * D2R;
+      if (at && !d.userData.attach) d.position.fromArray(at);
     }
     const sw = E.set.device?.swing;
     if (sw && !d.userData.attach) {
