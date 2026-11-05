@@ -339,6 +339,15 @@ const lettersOf = (it) => new Map(wkOpts(it.id).map((o, i) => [o, letter(i)]));
 const peeked = (id) => TEAM && S.peek.has(id);
 const showDrop = (o) => S.ov.dropped || peeked(o.item_id);
 const isAngle = (o) => o.model === "Blocking 3D";
+// a blocking video says which Cena 3D it came from: the export (cena3d/video.js) ends its reasoning with "cena3d: <location
+// item> scene <n> cam <camera> alt <version>". Its 3D icon opens that set on that camera, to change it and export again
+const src3d = (o) => {
+  const m = TEAM && o?.mime?.startsWith("video/") && /^Blocking 3D/.test(o.model || "") && /(?:^|\n)cena3d: ([0-9a-f-]{36}) scene (\d+)(?: cam (\S+))?/.exec(o.reasoning || "");
+  if (!m) return "";
+  const loc = itemOf(m[1]);
+  return `${sceneHref(loc?.round_id || "a1", loc?.scene ?? +m[2], m[1])}/cena3d/${encodeURIComponent(m[3] || "-")}`;
+};
+const BTN3D_T = "Abrir a Cena 3D de onde este blocking veio, pra mudar e exportar de novo";
 const shownOpts = (id) => optsOf(id).filter((o) => !isAngle(o) && (showDrop(o) || !dropped(o)) && inView(o)).sort((a, b) => verOf(b) - verOf(a));
 // versions: inside a delivery round, each round of client feedback is a version (v1 the first delivery, v2 the answer
 // to the first feedback…); the team's own redos are just options. New uploads take the round's version. The team
@@ -968,7 +977,7 @@ function galeriaPage() {
   return head("Galeria", "Carregando…", "") + '<div class="main-body"></div>';
 }
 const galCtx = () => ({ ...estCtx(), studioCtx: estCtx, Estudio, render, head, run, dlName, zipDownload, openFile, approvedOpts, isPick, reviewOf, offWK, stackRoot,
-  sceneHref, fmtTime, KINDS, STAR, ICO, CL, DA_CL, TZ, motionLabel: MOTION ? motionLabel() : "", isMotion: motionOpt });
+  sceneHref, src3d, fmtTime, KINDS, STAR, ICO, CL, DA_CL, TZ, motionLabel: MOTION ? motionLabel() : "", isMotion: motionOpt });
 const drawsOf = (o) => S.annotations.filter((a) => a.option_id === o.id && !a.resolved).length;
 // timecoded comments on a video (the animatic): each keeps its video (option_id) and the second it was written at (t_sec)
 const tcOf = (o) => S.comments.filter((c) => c.option_id === o.id && c.t_sec != null).sort((a, b) => a.t_sec - b.t_sec);
@@ -1694,7 +1703,7 @@ function optFace(it, o, { size, by = false, act = "ov-open", del = false, plain 
   const meta = [by && o.created_by ? esc(o.created_by.split(" ")[0]) : "", TEAM && roundVers(it.round_id).length > 1 ? `v${verOf(o)}` : ""].filter(Boolean).join(" · ");
   const bl = `<span class="hz-bl"><button class="hz-chip ${nc ? "" : "hz-hover"}" data-act="drawer" data-id="${it.id}" title="${nc ? plural(nc, "comentário", "comentários") : "Comentar"}" aria-label="Comentários">${CHAT}${nc || ""}</button>${nd ? `<b class="hz-chip" title="${plural(nd, "desenho", "desenhos")} em aberto">${Estudio.ICONS.pen}${nd}</b>` : ""}${meta ? `<span class="hz-meta" title="Quem fez · versão">${meta}</span>` : ""}${rv.verdict === "drop" && rv.note ? `<span class="hz-meta" title="${dropWhy(rv)}">${esc(rv.note)}</span>` : ""}</span>`;
   // each file's own ✦: an image goes into the studio as the base; a video opens the menu of the models that edit a video
-  const br = tools ? `<div class="hz-br">${TEAM && AI ? (o.mime.startsWith("video/") ? veditBtn(o) : `<button data-act="estudio" data-id="${o.id}" title="Editar com IA: esta imagem é a base" aria-label="Editar com IA">${Estudio.ICONS.spark}</button>`) : ""}${vsCan(o) ? `<button data-act="vs-open" data-id="${it.id}" data-i="${i}" title="${blockOf(o) ? "Comparar com o blocking 3D" : "Comparar com a versão anterior"}" aria-label="Comparar">${ICON.vs}</button>` : ""}<button data-act="download" data-id="${o.id}" title="Baixar o original" aria-label="Baixar">${ICO.down}</button></div>` : "";
+  const br = tools ? `<div class="hz-br">${TEAM && AI ? (o.mime.startsWith("video/") ? veditBtn(o) : `<button data-act="estudio" data-id="${o.id}" title="Editar com IA: esta imagem é a base" aria-label="Editar com IA">${Estudio.ICONS.spark}</button>`) : ""}${vsCan(o) ? `<button data-act="vs-open" data-id="${it.id}" data-i="${i}" title="${blockOf(o) ? "Comparar com o blocking 3D" : "Comparar com a versão anterior"}" aria-label="Comparar">${ICON.vs}</button>` : ""}${src3d(o) ? `<button data-act="open-3d" data-id="${o.id}" title="${BTN3D_T}" aria-label="Abrir a Cena 3D">${CUBE}</button>` : ""}<button data-act="download" data-id="${o.id}" title="Baixar o original" aria-label="Baixar">${ICO.down}</button></div>` : "";
   return `<button class="hero-img" data-act="${act}" data-id="${it.id}" data-i="${i}" aria-label="Abrir ${esc(it.title)} ${lab} grande"${off && !dropped(o) ? ' title="Fora do que o cliente vê nesta versão"' : ""}>${media(o, size)}${vplayBtn(o)}</button>
     ${tr}${judge}${bl}${br}${verPill(o)}`;
 }
@@ -2378,7 +2387,7 @@ function slotHero(it) {
 // scene's kit (the approved people, place and product, and the shot's text); 3D opens a shot's blocking
 const shotBtn = (it, o = null) => {
   if (!TEAM) return "";
-  const l3d = shot3d(it), empty = !optsOf(it.id).length;
+  const l3d = shot3d(it), s3d = !l3d && o ? src3d(o) : "", empty = !optsOf(it.id).length;
   const blk = empty ? blockOfShot(it) : null;
   // a card with a kit (Guardar no card, in the studio): its ✦ opens the studio with it, whatever the card shows
   const ai = !AI ? "" : S.kits?.has(it.id) ? `<button class="ibtn on" data-act="estudio-kit" data-item="${it.id}" title="Criar com IA com o kit deste card: as referências, o prompt e o modelo guardados" aria-label="Criar com IA com o kit do card">${Estudio.ICONS.spark}</button>`
@@ -2386,7 +2395,8 @@ const shotBtn = (it, o = null) => {
     : o ? veditBtn(o, "ibtn")
     : blk ? `<button class="ibtn" data-act="estudio" data-id="${blk.id}" title="Render do blocking deste plano: o blocking é a base (o ✕ dela vira Criar com o kit)" aria-label="Render do blocking">${Estudio.ICONS.spark}</button>`
     : empty ? `<button class="ibtn" data-act="estudio-criar" data-round="${it.round_id}" data-scene="${it.scene}" data-item="${it.id}" title="Criar com IA: já vem com o elenco, a locação e o produto aprovados da cena${it.kind === "plano" ? " e o texto deste plano" : ""}" aria-label="Criar com IA">${Estudio.ICONS.spark}</button>` : "";
-  return ai + (l3d ? `<a class="ibtn ibtn-3d" href="${l3d}" title="Blocking 3D deste plano${it.variants?.shot ? ", já na câmera dele" : ""}" aria-label="Blocking 3D deste plano">3D</a>` : "");
+  return ai + (l3d ? `<a class="ibtn ibtn-3d" href="${l3d}" title="Blocking 3D deste plano${it.variants?.shot ? ", já na câmera dele" : ""}" aria-label="Blocking 3D deste plano">3D</a>`
+    : s3d ? `<a class="ibtn ibtn-3d" href="${s3d}" title="${BTN3D_T}" aria-label="Abrir a Cena 3D de origem">3D</a>` : "");
 };
 // the card of every page of cards (team), Visão geral included: there it names its scene, and the lightbox walks on
 // through the next cards
@@ -3418,6 +3428,7 @@ function teamLightbox(it, opts, card, i) {
   const more = `${hist.length > 1 && o.id !== face.id && !adj ? `<button class="btn small" data-act="vpick" data-id="${root.id}" data-v="${o.id}" title="O card passa a mostrar esta versão">Tornar atual</button>` : ""}`
     + `${o.mime.startsWith("video/") ? "" : `<button class="lb-info ${adj ? "on" : ""}" data-act="lbx" aria-pressed="${adj}" title="${adj ? "Sair do ajuste sem salvar (Esc)" : "Ajustar sem IA: espelhar, girar ou mudar a escala, e salvar como versão nova"}" aria-label="Ajustar">${Estudio.ICONS.crop}</button>`}`
     + `${can ? `<button class="lb-info ${vs ? "on" : ""}" data-act="vs-toggle" aria-pressed="${!!vs}" title="${vs ? "Sair da comparação" : "Comparar com a versão anterior"} (C)" aria-label="Comparar com a versão anterior">${ICON.vs}</button>` : ""}`
+    + `${!adj && src3d(o) ? `<button class="lb-info" data-act="open-3d" data-id="${o.id}" title="${BTN3D_T}" aria-label="Abrir a Cena 3D">${CUBE}</button>` : ""}`
     + `${adj ? "" : `<button class="lb-info" data-act="copy-link" data-id="${it.id}" data-opt="${o.id}" title="Copiar o link ${o.mime.startsWith("video/") ? "deste vídeo, nesta versão e neste segundo" : "desta imagem, nesta versão"}" aria-label="Copiar o link">${LINK_ICO}</button>`}`
     + `${adj ? "" : (() => { const n = lbCmtCount(it, o); return `<button class="lb-info lb-cmtb ${S.lbCmt ? "on" : ""}" data-act="lb-cmt" aria-pressed="${!!S.lbCmt}" title="${S.lbCmt ? "Esconder" : "Mostrar"} os comentários${n ? ` (${n})` : ""}" aria-label="Comentários">${CHAT}${n ? `<b class="lb-n">${n}</b>` : ""}</button>`; })()}`;
   const tools = lbTools(S.lbCmt && !adj).replace('<span class="lb-tools">', `<span class="lb-tools">${more}`);
@@ -3791,6 +3802,7 @@ const ACTS = {
   reopen(el) { decide(el.dataset.id, null, "pending", `Reaberto para ${A_CL}`); },
   zoom(el) { S.lightbox = { id: el.dataset.id, i: +el.dataset.i }; render(true); },
   "lb-close"() { S.lbx = null; S.lightbox = S.lightbox?.back || null; if (!S.lightbox) S.infoOff = true; render(true); },
+  "open-3d"(el) { const h = src3d(optById(el.dataset.id)); if (!h) return; S.lbx = null; S.lightbox = null; S.infoOff = true; location.hash = h; },
   // the ver grande's history: a version picked in the strip shows (the card keeps its own until Tornar atual)
   "lb-ver"(el) { if (!S.lightbox) return; S.lightbox.ver = el.dataset.v; S.lbx = null; render(true); },
   // Ajustar (sem IA): on and off, its buttons, and Salvar versão

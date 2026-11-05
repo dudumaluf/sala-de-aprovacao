@@ -550,6 +550,7 @@ function menuItems(list) {
   const items = [
     one && ["open", one.f ? "Abrir em Materiais" : one.angle ? "Abrir na Cena 3D" : "Abrir no card", "open"],
     one && ["view", "Ver grande", "view", "Espaço"],
+    one?.o && C.src3d?.(one.o) && ["open3d", "Abrir a Cena 3D de origem", "open"],
     C.ai && ["edit", pics.length > 14 ? "Editar com IA · as 14 primeiras" : pics.length > 1 ? `Editar com IA · ${pics.length - 1} como referência` : "Editar com IA", "spark", "", !pics.length && "Só imagens"],
     "-",
     ["group", "Agrupar…", "group"],
@@ -695,6 +696,7 @@ function act(v) {
   if (v.startsWith("place:")) { const x = entryOf(v.slice(6)); if (x) { closeLayers(); openCard(x); } return; }
   const run = {
     open: () => openCard(list[0]),
+    open3d: () => { const h = C.src3d?.(list[0].o); if (h) { closeLayers(); location.hash = h; } },
     view: () => openView(list[0]?.k),
     edit: () => editAI(list),
     group: () => groupDialog(list),
