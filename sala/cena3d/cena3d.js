@@ -323,6 +323,7 @@ function startLoop() {
 function stopLoop() { E.loop = false; flush(); }
 function draw() {
   sizeHandles();
+  E.sky?.position.copy(E.camera.position);
   E.renderer.render(E.scene, E.camera);
   tags();
 }
@@ -426,7 +427,9 @@ function env(e) {
     E.scene.add(p);
     E.points.push(p);
   }
-  // the sky seen through windows and doors: a dome from the horizon color up to the zenith color, unlit, no fog
+  // the sky seen through windows and doors: a dome from the horizon color up to the zenith color, unlit, no fog; it goes
+  // where the camera goes (draw, the timeline), so a drone far over the set still has it around
+  E.sky = null;
   if (e.sky) {
     const geo = new THREE.SphereGeometry(600, 32, 16);
     const col = [], top = new THREE.Color(e.sky[0]), hor = new THREE.Color(e.sky[1]), low = new THREE.Color(e.sky[2] || e.sky[1]);
@@ -441,6 +444,7 @@ function env(e) {
     dome.renderOrder = -1;
     E.scene.add(dome);
     E.points.push(dome);
+    E.sky = dome;
   }
   E.renderer.toneMappingExposure = e.exposure || 1;
 }
@@ -466,7 +470,7 @@ function addFigure(c) {
   const kind = c.kind || "human";
   // the wardrobe comes from the set (sets.js cast `look`), never from a saved state, so a set's look reaches old states
   const look = E.set?.cast?.find((s) => `${s.item}:${s.name}` === c.key)?.look || null;
-  const fig = kind === "human" ? makeHuman({ height: c.height || 1.75, color: c.color, build: c.build || "m", name: c.name, look }) : makeAnimal(kind, { name: c.name });
+  const fig = kind === "human" ? makeHuman({ height: c.height || 1.75, color: c.color, build: c.build || "m", name: c.name, look }) : makeAnimal(kind, { name: c.name, color: look?.fur });
   Object.assign(fig, { key: c.key, name: c.name, itemTitle: c.item || "", visible: c.visible !== false });
   fig.root.position.set(...(c.pos || c.at || [0, 0, 0]));
   fig.root.rotation.y = (c.ry || 0) * D2R;

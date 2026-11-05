@@ -69,6 +69,9 @@ export const POSES = {
   cut: { label: "Agachado, mexendo em algo no chão", hips: [0, -0.5, -0.05], lThigh: [-115, 0, 12], rThigh: [-115, 0, -12], lShin: [125, 0, 0], rShin: [125, 0, 0], spine: [30, 0, 0], chest: [15, 0, 0],
     lUpper: [-60, 0, 8], lFore: [-40, 0, 0], neck: [8, 0, 0], head: [10, 0, 0], ik: { rArm: [-0.1, -0.3, 0.42, [-100, 0, 0], [-1, -0.4, -0.5]] } },
   headset: { label: "Mão no headset", ...ARMS_DOWN, head: [2, -8, 4], ik: { rArm: [-0.15, 0.32, 0, [0, 0, 170], [-1, -0.2, 0.1]] } },
+  // looking ahead, something held to the chest in the left hand, the right arm free to swing
+  runHold: { label: "Correndo, segurando algo numa mão", lThigh: [35, 0, 0], rThigh: [-60, 0, 0], lShin: [70, 0, 0], rShin: [45, 0, 0], rUpper: [40, 0, -8], rFore: [-75, 0, 0],
+    spine: [12, 0, 0], chest: [6, 0, 0], neck: [-10, 0, 0], head: [-6, 0, 0], hips: [0, -0.07, 0], ik: { lArm: [0.07, -0.08, 0.2, [0, 0, -90], [1, -0.6, -0.4]] } },
 };
 const POSE_BONES = BONES.map(([n]) => n);
 
@@ -289,6 +292,69 @@ export function setPose(fig, p) {
     L.target.fromArray(l.t); L.rot.fromArray(l.r); L.poleDir.fromArray(l.p).normalize();
   }
   solve(fig);
+}
+
+// ---------- the stride: a run or a walk laid over the pose (the timeline drives it) ----------
+// The presets that cover ground, with the length of a full stride (left and right once, meters). The timeline turns the
+// meters a figure covers between its keys into the stride's phase, so the feet keep pace with the ground.
+export const GAIT = { walk: { cycle: 1.5, walk: true }, run: { cycle: 3.4 }, runDevice: { cycle: 3.4 }, runHold: { cycle: 3.4 }, runBack: { cycle: 3.4 } };
+const ANIMAL_GAIT = { bear: { run: { cycle: 2.6 }, four: { cycle: 1.6, walk: true } } };
+export const gaitOf = (fig) => ((fig.kind === "human" ? GAIT : ANIMAL_GAIT[fig.kind]) || {})[fig.preset] || null;
+const lerp = THREE.MathUtils.lerp;
+// phase: strides covered (any real; 1 = a full stride); amt 0–1: how much of the stride over the pose (it fades in
+// with the speed). For a human: the feet (stance on the ground, then the swing with the heel up), the arms the preset
+// leaves free (no `ik`) swinging against the legs, the pelvis bobbing twice a stride and the hips turning a little.
+export function gait(fig, phase, amt = 1) {
+  const g = gaitOf(fig);
+  if (!g || !(amt > 0)) return;
+  amt = Math.min(1, amt);
+  const w = (((phase % 1) + 1) % 1) * 2 * Math.PI;
+  if (fig.kind !== "human") return animalGait(fig, w, amt, g);
+  const b = fig.bones, held = POSES[fig.preset]?.ik || {};
+  const S = g.walk ? { st: 0.6, A: 0.27, H: 0.11, bob: 0.015, turn: 0.07 } : { st: 0.36, A: 0.34, H: 0.34, bob: 0.03, turn: 0.1 };
+  b.hips.position.y -= amt * S.bob * (1 + Math.cos(2 * (w - S.st * Math.PI))) / 2; // lowest as a foot takes the weight
+  b.hips.rotateY(amt * S.turn * Math.cos(w));
+  b.chest.rotateY(-amt * S.turn * 1.4 * Math.cos(w));
+  const swing = {};
+  for (const [k, x, ph] of [["lLeg", 0.11, w], ["rLeg", -0.11, w + Math.PI]]) {
+    const L = fig.limbs[k], u = (ph / (2 * Math.PI)) % 1;
+    let z, y, pitch;
+    if (u < S.st) { const t = u / S.st; z = S.A - 2 * S.A * t; y = 0.06; pitch = lerp(-8, 25, t); } // on the ground, going back
+    else { const t = (u - S.st) / (1 - S.st); z = -S.A + S.A * (1 - Math.cos(Math.PI * t)); y = 0.06 + S.H * Math.sin(Math.PI * Math.pow(t, 0.75)); pitch = lerp(40, -10, t); }
+    swing[k[0]] = -z / S.A; // the arm on the same side swings against the leg
+    L.target.lerp(new THREE.Vector3(x, y, z), amt);
+    L.rot.slerp(new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch * D2R, 0, 0)), amt);
+    L.poleDir.lerp(V([x > 0 ? 0.08 : -0.08, 0, 1]).normalize(), amt).normalize();
+  }
+  for (const [k, sd] of [["lArm", 1], ["rArm", -1]]) {
+    if (held[k]) continue;
+    const L = fig.limbs[k], t = (swing[k[0]] + 1) / 2; // 0 back, 1 forward
+    const back = g.walk ? [0.2, -0.46, -0.1] : [0.21, -0.3, -0.13], front = g.walk ? [0.2, -0.42, 0.13] : [0.16, -0.12, 0.27];
+    L.target.lerp(new THREE.Vector3(sd * lerp(back[0], front[0], t), lerp(back[1], front[1], t), lerp(back[2], front[2], t)), amt);
+    L.poleDir.lerp(V([sd * 0.45, -0.25, -1]).normalize(), amt).normalize();
+  }
+  solve(fig);
+}
+// four legs: a gallop (the front pair reaches while the hind pair pushes, then both gather under the body) or a walk
+function animalGait(fig, w, amt, g) {
+  const J = fig.joints, c = Math.cos, s = Math.sin, k = g.walk ? 0.5 : 1;
+  const to = (n, deg) => { const o = J[n]; if (o) o.rotation.x = lerp(o.rotation.x, deg * D2R, amt); };
+  for (const [n, ph] of [["fl", 0], ["fr", g.walk ? Math.PI : 0.4]]) {
+    const a = w + ph;
+    to(n, -(4 + 32 * k * c(a)));
+    to(`${n}l`, 8 + 55 * k * Math.max(0, -s(a))); // the lower leg folds while it swings forward
+  }
+  for (const [n, ph] of [["hl", g.walk ? Math.PI / 2 : 0.2], ["hr", g.walk ? -Math.PI / 2 : 0.6]]) {
+    const a = w + ph;
+    to(n, 4 + 32 * k * c(a));
+    to(`${n}l`, -(8 + 55 * k * Math.max(0, s(a))));
+  }
+  // the body level and low, so the paws reach the ground, rocking and bobbing with the stride
+  if (J.body) {
+    J.body.rotation.x = lerp(J.body.rotation.x, k * 5 * D2R * s(w), amt);
+    J.body.position.y = lerp(J.body.position.y, fig.bodyY - 0.12 * k + k * 0.06 * (1 - c(2 * w)) / 2, amt);
+  }
+  if (J.head) J.head.rotation.x -= amt * k * 5 * D2R * s(w);
 }
 // one line for the prompt and the panel: "Sentado, segurando (celular, carta)" (+ "ajustado" once moved by hand)
 export const poseLabel = (fig) => (fig.kind === "human" ? POSES : ANIMAL_POSES[fig.kind])[fig.preset]?.label || "";

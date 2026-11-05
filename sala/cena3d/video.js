@@ -62,7 +62,9 @@ async function render(E, H, plan, cast, progress) {
   const T = E.tl;
   const keep = { t: T.t, hold: T.hold, preset: E.camPreset, helpers: E.helpers.visible, pos: E.camera.position.clone(),
     q: E.camera.quaternion.clone(), fov: E.camera.fov, target: E.orbit.target.clone() };
-  const firsts = new Map(), seen = new Map();
+  const firsts = new Map(), seen = new Map(), track = new Map();
+  // where each figure stands at a shot's first and last frames (a camera that runs with someone tracks them)
+  const stand = () => Object.fromEntries(E.figs.map((f) => [f.name, f.root.getWorldPosition(new THREE.Vector3()).toArray()]));
   T.pause();
   E.helpers.visible = false;
   // without the cast: the figures and what they carry are out of the picture while it renders
@@ -79,6 +81,8 @@ async function render(E, H, plan, cast, progress) {
       cam.position.copy(E.camera.position);
       cam.quaternion.copy(E.camera.quaternion);
       cam.fov = E.camera.fov;
+      cam.near = E.camera.near; // a shot may see farther (timeline view)
+      cam.far = E.camera.far;
       cam.updateProjectionMatrix();
       cam.updateMatrixWorld(true);
       xr.render(E.scene, cam);
@@ -89,6 +93,8 @@ async function render(E, H, plan, cast, progress) {
         seen.set(fr.s, was);
       }
       if (fr.first) firsts.set(fr.s, new Promise((ok) => xr.domElement.toBlob(ok, "image/png"))); // the bitmap is taken now
+      if (fr.first) track.set(fr.s, { a: stand(), z: null });
+      if (i === N - 1 || plan.frames[i + 1].s !== fr.s) track.get(fr.s).z = stand();
       const vf = new VideoFrame(xr.domElement, { timestamp: Math.round((i * 1e6) / FPS), duration: Math.round(1e6 / FPS) });
       enc.encode(vf, { keyFrame: fr.first || i % FPS === 0 });
       vf.close();
@@ -100,7 +106,7 @@ async function render(E, H, plan, cast, progress) {
     muxer.finalize();
     const frames = new Map();
     for (const [s, p] of firsts) frames.set(s, await p);
-    return { video: new Blob([muxer.target.buffer], { type: "video/mp4" }), frames, seen, size: [W, Hh] };
+    return { video: new Blob([muxer.target.buffer], { type: "video/mp4" }), frames, seen, track, size: [W, Hh] };
   } finally {
     if (enc.state !== "closed") enc.close();
     xr.dispose();
@@ -111,6 +117,7 @@ async function render(E, H, plan, cast, progress) {
     if (keep.hold) T.seek(keep.t);
     else {
       T.seek(keep.t, true);
+      T.view?.(null); // the editor's own near and far planes and the set's fog
       E.camera.position.copy(keep.pos);
       E.camera.quaternion.copy(keep.q);
       E.camera.fov = keep.fov;
@@ -213,13 +220,33 @@ function moveOf(a, z) {
   if (Math.round(z.lens) !== Math.round(a.lens)) w.push(`zooms ${z.lens > a.lens ? "in" : "out"} ${Math.round(a.lens)}→${Math.round(z.lens)}mm`);
   return w.length ? w.join(", ") : "locked off";
 }
+// A camera that keeps pace with someone (it covers about the ground they cover) tracks them: its move is told against
+// them ("moves with the bear, rises 1 m, comes round to its side"), else in the set's terms; a shot through more than two
+// keys is one continuous move.
+function moveWith(a, z, tr, n) {
+  const cam = new THREE.Vector3(...z.pos).sub(new THREE.Vector3(...a.pos)), cont = n > 2 ? " (one continuous move, no cut)" : "";
+  let best = null;
+  if (tr?.a && tr?.z && cam.length() > 1) {
+    for (const name of Object.keys(tr.a)) {
+      const d = new THREE.Vector3(...tr.z[name]).sub(new THREE.Vector3(...tr.a[name]));
+      const off = cam.clone().sub(d).length();
+      if (d.length() > 1 && off < 0.45 * cam.length() && (!best || off < best.off)) best = { name, off, A: tr.a[name], Z: tr.z[name] };
+    }
+  }
+  if (!best) return moveOf(a, z) + cont;
+  const rel = (k, o) => ({ ...k, pos: k.pos.map((x, i) => x - o[i]), target: k.target.map((x, i) => x - o[i]) });
+  const m = moveOf(rel(a, best.A), rel(z, best.Z));
+  return `moves with ${best.name} at the same pace (tracking)${m === "locked off" ? ", keeping the framing" : `, and against them: ${m}`}${cont}`;
+}
 // a color as a word a prompt can use ("dark orange")
 function colorWord(hex) {
   if (!hex) return "";
   const hsl = {};
   new THREE.Color(hex).getHSL(hsl, THREE.SRGBColorSpace); // as the hex reads, not in the renderer's linear space
   const { h, s, l } = hsl;
-  if (l < 0.1) return "black";
+  if (l < 0.18) return "black";
+  const deg0 = h * 360;
+  if (deg0 >= 10 && deg0 <= 45 && s >= 0.16 && s < 0.5 && l < 0.45) return l < 0.26 ? "dark brown" : "brown";
   if (s < 0.16) return l > 0.88 ? "white" : l < 0.3 ? "dark grey" : l < 0.68 ? "grey" : "light grey";
   const deg = h * 360, name = [[15, "red"], [42, "orange"], [68, "yellow"], [160, "green"], [195, "teal"], [255, "blue"], [290, "purple"], [335, "pink"], [361, "red"]].find(([m]) => deg <= m)[1];
   return `${l < 0.36 ? "dark " : l > 0.72 ? "light " : ""}${name}`;
@@ -229,7 +256,7 @@ function castColors(E) {
   return E.figs.filter((f) => f.visible !== false && f.root.visible).map((f) => {
     const look = E.set.cast?.find((c) => `${c.item}:${c.name}` === f.key)?.look;
     const flat = typeof f.color === "number" ? `#${f.color.toString(16).padStart(6, "0")}` : f.color;
-    const parts = look ? [["top", "top"], ["hat", "cap"], ["bottom", "trousers"], ["beard", "beard"]].filter(([k]) => look[k]).map(([k, w]) => `${colorWord(look[k])} ${w}`) : [`${colorWord(flat) || "flat"} figure`];
+    const parts = look ? [["top", "top"], ["hat", "cap"], ["bottom", "trousers"], ["beard", "beard"], ["fur", "fur"]].filter(([k]) => look[k]).map(([k, w]) => `${colorWord(look[k])} ${w}`) : [`${colorWord(flat) || "flat"} figure`];
     // and what the figure carries or wears (a hat, a phone), by its own color
     const carries = (E.props || []).filter((p) => p.obj.visible && p.spec?.attach && (([c]) => c && `${c.item}:${c.name}` === f.key)([E.set.cast?.[p.spec.attach.cast]]))
       .map((p) => `${colorWord(p.spec.color)} ${String(p.spec.name || p.key).toLowerCase()}`);
@@ -248,7 +275,7 @@ function summary(E, H, plan, out, files, withCast) {
     const who = [...(out.seen.get(s.i)?.values() || [])].map((x) => ({ name: x.name, kind: x.kind, size: x.h, face: x.face, facing: x.facing, cut: x.cut, seen: x.seen }));
     return { n: s.i + 1, title: s.title, cam: s.cam, note: p?.title || "", cut_in: s.in, cut_out: s.out, video_in: vs(s.f0), video_out: vs(s.f1),
       lens_mm: lens, hfov_deg: lens.map((mm) => (mm ? hfov(mm) : null)), height_m: height, keys: k.length,
-      move: a ? moveOf(a, z) : "locked off", on_board: !!s.ride, handheld: n2(k.reduce((m, x) => Math.max(m, x.shake || 0), 0)), in_frame: who,
+      move: a ? moveWith(a, z, out.track?.get(s.i), k.length) : "locked off", on_board: !!s.ride, handheld: n2(k.reduce((m, x) => Math.max(m, x.shake || 0), 0)), in_frame: who,
       first_frame: files.frames.get(s.i) || null };
   });
   const led = (plan.dev || []).map((k) => ({ led: k.led, label: ledName(k.led), cut: n2(k.t), video: n2(Math.max(0, k.t - t0)) })).filter((k) => k.cut <= plan.b);

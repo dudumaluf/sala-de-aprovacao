@@ -3,13 +3,17 @@
 // rocking). A key is what the 3D shows at that second of the cut; between two keys the values ease (suave), run straight
 // (linear) or hold (segura). At a cut the camera jumps to the next shot's keys. The timeline lives in the set's saved
 // state (cena3d.state.timeline), so undo, redo and the autosave cover it.
-// A set gets one when sets.js gives it a `cut`: { name, shots: [{ cam, title, in, out, ride, shake, end }], figs: { name:
-// [[t, pose preset]] }, device: [[t, led, ry]], lines: [[in, out, who, text]], audio: { option }, env: { t0, dt, v },
-// card }. A device key may also turn the product where it stands (ry, degrees). `motion` makes the set rock as a
-// whole (everything but the meshes marked userData.still, the sea), cameras of shots marked `ride` riding with it;
-// `device.swing` lets the product swing on its hook as the set rocks.
+// A set gets one when sets.js gives it a `cut`: { name, shots: [{ cam, title, in, out, ride, shake, end, ease, view }],
+// figs: { name: [[t, pose preset, where, facing, ease]] }, device: [[t, led, ry]], lines: [[in, out, who, text]],
+// audio: { option }, env: { t0, dt, v }, card }. A device key may also turn the product where it stands (ry, degrees).
+// A figure key may carry where the figure stands ([x, y, z]) and its facing (degrees): a figure that covers ground in a
+// moving pose (running, walking, a bear's gallop) strides by the meters it covers (rig.js gait). A shot's `ease` is its
+// camera's ("linear" follows someone running at an even pace); its `view` lets it see farther ({ near, far, fog: [near,
+// far] }: a drone over the mountains). `motion` makes the set rock as a whole (everything but the meshes marked
+// userData.still, the sea), cameras of shots marked `ride` riding with it; `device.swing` lets the product swing on its
+// hook as the set rocks.
 import { THREE, D2R } from "./kit.js";
-import { poseOf, setPose, applyPreset, POSES } from "./rig.js";
+import { poseOf, setPose, applyPreset, POSES, gait, gaitOf } from "./rig.js";
 
 const EPS = 1e-3;
 const UP = new THREE.Vector3(0, 1, 0);
@@ -17,9 +21,26 @@ const v3 = (a) => new THREE.Vector3(...a);
 const r3 = (a, n = 3) => a.map((x) => +(+x).toFixed(n));
 const fmt = (t) => `${t.toFixed(1).replace(".", ",")} s`;
 const clamp = THREE.MathUtils.clamp;
-const EASES = [["suave", "Suave"], ["linear", "Linear"], ["segura", "Segura"]];
-// "suave" eases in and out (cubic), "linear" runs straight, "segura" holds the first key until the next one
-const easeOf = (e, u) => (e === "linear" ? u : e === "segura" ? 0 : u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2);
+const EASES = [["suave", "Suave"], ["linear", "Linear"], ["continua", "Contínua"], ["segura", "Segura"]];
+// "suave" eases in and out (cubic), "linear" runs straight, "segura" holds the first key until the next one;
+// "continua" (camera keys) flows through the keys without stopping at them (flow, below); elsewhere it runs straight
+const easeOf = (e, u) => (e === "linear" || e === "continua" ? u : e === "segura" ? 0 : u < 0.5 ? 4 * u * u * u : 1 - (-2 * u + 2) ** 3 / 2);
+// A continuous move through a shot's keys: on a segment that starts at a "continua" key, each value follows a curve
+// (cubic Hermite) whose speed at a key comes from its neighbors (from the one beside it at the shot's first and last
+// keys), so the camera passes the keys without braking; a key close to the last one makes it settle. The speed is
+// held to what the segment can take, so uneven keys don't loop back.
+function flow(ks, i, t, get) {
+  const a = ks[i], b = ks[i + 1], dt = Math.max(1e-6, b.t - a.t), u = clamp((t - a.t) / dt, 0, 1);
+  const P0 = get(a), P1 = get(b), span = Math.hypot(...P1.map((x, j) => x - P0[j]));
+  const tan = (k) => {
+    const p = ks[Math.max(0, k - 1)], n = ks[Math.min(ks.length - 1, k + 1)], m = get(n).map((x, j) => (x - get(p)[j]) / Math.max(1e-6, n.t - p.t));
+    const len = Math.hypot(...m), cap = (2.5 * span) / dt;
+    return len > cap ? m.map((x) => (x * cap) / len) : m;
+  };
+  const M0 = tan(i), M1 = tan(i + 1), u2 = u * u, u3 = u2 * u;
+  const h00 = 2 * u3 - 3 * u2 + 1, h10 = u3 - 2 * u2 + u, h01 = -2 * u3 + 3 * u2, h11 = u3 - u2;
+  return P0.map((x, j) => h00 * x + h10 * dt * M0[j] + h01 * P1[j] + h11 * dt * M1[j]);
+}
 const sorted = (ks) => [...ks].sort((a, b) => a.t - b.t);
 // the two keys around t and how far between them (eased); before the first and after the last, that key holds
 function around(ks, t) {
@@ -69,17 +90,22 @@ export function createTimeline(H) {
     c.shots.forEach((s, i) => {
       const p = E.set.cams.find((x) => x.id === s.cam);
       if (!p) return;
-      const e = s.end || {};
-      cam.push({ s: i, t: s.in, pos: p.pos, target: p.target, lens: p.lens, ease: "suave", shake: s.shake || 0 },
-        { s: i, t: s.out, pos: e.pos || p.pos, target: e.target || p.target, lens: e.lens || p.lens, ease: "suave", shake: s.shake || 0 });
+      const e = s.end || {}, ease = s.ease || "suave";
+      // a shot may bring its own keys, [t, pos, target, lens, ease, view, shake] (a continuous move through several framings)
+      if (s.keys?.length) {
+        for (const [t, pos, target, lens, ke, view, sh] of s.keys) cam.push({ s: i, t, pos, target, lens, ease: ke || ease, shake: sh ?? s.shake ?? 0, ...(view ? { view } : {}) });
+        return;
+      }
+      cam.push({ s: i, t: s.in, pos: p.pos, target: p.target, lens: p.lens, ease, shake: s.shake || 0 },
+        { s: i, t: s.out, pos: e.pos || p.pos, target: e.target || p.target, lens: e.lens || p.lens, ease, shake: s.shake || 0 });
     });
     for (const [name, list] of Object.entries(c.figs || {})) {
       const ci = E.set.cast.find((x) => x.name === name);
-      if (ci) figs[`${ci.item}:${ci.name}`] = list.map(([t, preset]) => ({ t, preset, ease: "suave" }));
+      if (ci) figs[`${ci.item}:${ci.name}`] = list.map(([t, preset, pos, ry, ease]) => ({ t, preset, ...(pos ? { pos } : {}), ...(ry != null ? { ry } : {}), ease: ease || "suave" }));
     }
     for (const [t, led, ry] of c.device || []) dev.push(ry == null ? { t, led } : { t, led, ry });
     if (E.set.motion) move.push({ t: c.shots[0].in, amp: 1, ease: "suave" });
-    return { v: 1, shots: c.shots.map((s) => ({ cam: s.cam, title: s.title || s.cam, in: s.in, out: s.out, ride: !!s.ride })), cam, figs, dev, move };
+    return { v: 1, shots: c.shots.map((s) => ({ cam: s.cam, title: s.title || s.cam, in: s.in, out: s.out, ride: !!s.ride, ...(s.view ? { view: s.view } : {}) })), cam, figs, dev, move };
   }
   const shots = () => T.data?.shots || [];
   const span = () => { const s = shots(); return s.length ? [s[0].in, s[s.length - 1].out] : [0, 1]; };
@@ -101,7 +127,7 @@ export function createTimeline(H) {
     T.render();
     if (T.touched) T.seek(T.t);
   };
-  T.reset = () => { T.pause(); T.data = null; T.sel = null; T.touched = false; T.hold = false; T.render(); };
+  T.reset = () => { T.pause(); T.data = null; T.sel = null; T.touched = false; T.hold = false; viewAt(null); T.render(); };
   // the scene's frames for a video (video.js): from the first shot's in to the last one's out on the fps grid, each frame
   // sampled at its middle (so a cut lands between two frames), with its shot, the shot's first and middle frames marked;
   // and each shot with its camera keys and its frames in the video
@@ -187,13 +213,21 @@ export function createTimeline(H) {
       if (!p) return;
       c = { pos: v3(p.pos), target: v3(p.target), fov: H.fovOf(p.lens), shake: 0 };
     } else {
-      const { a, b, u } = around(ks, t);
-      const pa = v3(a.pos), pb = v3(b.pos), A = aim(pa, v3(a.target)), B = aim(pb, v3(b.target));
-      const dp = B.pan - A.pan - Math.round((B.pan - A.pan) / (2 * Math.PI)) * 2 * Math.PI;
-      const pan = A.pan + dp * u, tilt = A.tilt + (B.tilt - A.tilt) * u, r = A.r + (B.r - A.r) * u;
-      const pos = pa.lerp(pb, u);
-      const target = new THREE.Vector3(Math.cos(tilt) * Math.sin(pan), Math.sin(tilt), Math.cos(tilt) * Math.cos(pan)).multiplyScalar(r).add(pos);
-      c = { pos, target, fov: H.fovOf(a.lens) + (H.fovOf(b.lens) - H.fovOf(a.lens)) * u, shake: (a.shake || 0) + ((b.shake || 0) - (a.shake || 0)) * u };
+      const { a, b, u } = around(ks, t), i = ks.indexOf(a), lin = a === b ? 0 : clamp((t - a.t) / Math.max(1e-6, b.t - a.t), 0, 1);
+      const shake = (a.shake || 0) + ((b.shake || 0) - (a.shake || 0)) * lin;
+      if (a !== b && a.ease === "continua") {
+        // flowing through the keys: where it stands, where it looks and the lens each on its own curve
+        const pos = v3(flow(ks, i, t, (k) => k.pos)), target = v3(flow(ks, i, t, (k) => k.target));
+        c = { pos, target, fov: flow(ks, i, t, (k) => [H.fovOf(k.lens)])[0], shake };
+      } else {
+        const pa = v3(a.pos), pb = v3(b.pos), A = aim(pa, v3(a.target)), B = aim(pb, v3(b.target));
+        const dp = B.pan - A.pan - Math.round((B.pan - A.pan) / (2 * Math.PI)) * 2 * Math.PI;
+        const pan = A.pan + dp * u, tilt = A.tilt + (B.tilt - A.tilt) * u, r = A.r + (B.r - A.r) * u;
+        const pos = pa.lerp(pb, u);
+        const target = new THREE.Vector3(Math.cos(tilt) * Math.sin(pan), Math.sin(tilt), Math.cos(tilt) * Math.cos(pan)).multiplyScalar(r).add(pos);
+        c = { pos, target, fov: H.fovOf(a.lens) + (H.fovOf(b.lens) - H.fovOf(a.lens)) * u, shake };
+      }
+      c.keys = { a, b, lin };
     }
     // a camera that rides the set (on board) keeps its framing of the deck: the horizon moves, not the cabin
     const ride = s.ride && E.deck;
@@ -211,9 +245,28 @@ export function createTimeline(H) {
       E.camera.rotateY(k.yaw * D2R); E.camera.rotateX(k.pitch * D2R); E.camera.rotateZ(k.roll * D2R);
     }
     E.camera.fov = c.fov;
+    viewAt(s, c.keys);
     E.camera.updateProjectionMatrix();
+    E.sky?.position.copy(E.camera.position);
     E.camPreset = s.cam;
     T.hold = true; // the editor's loop leaves the camera alone (no orbit.update) until someone drags it
+  }
+  // how far the shot sees: its own near and far planes and fog (`view`), the editor's and the set's otherwise; a camera
+  // key may carry its own view too, and between two keys it changes with the time (a crane from the trail up to the sky)
+  const VIEW = { near: E.camera.near, far: E.camera.far };
+  T.view = (s) => viewAt(s);
+  const _ca = new THREE.Color(), _cb = new THREE.Color();
+  function viewAt(s, w) {
+    const c = E.camera, f = E.scene.fog, e = E.set?.env?.fog;
+    const of = (v = {}, d) => ({ near: v.near ?? d.near, far: v.far ?? d.far, fn: v.fog?.[0] ?? d.fn, ff: v.fog?.[1] ?? d.ff, col: v.fog?.[2] || d.col });
+    const base = of(s?.view, { near: VIEW.near, far: VIEW.far, fn: e?.[1], ff: e?.[2], col: e?.[0] });
+    let r = base;
+    if (w && (w.a.view || w.b.view)) {
+      const A = of(w.a.view, base), B = of(w.b.view, base), L = (x, y) => x + (y - x) * w.lin;
+      r = { near: L(A.near, B.near), far: L(A.far, B.far), fn: L(A.fn, B.fn), ff: L(A.ff, B.ff), col: A.col && B.col ? "#" + _ca.set(A.col).lerp(_cb.set(B.col), w.lin).getHexString() : A.col };
+    }
+    if (c.near !== r.near || c.far !== r.far) { c.near = r.near; c.far = r.far; c.updateProjectionMatrix(); }
+    if (f && e) { f.near = r.fn; f.far = r.ff; f.color.set(r.col || e[0]); }
   }
   function ensurePose(f, k) {
     if (k.pose || !k.preset || f.kind !== "human") return;
@@ -227,10 +280,29 @@ export function createTimeline(H) {
     ks.forEach((k) => ensurePose(f, k));
     const { a, b, u } = around(ks, t);
     if (a.pose) setPose(f, u > 0 ? blendPose(a.pose, b.pose || a.pose, u) : a.pose);
+    else if (f.kind !== "human" && a.preset) applyPreset(f, u < 0.5 ? a.preset : b.preset || a.preset); // an animal: its preset
     if (a.pos && b.pos) f.root.position.fromArray(a.pos.map((x, i) => x + (b.pos[i] - x) * u));
     if (a.ry != null && b.ry != null) f.root.rotation.y = lerpAngle(a.ry, b.ry, u) * D2R;
     f.root.updateMatrixWorld(true);
+    stride(f, ks, t);
     H.fitProps?.(f);
+  }
+  // A figure covering ground in a moving pose strides: the phase is the meters covered over the stride's length, so the
+  // feet keep pace; it fades in with the speed. A jump faster than anyone runs (a cut to another place) doesn't count.
+  function stride(f, ks, t) {
+    const g = gaitOf(f);
+    if (!g) return;
+    let d = 0, v = 0;
+    for (let i = 0; i + 1 < ks.length && t >= ks[i].t; i++) {
+      const a = ks[i], b = ks[i + 1];
+      if (!a.pos || !b.pos) continue;
+      const len = Math.hypot(b.pos[0] - a.pos[0], b.pos[2] - a.pos[2]), dt = Math.max(1e-6, b.t - a.t);
+      if (len / dt > 25) continue;
+      if (t >= b.t) { d += len; continue; }
+      d += len * easeOf(a.ease, (t - a.t) / dt);
+      v = len / dt;
+    }
+    if (v > 0.2) { gait(f, d / g.cycle, v / (g.walk ? 1 : 3)); f.root.updateMatrixWorld(true); }
   }
   // the product: its light from the last key before t; its swing on the hook while the set rocks
   function swingRig(d, h) {
@@ -583,7 +655,7 @@ export function createTimeline(H) {
     return false;
   };
   // the editor took the camera back (a drag on the 3D): stop driving it
-  T.release = () => { T.hold = false; if (T.playing) T.pause(); };
+  T.release = () => { T.hold = false; if (T.playing) T.pause(); viewAt(null); }; // a drag takes the camera: the editor's view
   T.rest = rest;
   return T;
 }
