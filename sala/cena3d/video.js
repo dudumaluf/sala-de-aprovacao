@@ -238,6 +238,14 @@ function moveWith(a, z, tr, n) {
   const m = moveOf(rel(a, best.A), rel(z, best.Z));
   return `moves with ${best.name} at the same pace (tracking)${m === "locked off" ? ", keeping the framing" : `, and against them: ${m}`}${cont}`;
 }
+// Where the blocking came from, as one machine-readable line at the end of the option's reasoning, so the room can open
+// its Cena 3D again (change something, export again): "cena3d: <location item id> scene <n> cam <first shot's camera>"
+// and " alt <i>" when it is another version of the cut (sets.js alts)
+export const SOURCE_RE = /^cena3d: ([0-9a-f-]{36}) scene (\d+)(?: cam (\S+))?(?: alt (\d+))?$/m;
+function sourceLine(E, data) {
+  const cam = data.shots[0]?.cam, alt = E.tl?.state?.()?.alt;
+  return `cena3d: ${E.item.id} scene ${E.item.scene}${cam ? ` cam ${cam}` : ""}${alt ? ` alt ${alt}` : ""}`;
+}
 // a color as a word a prompt can use ("dark orange")
 function colorWord(hex) {
   if (!hex) return "";
@@ -332,7 +340,7 @@ async function save(E, H, plan, out, withCast) {
     item_id: card.id, path: v.path, preview_path: poster?.preview_path || null, thumb_path: poster?.thumb_path || null, mime: "video/mp4", name: vfile.name,
     created_by: ctx.myName(), version: V, model: H.MODEL, caption: `Cena 3D · ${(E.tl?.cut?.() || E.set.cut)?.name || "a cena"} · ${data.duration.toFixed(1).replace(".", ",")} s · ${withCast ? "com o elenco" : "sem o elenco"}`,
     prompt: text,
-    reasoning: `O blocking 3D da cena inteira, como a timeline está: ${data.shots.length} ${data.shots.length === 1 ? "plano" : "planos"}${data.cuts_at.length ? ", com os cortes secos nos segundos do corte" : ""}, ${withCast ? "com o elenco" : "sem o elenco (só o cenário e a câmera)"}, ${data.size.join("×")} a ${data.fps} fps, sem som. O resumo em JSON, com o primeiro quadro de cada plano, está em ${json}.`,
+    reasoning: `O blocking 3D da cena inteira, como a timeline está: ${data.shots.length} ${data.shots.length === 1 ? "plano" : "planos"}${data.cuts_at.length ? ", com os cortes secos nos segundos do corte" : ""}, ${withCast ? "com o elenco" : "sem o elenco (só o cenário e a câmera)"}, ${data.size.join("×")} a ${data.fps} fps, sem som. O resumo em JSON, com o primeiro quadro de cada plano, está em ${json}.\n${sourceLine(E, data)}`,
   }).select().single();
   if (error) throw error;
   await ctx.refresh();
