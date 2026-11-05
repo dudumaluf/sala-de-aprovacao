@@ -349,11 +349,27 @@ const src3d = (o) => {
   return `${sceneHref(loc?.round_id || "a1", loc?.scene ?? +m[2], m[1])}/cena3d/${encodeURIComponent(m[3] || "-")}${m[4] ? `?alt=${m[4]}` : ""}`;
 };
 const BTN3D_T = "Abrir a Cena 3D de onde este blocking veio, pra mudar e exportar de novo";
-// a Seedance draft from the studio (Rascunho 480p): its ✦ finalizes it at 1080p, within 7 days of being made
-const isDraft = (o) => / · rascunho 480p · /.test(o?.model || "");
-const draftUntil = (o) => new Date(Date.parse(o.created_at) + 7 * 864e5);
-// a video's resolution as the studio labels it (Seedance · 720p · …, rascunho 480p, 1080p · finalizado): the card shows it in its corner
-const resOf = (o) => (o?.mime?.startsWith("video/") ? (/(?:^| · )(?:rascunho )?(480p|720p|1080p)(?: · |$)/.exec(o.model || "") || [])[1] || "" : "");
+// a video's real resolution, read from the file itself: the card's <video preload="metadata"> loads its size anyway; kept per
+// file in memory and in localStorage so it shows at once next time. Until it is known, what the studio's label says
+const RES_KEY = "sala-vres";
+const vresSeen = (() => { try { return new Map(Object.entries(JSON.parse(localStorage.getItem(RES_KEY) || "{}"))); } catch { return new Map(); } })();
+const resName = (p) => (p >= 1000 ? "1080p" : p >= 700 ? "720p" : p >= 460 ? "480p" : `${p}p`);
+const resOf = (o) => {
+  if (!o?.mime?.startsWith("video/")) return "";
+  const p = vresSeen.get(o.path);
+  return p ? resName(p) : (/(?:^| · )(?:rascunho )?(480p|720p|1080p)(?: · |$)/.exec(o.model || "") || [])[1] || "";
+};
+let vresSave = 0;
+document.addEventListener("loadedmetadata", (e) => {
+  const v = e.target;
+  if (!(v instanceof HTMLVideoElement) || !v.dataset.path) return;
+  const p = Math.min(v.videoWidth, v.videoHeight);
+  if (!p || vresSeen.get(v.dataset.path) === p) return;
+  vresSeen.set(v.dataset.path, p);
+  document.querySelectorAll(`.hz-res-br[data-res="${CSS.escape(v.dataset.path)}"] b`).forEach((b) => { b.textContent = resName(p); });
+  clearTimeout(vresSave);
+  vresSave = setTimeout(() => { try { localStorage.setItem(RES_KEY, JSON.stringify(Object.fromEntries([...vresSeen].slice(-3000)))); } catch {} }, 800);
+}, true);
 const shownOpts = (id) => optsOf(id).filter((o) => !isAngle(o) && (showDrop(o) || !dropped(o)) && inView(o)).sort((a, b) => verOf(b) - verOf(a));
 // versions: inside a delivery round, each round of client feedback is a version (v1 the first delivery, v2 the answer
 // to the first feedback…); the team's own redos are just options. New uploads take the round's version. The team
@@ -1676,9 +1692,7 @@ function veditMenu(btn, id) {
   el.className = "vm-pop";
   el.setAttribute("role", "menu");
   // first, for a result of the studio: the studio again as it was generated (the prompt, the references, the model)
-  const o = S.options.find((x) => x.id === id), dr = TEAM && isDraft(o) ? draftUntil(o) : null;
-  el.innerHTML = (dr ? (dr > new Date() ? `<button type="button" role="menuitem" data-vm="final"><b>Finalizar em 1080p</b><small>o mesmo take em 1080p, inteiro: entra neste card como versão nova (dá até ${dr.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })})</small></button>` : `<p class="vm-note">Rascunho de mais de 7 dias: não finaliza mais</p>`) + '<i class="vm-sep"></i>' : "")
-    + (again ? `<button type="button" role="menuitem" data-vm="again"><b>Gerar de novo</b><small>abre o estúdio como foi gerado: o prompt, as referências e o modelo</small></button>${models.length ? '<i class="vm-sep"></i>' : ""}` : "")
+  el.innerHTML = (again ? `<button type="button" role="menuitem" data-vm="again"><b>Gerar de novo</b><small>abre o estúdio como foi gerado: o prompt, as referências e o modelo</small></button>${models.length ? '<i class="vm-sep"></i>' : ""}` : "")
     + models.map((m) => `<button type="button" role="menuitem" data-vm="${esc(m.id)}"><b>${esc(m.name)}</b>${m.says ? `<small>${esc(m.says)}</small>` : ""}</button>`).join("");
   document.body.append(el);
   const r = btn.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
@@ -1693,8 +1707,7 @@ function veditMenu(btn, id) {
     const b = e.target.closest("[data-vm]");
     if (!b) return;
     close();
-    if (b.dataset.vm === "final") Estudio.finalizeDraft(estCtx(), { optionId: id });
-    else if (b.dataset.vm === "again") Estudio.openAgain(estCtx(), { optionId: id });
+    if (b.dataset.vm === "again") Estudio.openAgain(estCtx(), { optionId: id });
     else Estudio.openVideoEdit(estCtx(), { optionId: id, vm: b.dataset.vm });
   };
   el.querySelector("button")?.focus({ preventScroll: true });
@@ -1712,16 +1725,15 @@ function optFace(it, o, { size, by = false, act = "ov-open", del = false, plain 
   const tagTitle = `${kd ? KIND_SAY[kd] : ""}${kd && lab ? " · " : ""}${lab ? (off ? "o cliente não vê" : "a letra que o cliente vê") : ""}`;
   const tag = kd ? `<b class="hz-lab hz-kind" title="${tagTitle}" aria-label="${tagTitle}">${KIND_ICO[kd]}${lab || word ? `<span>${lab || word}</span>` : ""}</b>`
     : lab ? `<b class="hz-lab" title="${off ? "O cliente não vê esta imagem" : "A letra que o cliente vê"}">${lab}</b>` : "";
-  // team: a video's resolution in the bottom right corner (the tools take it on hover), a draft's label bottom left
-  const vres = TEAM ? resOf(o) : "";
-  const dchip = TEAM && isDraft(o) ? `<b class="hz-lab hz-draft" title="Rascunho 480p: no ✦ do vídeo, Finalizar em 1080p (até ${draftUntil(o).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })})">Rascunho</b>` : "";
-  const rchip = vres ? `<span class="hz-res-br"><b class="hz-lab hz-res" title="Resolução do vídeo">${vres}</b></span>` : "";
+  // team: every video's real resolution in the bottom right corner (the tools take its place on hover): filled in from the
+  // file as soon as the card's video loads its size (an empty chip stays hidden)
+  const rchip = TEAM && o.mime?.startsWith("video/") ? `<span class="hz-res-br" data-res="${esc(o.path)}"><b class="hz-lab hz-res" title="Resolução do vídeo">${resOf(o)}</b></span>` : "";
   const tr = tag || state ? `<span class="hz-tr">${tag}${state}</span>` : "";
   const judge = TEAM && !quiet ? `<div class="hz-judge">${extra ? `${extra(o)}<span class="sep"></span>` : ""}${Object.keys(REVIEW).map((v) => `<button class="rv ${rv.verdict === v ? "on" : ""}" data-act="review" data-id="${o.id}" data-v="${v}" aria-pressed="${rv.verdict === v}" title="${REVIEW[v]}${v === "drop" ? " (o cliente não vê)" : ""}">${ICO[v]}</button>`).join("")}${del ? `<span class="sep"></span><button class="hz-del" data-act="opt-del" data-id="${o.id}" title="Apagar esta imagem">${ICO.trash}</button>` : ""}</div>`
     : extra ? `<div class="hz-judge">${extra(o)}</div>` : "";
   const nc = commentsNow(it).length, nd = TEAM ? drawsOf(o) : 0;
   const meta = [by && o.created_by ? esc(o.created_by.split(" ")[0]) : "", TEAM && roundVers(it.round_id).length > 1 ? `v${verOf(o)}` : ""].filter(Boolean).join(" · ");
-  const bl = `<span class="hz-bl">${dchip}<button class="hz-chip ${nc ? "" : "hz-hover"}" data-act="drawer" data-id="${it.id}" title="${nc ? plural(nc, "comentário", "comentários") : "Comentar"}" aria-label="Comentários">${CHAT}${nc || ""}</button>${nd ? `<b class="hz-chip" title="${plural(nd, "desenho", "desenhos")} em aberto">${Estudio.ICONS.pen}${nd}</b>` : ""}${meta ? `<span class="hz-meta" title="Quem fez · versão">${meta}</span>` : ""}${rv.verdict === "drop" && rv.note ? `<span class="hz-meta" title="${dropWhy(rv)}">${esc(rv.note)}</span>` : ""}</span>`;
+  const bl = `<span class="hz-bl"><button class="hz-chip ${nc ? "" : "hz-hover"}" data-act="drawer" data-id="${it.id}" title="${nc ? plural(nc, "comentário", "comentários") : "Comentar"}" aria-label="Comentários">${CHAT}${nc || ""}</button>${nd ? `<b class="hz-chip" title="${plural(nd, "desenho", "desenhos")} em aberto">${Estudio.ICONS.pen}${nd}</b>` : ""}${meta ? `<span class="hz-meta" title="Quem fez · versão">${meta}</span>` : ""}${rv.verdict === "drop" && rv.note ? `<span class="hz-meta" title="${dropWhy(rv)}">${esc(rv.note)}</span>` : ""}</span>`;
   // each file's own ✦: an image goes into the studio as the base; a video opens the menu of the models that edit a video
   const br = tools ? `<div class="hz-br">${TEAM && AI ? (o.mime.startsWith("video/") ? veditBtn(o) : `<button data-act="estudio" data-id="${o.id}" title="Editar com IA: esta imagem é a base" aria-label="Editar com IA">${Estudio.ICONS.spark}</button>`) : ""}${vsCan(o) ? `<button data-act="vs-open" data-id="${it.id}" data-i="${i}" title="${blockOf(o) ? "Comparar com o blocking 3D" : "Comparar com a versão anterior"}" aria-label="Comparar">${ICON.vs}</button>` : ""}${TEAM && o.mime.startsWith("video/") ? `<button data-act="frame-grab" data-id="${o.id}" title="${FRAME_T}" aria-label="Tirar o quadro">${FRAME_ICO}</button>` : ""}${src3d(o) ? `<button data-act="open-3d" data-id="${o.id}" title="${BTN3D_T}" aria-label="Abrir a Cena 3D">${CUBE}</button>` : ""}<button data-act="download" data-id="${o.id}" title="Baixar o original" aria-label="Baixar">${ICO.down}</button></div>` : "";
   return `<button class="hero-img" data-act="${act}" data-id="${it.id}" data-i="${i}" aria-label="Abrir ${esc(it.title)} ${lab} grande"${off && !dropped(o) ? ' title="Fora do que o cliente vê nesta versão"' : ""}>${media(o, size)}${vplayBtn(o)}</button>

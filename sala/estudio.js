@@ -67,8 +67,9 @@ const roleOf = (r) => (r?.role && (ROLES[r.kind || "image"] || []).find(([k]) =>
 const roleSays = (r) => { const x = roleOf(r); return x ? ` (its role: ${x[2]})` : ""; };
 // a video reference edited from its circle's menu, by model
 const EDIT_SAYS = { "bytedance/seedance-2.5/video-edit": "troca o visual, fica o tempo", "higgsfield/genjutsu/motion-transfer/v1.0": "só o movimento e a câmera", "higgsfield/genjutsu/object-swap/v1.0": "troca uma pessoa ou coisa" };
-// "draft": a Seedance 480p draft (Rascunho 480p), finalized later at 1080p from its card (finalizeDraft)
-const VRES = ["draft", "480p", "720p", "1080p"];
+// (05/11: the "Rascunho 480p" option is gone: the Higgsfield API behind the studio makes plain 480p takes it can't finalize;
+// real drafts are made in Higgsfield itself)
+const VRES = ["480p", "720p", "1080p"];
 const resLabel = (x) => (x === "draft" ? "Rascunho 480p" : x);
 const VMAX = { image: [9, "imagens"], video: [3, "vídeos"], audio: [3, "vozes"] };
 // the room's bucket keeps files up to 50 MB
@@ -4190,7 +4191,7 @@ export async function openAgain(ctx, { optionId }) {
   for (const r of refs) r.thumb = r.thumb_path ? ctx.urls.get(r.thumb_path) || "" : "";
   return openDrafted(ctx, {
     mode: base ? "edit" : "create", base, item: it, round: it.round_id, scene: it.scene, refs, prompt: job.prompt || inp.prompt || "",
-    ...(video ? { kind: "video", vmodel: job.model, vaspect: inp.aspect_ratio || "16:9", vres: inp.draft ? "draft" : inp.resolution || "720p", dur: DURS.includes(inp.duration) ? inp.duration : 5, sound: inp.generate_audio ?? true }
+    ...(video ? { kind: "video", vmodel: job.model, vaspect: inp.aspect_ratio || "16:9", vres: inp.resolution || "720p", dur: DURS.includes(inp.duration) ? inp.duration : 5, sound: inp.generate_audio ?? true }
       : { kind: "image", ...(MODELS.some((m) => m.id === job.model) && { model: job.model }), aspect: inp.aspect_ratio || "auto", res: inp.resolution || "2k" }),
   }, `again:${optionId}`);
 }
