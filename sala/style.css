@@ -1363,6 +1363,14 @@ textarea.ret-notes { display: block; height: auto; min-height: 80px; margin-top:
 .sitem-foot { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 3; padding: 0; gap: 8px; pointer-events: none; opacity: 0; transition: opacity 0.15s; }
 .sitem-pill { height: 36px; display: flex; align-items: center; border-radius: 10px; background: rgba(5, 7, 6, 0.78); backdrop-filter: blur(6px); pointer-events: none; }
 .sitem-title { position: absolute; top: 10px; left: 10px; z-index: 3; max-width: calc(100% - 20px); gap: 8px; padding: 0 12px 0 11px; pointer-events: auto; }
+/* a long name is cut (…): on a card with versions it stays on the left half, clear of the arrows in the middle; the mouse
+   on the name (or editing it) opens it whole, easing out */
+.sitem-title, .sitem-title .tfit { transition: max-width 0.28s cubic-bezier(0.22, 1, 0.36, 1); }
+.sitem-media:has(.vpill) .sitem-title { max-width: calc(50% - 52px); }
+.sitem-media:has(.vpill) .sitem-title .tfit { min-width: 40px; }
+.sitem-title:hover, .sitem-title:focus-within { z-index: 4; }
+.sitem-media .sitem-title:hover, .sitem-media .sitem-title:focus-within, .sitem-media:has(.vpill) .sitem-title:hover, .sitem-media:has(.vpill) .sitem-title:focus-within { max-width: calc(100% - 20px); }
+.sitem-title:hover .tfit, .sitem-title:focus-within .tfit { max-width: 100cqw; }
 /* what the studio is still making for the card (a render from Cena 3D, an edit…), pulsing on its title until it lands */
 .sitem-title .pos.mk { flex: none; color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap; animation: mk-pulse 1.4s ease-in-out infinite; }
 @keyframes mk-pulse { 50% { opacity: 0.45; } }
@@ -1514,7 +1522,7 @@ textarea.ret-notes { display: block; height: auto; min-height: 80px; margin-top:
 .filt-acts .lab-ico { width: 24px; height: 24px; }
 .filt-acts .lab-ico svg { width: 13px; height: 13px; }
 .filt-none { color: var(--dim); font-size: 12px; line-height: 28px; }
-.fopt[data-act="res"] small { margin-left: 6px; color: var(--dim); font-size: 11px; }
+.fopt[data-act="res"] small, .fopt[data-act="vid"] small { margin-left: 6px; color: var(--dim); font-size: 11px; }
 .fopt { height: 28px; padding: 0 12px; border: 1px solid var(--line2); border-radius: 999px; background: none; color: var(--muted); font-size: 12px; }
 .fopt:hover { color: var(--text); border-color: var(--muted); }
 .fopt.on { border-color: var(--raise2); background: var(--raise2); color: var(--text); }

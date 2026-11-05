@@ -109,7 +109,7 @@ const S = {
   // no approval filter any more (Atual shows the client's choice next to our work), and the author filter starts off on every
   // load, like the version: a filter left on from yesterday never hides work
   appr: "all",
-  authors: new Set(), resF: new Set(), itemTab: store.get("sala-item-tab") || "versoes",
+  authors: new Set(), resF: new Set(), vidF: new Set(), itemTab: store.get("sala-item-tab") || "versoes",
   // the cards' etiquetas (team): labelF is the Filtros › Etiquetas pick (starts empty, like the author filter), sel the
   // cards picked to put an etiqueta on many at once
   labels: [], itemLabels: [], labelsOn: false, labelF: new Set(), labelEdit: false, sel: new Set(), selMenu: false,
@@ -362,6 +362,22 @@ const resOf = (o) => {
   const p = o.res || vresSeen.get(o.path);
   return p ? resName(p) : (/(?:^| · )(?:rascunho )?(480p|720p|1080p)(?: · |$)/.exec(o.model || "") || [])[1] || "";
 };
+// what a video is, for the Vídeo filter here and in the Galeria: what the team marked on it (options.role, the Galeria's
+// right click), else the room's guess: a comparison by its name; a 3D blocking by where it came from (the Cena 3D) or its
+// name; the animatic by its name; a take by its model (a generator, the studio), or by its name (a Higgsfield download, a
+// cut); anything else (a device animation, a motion render, a test) is Outros
+const VID_ROLE = { take: "Takes", blocking: "Blocking 3D", animatic: "Animatic", compara: "Comparativos", outro: "Outros" };
+const VID_GEN = /nano banana|seedream|gpt image|ideogram|soul|seedance|kling|flux|grok|qwen|veo|hailuo|minimax|edição da foto|liquify/i;
+function vidRole(o) {
+  if (!o?.mime?.startsWith("video/")) return "";
+  if (VID_ROLE[o.role]) return o.role;
+  const n = String(o.name || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(), m = (o.model || "").trim();
+  if (/_x_|compar|analise|lado a lado|side.?by.?side|^tira/.test(n)) return "compara";
+  if (m === "Blocking 3D" || /blocking/.test(n)) return "blocking";
+  if (/previz|previs|animatic|^guia/.test(n)) return "animatic";
+  if (VID_GEN.test(m) || /estúdio/i.test(m) || /^(corte|take|hf_)|montagem/.test(n)) return "take";
+  return "outro";
+}
 // what a team browser learns from a video it loaded goes into options.res, a few at a time, so the Resolução filter knows
 // it in every browser without playing it. A room whose database has no res column (an older job) just goes without
 const resLearnt = new Map();
@@ -426,9 +442,11 @@ const inAppr = (o) => !TEAM || S.appr === "all" || peeked(o.item_id) || (S.appr 
 const inAuthor = (o) => !TEAM || !S.authors.size || peeked(o.item_id) || S.authors.has(o.created_by || "");
 // Resolução: only the videos in the sizes marked (an image has none, so it waits); combines with the others like the author
 const inRes = (o) => !TEAM || !S.resF.size || peeked(o.item_id) || S.resF.has(resOf(o));
+// Vídeo: only the videos of the kinds marked (Takes, Blocking 3D…); combines with Resolução (Takes in 720p)
+const inVid = (o) => !TEAM || !S.vidF.size || peeked(o.item_id) || S.vidF.has(vidRole(o));
 // with an approval or author filter on "Atual", every version counts (what matches may be an older one)
 const toggleIn = (set, v) => (v === "all" ? set.clear() : set.has(v) ? set.delete(v) : set.add(v));
-const filtering = () => TEAM && (S.appr !== "all" || S.authors.size > 0 || S.resF.size > 0);
+const filtering = () => TEAM && (S.appr !== "all" || S.authors.size > 0 || S.resF.size > 0 || S.vidF.size > 0);
 // ---------- etiquetas (team): a name and a color anyone on the team makes and puts on cards; each one is also a filter.
 // The client never sees them. labels and item_labels (atualizar-2026-11e.sql); a card with any of the picked ones shows
 const LABEL_COLORS = { teal: "#2FBFA0", violet: "#8F80F2", coral: "#EE7A57", amber: "#E3AE3C", pink: "#E477A8", blue: "#4F9BE8", green: "#7CC35A", gray: "#A3A39B" };
@@ -493,16 +511,16 @@ function labelsTxt() {
 }
 // any filter that can leave a card out: approval, author or etiqueta
 const anyFilter = () => filtering() || (TEAM && labelsOnIn().length > 0);
-const inView = (o) => (filtering() && S.ver === "now" && !peeked(o.item_id) ? true : inVer(o)) && inAppr(o) && inAuthor(o) && inRes(o) && inOptLabels(o);
+const inView = (o) => (filtering() && S.ver === "now" && !peeked(o.item_id) ? true : inVer(o)) && inAppr(o) && inAuthor(o) && inRes(o) && inVid(o) && inOptLabels(o);
 // a card is on screen when something of it passes the filters (an item with no options yet, unless a filter is on)
 const hasView = (it) => !TEAM || (inLabels(it) && (optsOf(it.id).length ? shownOpts(it.id).length > 0 : !filtering()));
 // "Ver todas juntas" and the Versões groups: every version (or the one picked), with the same approval, author and dropped filters
-const sheetOpts = (it) => optsOf(it.id).filter((o) => !isAngle(o) && (showDrop(o) || !dropped(o)) && inAppr(o) && inAuthor(o) && inRes(o) && (S.ver === "now" || S.ver === "all" || peeked(it.id) || verOf(o) === +S.ver));
+const sheetOpts = (it) => optsOf(it.id).filter((o) => !isAngle(o) && (showDrop(o) || !dropped(o)) && inAppr(o) && inAuthor(o) && inRes(o) && inVid(o) && (S.ver === "now" || S.ver === "all" || peeked(it.id) || verOf(o) === +S.ver));
 // a card the filters hide stays in its place as one slim line: why it is hidden, what is new in it, Mostrar (just this
 // card) and, on its own page, Limpar. "Locação · Alpendre · escondido pelos filtros (v1, ★ Cliente) · 4 novas na v2 · Mostrar"
 function hiddenRow(r, it, { page = false } = {}) {
   const opts = optsOf(it.id);
-  const why = [S.ver !== "now" && S.ver !== "all" ? `v${esc(S.ver)}` : "", S.appr !== "all" ? APPR[S.appr] : "", S.authors.size ? esc([...S.authors].join(", ")) : "", S.resF.size ? esc([...S.resF].join(", ")) : "",
+  const why = [S.ver !== "now" && S.ver !== "all" ? `v${esc(S.ver)}` : "", S.appr !== "all" ? APPR[S.appr] : "", S.authors.size ? esc([...S.authors].join(", ")) : "", S.resF.size ? esc([...S.resF].join(", ")) : "", S.vidF.size ? esc([...S.vidF].map((k) => VID_ROLE[k]).join(", ")) : "",
     !S.ov.dropped && opts.some((o) => dropped(o) && inView(o)) ? "sem descartadas" : "", !inLabels(it) ? esc(labelsTxt()) : ""].filter(Boolean).join(", ");
   const lv = latestVer(it.id), fresh = opts.filter((o) => verOf(o) === lv && !dropped(o)).length;
   const news = !opts.length ? "sem opções ainda" : fresh && lv > 1 ? `${fresh} ${fresh === 1 ? "nova" : "novas"} na v${lv}` : fresh ? plural(fresh, "opção", "opções") : "";
@@ -521,7 +539,7 @@ function apprNote(n) {
   const ver = S.ver !== "now" ? ` na ${S.ver === "all" ? "rodada" : `v${S.ver}`}` : "";
   // only the etiquetas filter on: "12 itens sem a etiqueta Seedance"
   if (!filtering()) return `${plural(n, "item", "itens")} ${esc(labelsTxt())}`;
-  return `${plural(n, "item", "itens")} sem nada${what}${who}${res}${ver}${labelsOnIn().length ? ` ou ${esc(labelsTxt())}` : ""}`;
+  return `${plural(n, "item", "itens")} sem ${S.vidF.size ? esc([...S.vidF].map((k) => VID_ROLE[k]).join(" ou ")) : "nada"}${what}${who}${res}${ver}${labelsOnIn().length ? ` ou ${esc(labelsTxt())}` : ""}`;
 }
 function verBase(o) {
   for (let b = o, n = 0; b?.based_on && n < 8; n++) {
@@ -1047,7 +1065,7 @@ function galeriaPage() {
   }
   return head("Galeria", "Carregando…", "") + '<div class="main-body"></div>';
 }
-const galCtx = () => ({ ...estCtx(), studioCtx: estCtx, Estudio, render, head, run, dlName, zipDownload, openFile, approvedOpts, isPick, reviewOf, offWK, stackRoot, resOf,
+const galCtx = () => ({ ...estCtx(), studioCtx: estCtx, Estudio, render, head, run, dlName, zipDownload, openFile, approvedOpts, isPick, reviewOf, offWK, stackRoot, resOf, vidRole, VID_ROLE,
   sceneHref, src3d, fmtTime, KINDS, STAR, ICO, CL, DA_CL, TZ, motionLabel: MOTION ? motionLabel() : "", isMotion: motionOpt });
 const drawsOf = (o) => S.annotations.filter((a) => a.option_id === o.id && !a.resolved).length;
 // timecoded comments on a video (the animatic): each keeps its video (option_id) and the second it was written at (t_sec)
@@ -1414,6 +1432,7 @@ function filtersOn(ctx) {
   if (S.appr !== "all") on.push(["appr", APPR[S.appr]]);
   for (const a of S.authors) on.push([`author:${a}`, a]);
   for (const v of S.resF) on.push([`res:${v}`, v]);
+  for (const k of S.vidF) on.push([`vid:${k}`, VID_ROLE[k]]);
   for (const id of labelsOnIn()) { const l = labelById(id); if (l) on.push([`label:${id}`, l.name]); }
   if (ctx.kinds?.length > 1) for (const k of S.ov.kinds) if (ctx.kinds.includes(k)) on.push([`kind:${k}`, KINDS[k]]);
   if (ctx.curate && S.ov.curate) on.push(["curate", "Só o que falta curar"]);
@@ -1455,14 +1474,19 @@ function filterBar(r, ctx, note = "") {
   const pool = S.options.filter((o) => itemOf(o.item_id)?.round_id === r.id && (S.ver === "now" || inVer(o)) && inAppr(o) && !dropped(o));
   const authors = [...new Set(pool.map((o) => o.created_by).filter(Boolean))].sort((a, b) => pool.filter((o) => o.created_by === b).length - pool.filter((o) => o.created_by === a).length);
   for (const a of S.authors) if (!authors.includes(a)) authors.push(a);
-  // Resolução: the round's videos by their real size, counted on what the cards show with the other filters on
-  const resN = new Map();
-  for (const o of itemsOf(r.id).flatMap((it) => optsOf(it.id))) {
-    const k = o.mime?.startsWith("video/") && (S.ver === "now" || inVer(o)) && inAppr(o) && inAuthor(o) && !dropped(o) ? resOf(o) : "";
+  // Vídeo and Resolução: the round's videos by what they are and by their real size, each counted on what the cards
+  // show with the other filters on (Takes 22 when 720p is on)
+  const vids = itemsOf(r.id).flatMap((it) => optsOf(it.id)).filter((o) => o.mime?.startsWith("video/") && (S.ver === "now" || inVer(o)) && inAppr(o) && inAuthor(o) && !dropped(o));
+  const resN = new Map(), vidN = new Map();
+  for (const o of vids) {
+    const k = inVid(o) ? resOf(o) : "", v = inRes(o) ? vidRole(o) : "";
     if (k) resN.set(k, (resN.get(k) || 0) + 1);
+    if (v) vidN.set(v, (vidN.get(v) || 0) + 1);
   }
   for (const v of S.resF) if (!resN.has(v)) resN.set(v, 0);
+  for (const k of S.vidF) if (!vidN.has(k)) vidN.set(k, 0);
   const resVals = [...resN.keys()].sort((a, b) => parseInt(b) - parseInt(a));
+  const vidVals = Object.keys(VID_ROLE).filter((k) => vidN.has(k) || vids.some((o) => vidRole(o) === k));
   const togs = [ctx.curate ? tog("ov-curate", "Só o que falta curar", S.ov.curate, trioOn(r) ? "Só os itens com opções novas ainda sem ✓ nem ✕" : "Só os itens com mais de 3 opções ou sem nenhuma") : "",
     ctx.dropped ? tog("ov-dropped", "Mostrar descartadas", S.ov.dropped, `As descartadas nos cards (${A_CL} não vê)`) : ""].join("");
   // the round (v1, v2…) is a filter like the others: by default the room shows what is current, item by item
@@ -1472,6 +1496,8 @@ function filterBar(r, ctx, note = "") {
   const pop = S.filt ? `<div class="filt-pop" role="dialog" aria-label="Filtros">
     ${rodada}
     ${authors.length ? group("Autor", [["all", "Todos"], ...authors.map((k) => [k, esc(k)])].map(([k, l]) => opt("author", k, l, k === "all" ? !S.authors.size : S.authors.has(k), k === "all" ? "Opções de todo mundo" : `As opções de ${esc(k)} (junta com as outras marcadas)`)).join("")) : ""}
+    ${vidVals.length ? group("Vídeo", ["all", ...vidVals].map((k) => (k === "all" ? opt("vid", "all", "Todos", !S.vidF.size, "Imagens e vídeos de todo tipo")
+      : opt("vid", k, `${VID_ROLE[k]}<small>${vidN.get(k) || 0}</small>`, S.vidF.has(k), `Só ${k === "outro" ? "os outros vídeos" : `os vídeos de ${VID_ROLE[k]}`} (junta com os outros marcados). Corrigir um: na Galeria, botão direito › É vídeo`))).join("")) : ""}
     ${resVals.length ? group("Resolução", ["all", ...resVals].map((k) => (k === "all" ? opt("res", "all", "Todas", !S.resF.size, "Imagens e vídeos, de qualquer resolução")
       : opt("res", k, `${k}<small>${resN.get(k)}</small>`, S.resF.has(k), `Só os vídeos em ${k} (junta com as outras marcadas)`))).join("")) : ""}
     ${S.labelsOn ? labelGroup(r) : ""}
@@ -1479,13 +1505,13 @@ function filterBar(r, ctx, note = "") {
     ${togs ? `<section class="filt-group filt-togs">${togs}</section>` : ""}
   </div>` : "";
   const view = ctx.view ? `<div class="seg seg-ico seg-view" role="group" aria-label="Como ver">${[["hero", ICON.list, "Uma por item", "uma imagem grande por item"], ["grid", ICON.grid, "Grade", "todas as opções de cada item lado a lado"]].map(([k, ico, n, t]) => `<button data-act="ov-view" data-v="${k}" class="${S.ov.view === k ? "on" : ""}" aria-pressed="${S.ov.view === k}" title="${n}: ${t}" aria-label="${n}">${ico}</button>`).join("")}</div>` : "";
-  const btn = `<button class="fbtn ${on.length ? "on" : ""} ${S.filt ? "open" : ""}" data-act="filt" aria-haspopup="dialog" aria-expanded="${!!S.filt}" title="Aprovação, autor, resolução${ctx.kinds?.length > 1 ? ", tipo" : ""} e o que aparece nos cards">${ICO.funnel}Filtros${on.length ? `<b aria-label="${plural(on.length, "filtro ligado", "filtros ligados")}">${on.length}</b>` : ""}</button>`;
+  const btn = `<button class="btn hico ${on.length ? "on" : ""}" data-act="filt" aria-haspopup="dialog" aria-expanded="${!!S.filt}" title="Filtros: aprovação, autor, vídeo, resolução${ctx.kinds?.length > 1 ? ", tipo" : ""} e o que aparece nos cards" aria-label="Filtros">${ICO.funnel}${on.length ? `<b class="badge" aria-label="${plural(on.length, "filtro ligado", "filtros ligados")}">${on.length}</b>` : ""}</button>`;
   const chips = on.length ? `<div class="fchips">${on.map(([k, l]) => `<button class="fchip" data-act="filt-off" data-v="${k}" title="Tirar este filtro">${esc(l)}${ICO.drop}</button>`).join("")}<button class="link fchips-clear" data-act="filt-off" data-v="all">Limpar</button>${note ? `<span class="fchips-note">${note}</span>` : ""}</div>` : "";
   if (ctx.bare) return { btn: `<span class="fbar-bare">${btn}${pop}</span>`, chips };
   // ico: Filtros is one more round icon in the page head, next to the
   // overview's view icons; what is on still shows as chips over the cards
   if (ctx.ico) {
-    const ib = `<button class="btn hico ${on.length ? "on" : ""}" data-act="filt" aria-haspopup="dialog" aria-expanded="${!!S.filt}" title="Filtros: aprovação, autor, resolução${ctx.kinds?.length > 1 ? ", tipo" : ""} e o que aparece nos cards" aria-label="Filtros">${ICO.funnel}${on.length ? `<b class="badge" aria-label="${plural(on.length, "filtro ligado", "filtros ligados")}">${on.length}</b>` : ""}</button>`;
+    const ib = `<button class="btn hico ${on.length ? "on" : ""}" data-act="filt" aria-haspopup="dialog" aria-expanded="${!!S.filt}" title="Filtros: aprovação, autor, vídeo, resolução${ctx.kinds?.length > 1 ? ", tipo" : ""} e o que aparece nos cards" aria-label="Filtros">${ICO.funnel}${on.length ? `<b class="badge" aria-label="${plural(on.length, "filtro ligado", "filtros ligados")}">${on.length}</b>` : ""}</button>`;
     return { btn: `<span class="fbar-bare fbar-head">${view}${ib}${pop}</span>`, chips };
   }
   return `<div class="ov-bar fbar ${ctx.cls || ""}"><span class="fbar-end">${view}${btn}</span>${pop}</div>${chips}`;
@@ -1952,7 +1978,7 @@ function madeFrom(o, src) {
 function trioOf(r, it) {
   const pick = pickOf(r, it), lv = latestVer(it.id);
   const all = lv > 1 ? optsOf(it.id).filter((o) => verOf(o) === lv && o.id !== pick?.o.id) : [];
-  const shown = all.filter((o) => (showDrop(o) || !dropped(o)) && inAuthor(o) && inRes(o));
+  const shown = all.filter((o) => (showDrop(o) || !dropped(o)) && inAuthor(o) && inRes(o) && inVid(o));
   const changes = pick ? shown.filter((o) => madeFrom(o, pick.o)) : [];
   return {
     pick, all, changes, fresh: shown.filter((o) => !changes.includes(o)),
@@ -1961,7 +1987,7 @@ function trioOf(r, it) {
   };
 }
 // with the author (or resolution) filter on, an item shows only when something new in it matches
-const trioShown = (r, it) => { if (!inLabels(it)) return false; const t = trioOf(r, it); return (!S.authors.size && !S.resF.size) || t.changes.length + t.fresh.length > 0; };
+const trioShown = (r, it) => { if (!inLabels(it)) return false; const t = trioOf(r, it); return (!S.authors.size && !S.resF.size && !S.vidF.size) || t.changes.length + t.fresh.length > 0; };
 // tools: the scene page's comments, upload (also by dropping files on the row) and ⋯
 function trioRow(r, it, { tools = false } = {}) {
   const t = trioOf(r, it), f = fbNow(r, it);
@@ -2352,7 +2378,7 @@ function focusPage(r, n, items, it) {
   // the request and the comments open in the panel, as from a card's yellow line
   const ask = TEAM ? askOf(it) : null, said = commentsNow(it).length;
   const panel = `<button class="btn hico ${S.drawer === it.id ? "on" : ""}" data-act="${TEAM && lastFbOf(it.id) ? "pedido" : "drawer"}" data-id="${it.id}" title="${ask ? `${esc(ask.label)}${ask.note ? ` · ${esc(ask.note)}` : ""}` : "Pedido e comentários"}${said ? ` · ${plural(said, "comentário", "comentários")}` : ""}" aria-label="Pedido e comentários">${ICO.note}${ask ? '<i class="dot warn"></i>' : said ? `<b class="badge">${said}</b>` : ""}</button>`;
-  const fb = tab === "versoes" || tab === "pedido" ? filterBar(r, { dropped: optsOf(it.id).some(dropped), bare: true }) : null;
+  const fb = tab === "versoes" || tab === "pedido" ? filterBar(r, { dropped: optsOf(it.id).some(dropped), ico: true }) : null;
   const body = tab === "cena3d" ? cena3dSlot(it) : tab === "refs" ? itemRefs(r, it) : itemVersions(r, it, fb?.chips || "");
   const brief = it.brief || f?.summary || "";
   return head(`<span class="num">${tag(n)}</span>${esc(it.title)}${brief ? `<span class="h1-brief" title="${esc(brief)}">${esc(brief)}</span>` : ""}`, "",
@@ -3718,6 +3744,7 @@ const ACTS = {
   // Autor and Tipo take more than one value; Todos / Tudo clears the group
   author(el) { toggleIn(S.authors, el.dataset.v); S.peek.clear(); render(true); },
   res(el) { toggleIn(S.resF, el.dataset.v); S.peek.clear(); render(true); },
+  vid(el) { toggleIn(S.vidF, el.dataset.v); S.peek.clear(); render(true); },
   "who-cycle"(el) {
     const it = itemOf(el.dataset.id), ks = [null, ...Object.keys(PEOPLE)];
     const next = ks[(ks.indexOf(it.assignee || null) + 1) % ks.length];
@@ -3850,9 +3877,10 @@ const ACTS = {
     const k = el.dataset.v, all = k === "all";
     if (all || k === "ver") S.ver = "now";
     if (all || k === "appr") { S.appr = "all"; store.set("sala-appr", "all"); }
-    if (all) { S.authors.clear(); S.resF.clear(); S.ov.kinds.clear(); S.labelF.clear(); }
+    if (all) { S.authors.clear(); S.resF.clear(); S.vidF.clear(); S.ov.kinds.clear(); S.labelF.clear(); }
     else if (k.startsWith("author:")) S.authors.delete(k.slice(7));
     else if (k.startsWith("res:")) S.resF.delete(k.slice(4));
+    else if (k.startsWith("vid:")) S.vidF.delete(k.slice(4));
     else if (k.startsWith("label:")) S.labelF.delete(k.slice(6));
     else if (k.startsWith("kind:")) S.ov.kinds.delete(k.slice(5));
     if (all || k === "curate") S.ov.curate = false;

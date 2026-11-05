@@ -33,7 +33,8 @@ const STATE = { pick: "★ Aprovadas", keep: "✓ Equipe", none: "Sem marca", dr
 const SORT = { new: "Mais novas", old: "Mais antigas", scene: "Por cena" };
 const MEDIA = { image: "Imagens", video: "Vídeos" };
 // what a video is (options.role, or the room's guess in roleOf): with ✓ it leaves only the takes worth showing
-const ROLE = { take: "Takes e cortes", compara: "Comparativos", animatic: "Animatic", outro: "Outros vídeos" };
+// (the same names as the room's Filtros › Vídeo, VID_ROLE in app.js, which also makes the guess)
+const ROLE = { take: "Takes", blocking: "Blocking 3D", animatic: "Animatic", compara: "Comparativos", outro: "Outros" };
 const SOUL_STATE = { not_ready: "Preparando", queued: "Na fila", in_progress: "Treinando", completed: "Pronto", failed: "Falhou" };
 const OPEN = new Set(["not_ready", "queued", "in_progress"]);
 const GEN = /nano banana|seedream|gpt image|ideogram|soul|seedance|kling|flux|grok|qwen|veo|hailuo|edição da foto|liquify/i;
@@ -67,16 +68,8 @@ function originOf(o) {
   if (/^blender/i.test(m)) return "blender";
   return GEN.test(m) ? "hf" : "upload";
 }
-// what a video is, when the team has not said it (options.role): a comparison (previz × take, strips) by its name; the
-// animatic by its name or origin (blocking, motion); a take by its model (what the studio or a generator made) or a cut
-function roleOf(o) {
-  if (ROLE[o.role]) return o.role;
-  const n = fold(o.name), m = (o.model || "").trim();
-  if (/_x_|compar|analise|lado a lado|side.?by.?side|^tira/.test(n)) return "compara";
-  if (m === "Blocking 3D" || C.isMotion?.(o) || /previz|previs|animatic|blocking|^guia/.test(n)) return "animatic";
-  if (GEN.test(m) || /estúdio/i.test(m) || /^corte|montagem|^take/.test(n)) return "take";
-  return "outro";
-}
+// what a video is: options.role when the team said it, else the room's guess (vidRole in app.js, the same as Filtros › Vídeo)
+const roleOf = (o) => C.vidRole(o);
 // one entry per thing, memoized on the room's arrays (a load replaces them): k is "o:<option>" or "f:<file>", the same
 // key gallery_group_items.ref keeps
 let memo = { k: null, list: [], map: new Map() };
@@ -565,7 +558,7 @@ function menuItems(list) {
     ["drop", gone ? "Tirar o ✕ (voltar)" : "Descartar", "drop", "D", !opts.length && "Só imagens da sala"],
     C.ai && ["soul", "Criar Soul ID…", "soul", pics.length >= 5 && pics.length <= 20 ? `${pics.length} fotos` : "", (pics.length < 5 || pics.length > 20) && `Escolha de 5 a 20 fotos (${pics.length})`],
     vids.length && "-",
-    ...(vids.length ? ["take", "compara", "animatic"].map((r) => [`role-${r}`, `É vídeo: ${ROLE[r]}`, "play", vids.every((e) => e.o.role === r) ? "✓" : ""]) : []),
+    ...(vids.length ? ["take", "blocking", "animatic", "compara", "outro"].map((r) => [`role-${r}`, `É vídeo: ${ROLE[r]}`, "play", vids.every((e) => e.o.role === r) ? "✓" : ""]) : []),
     one?.places && "-",
     one?.places && `#Onde está · ${one.places.length} lugares`,
     ...(one?.places || []).map((x) => [`place:${x.k}`, placeName(x), "open", x.k === one.k ? "este" : ""]),
