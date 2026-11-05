@@ -342,10 +342,11 @@ const isAngle = (o) => o.model === "Blocking 3D";
 // a blocking video says which Cena 3D it came from: the export (cena3d/video.js) ends its reasoning with "cena3d: <location
 // item> scene <n> cam <camera> alt <version>". Its 3D icon opens that set on that camera, to change it and export again
 const src3d = (o) => {
-  const m = TEAM && o?.mime?.startsWith("video/") && /^Blocking 3D/.test(o.model || "") && /(?:^|\n)cena3d: ([0-9a-f-]{36}) scene (\d+)(?: cam (\S+))?/.exec(o.reasoning || "");
+  const m = TEAM && o?.mime?.startsWith("video/") && /^Blocking 3D/.test(o.model || "") && /(?:^|\n)cena3d: ([0-9a-f-]{36}) scene (\d+)(?: cam (\S+))?(?: alt (\d+))?/.exec(o.reasoning || "");
   if (!m) return "";
   const loc = itemOf(m[1]);
-  return `${sceneHref(loc?.round_id || "a1", loc?.scene ?? +m[2], m[1])}/cena3d/${encodeURIComponent(m[3] || "-")}`;
+  // alt: another version of the cut (the Jatene's plano-sequência); the set opens on it (cena3d.js reads ?alt=)
+  return `${sceneHref(loc?.round_id || "a1", loc?.scene ?? +m[2], m[1])}/cena3d/${encodeURIComponent(m[3] || "-")}${m[4] ? `?alt=${m[4]}` : ""}`;
 };
 const BTN3D_T = "Abrir a Cena 3D de onde este blocking veio, pra mudar e exportar de novo";
 // a Seedance draft from the studio (Rascunho 480p): its ✦ finalizes it at 1080p, within 7 days of being made
