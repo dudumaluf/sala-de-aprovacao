@@ -48,9 +48,10 @@ const MODELS: Record<string, { via: Via; path: string; fields: string[] }> = {
   // Soul 2 with a trained face (a Soul ID made by the Galeria's souls function, with this same key): the base is the
   // scene it starts from, custom_reference_id the face, custom_reference_strength how much of it (0–1)
   "higgsfield-ai/soul/v2/image-to-image": { via: "hf", path: "/higgsfield-ai/soul/v2/image-to-image", fields: ["prompt", "image_url", "custom_reference_id", "custom_reference_strength", "resolution", "aspect_ratio", "batch_size", "enhance_prompt", "seed"] },
-  "bytedance/seedance-2.5/text-to-video": { via: "hf", path: "/bytedance/seedance-2.5/text-to-video", fields: ["prompt", "duration", "resolution", "aspect_ratio", "generate_audio"] },
-  "bytedance/seedance-2.5/image-to-video": { via: "hf", path: "/bytedance/seedance-2.5/image-to-video", fields: ["prompt", "image_url", "end_image_url", "duration", "resolution", "generate_audio"] },
-  "bytedance/seedance-2.5/reference-to-video": { via: "hf", path: "/bytedance/seedance-2.5/reference-to-video", fields: ["prompt", "image_urls", "video_urls", "audio_urls", "duration", "resolution", "aspect_ratio", "generate_audio"] },
+  // draft: a 480p draft that its job can finalize at 1080p within 7 days (draft_job_id, see submit)
+  "bytedance/seedance-2.5/text-to-video": { via: "hf", path: "/bytedance/seedance-2.5/text-to-video", fields: ["prompt", "duration", "resolution", "aspect_ratio", "generate_audio", "draft", "draft_job_id"] },
+  "bytedance/seedance-2.5/image-to-video": { via: "hf", path: "/bytedance/seedance-2.5/image-to-video", fields: ["prompt", "image_url", "end_image_url", "duration", "resolution", "generate_audio", "draft", "draft_job_id"] },
+  "bytedance/seedance-2.5/reference-to-video": { via: "hf", path: "/bytedance/seedance-2.5/reference-to-video", fields: ["prompt", "image_urls", "video_urls", "audio_urls", "duration", "resolution", "aspect_ratio", "generate_audio", "draft", "draft_job_id"] },
   // Seedance edits one video (video_url, @video1 in the prompt) with images, more videos and voices; the result keeps the
   // video's length and aspect, so it takes no duration or aspect ratio
   "bytedance/seedance-2.5/video-edit": { via: "hf", path: "/bytedance/seedance-2.5/video-edit", fields: ["prompt", "video_url", "video_urls", "image_urls", "audio_urls", "resolution", "generate_audio"] },
@@ -276,6 +277,18 @@ Deno.serve(async (req) => {
       const key = await keyOf(m.via);
       if (!key) return json({ error: NO_KEY[m.via] }, 503);
       const input = body.input || {};
+      // a Seedance draft is finalized at 1080p by the room's job of it (draft_job_id = that job's id here): the provider
+      // gets its own request id, the job keeps which draft it finishes (draft_of). Only a finished draft of the same model
+      // the caller can read; the final renders the draft's whole length, so duration goes
+      if (input.draft_job_id) {
+        const { data: dj } = await db.from("estudio_jobs").select("id, request_id, model, input, status").eq("id", String(input.draft_job_id)).maybeSingle();
+        if (!dj?.request_id || !dj.input?.draft || dj.model !== body.model || !["completed", "importing", "imported"].includes(dj.status)) {
+          return json({ error: "Esse vídeo não é um rascunho pronto deste modelo, então não dá pra finalizar." }, 400);
+        }
+        input.draft_of = dj.id;
+        input.draft_job_id = dj.request_id;
+        delete input.draft; delete input.duration;
+      }
       const send: Record<string, unknown> = {};
       for (const k of m.fields) {
         const v = input[k];

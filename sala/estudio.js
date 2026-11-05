@@ -67,7 +67,9 @@ const roleOf = (r) => (r?.role && (ROLES[r.kind || "image"] || []).find(([k]) =>
 const roleSays = (r) => { const x = roleOf(r); return x ? ` (its role: ${x[2]})` : ""; };
 // a video reference edited from its circle's menu, by model
 const EDIT_SAYS = { "bytedance/seedance-2.5/video-edit": "troca o visual, fica o tempo", "higgsfield/genjutsu/motion-transfer/v1.0": "só o movimento e a câmera", "higgsfield/genjutsu/object-swap/v1.0": "troca uma pessoa ou coisa" };
-const VRES = ["480p", "720p", "1080p"];
+// "draft": a Seedance 480p draft (Rascunho 480p), finalized later at 1080p from its card (finalizeDraft)
+const VRES = ["draft", "480p", "720p", "1080p"];
+const resLabel = (x) => (x === "draft" ? "Rascunho 480p" : x);
 const VMAX = { image: [9, "imagens"], video: [3, "vídeos"], audio: [3, "vozes"] };
 // the room's bucket keeps files up to 50 MB
 const MAX_FILE = 50 * 1024 * 1024;
@@ -2099,7 +2101,8 @@ async function generateVideo() {
   const guide = m.way === "guide", edit = m.way === "edit";
   const said = promptFor((d) => { const i = (pool[d.kind] || []).indexOf(d.path); return i < 0 ? null : !guide ? `@${d.kind}${i + 1}` : d.kind === "image" ? `Image ${i + 1}` : d.kind === "video" && !i ? "the video" : null; }).trim();
   const cam = camNow(), rec = recNow();
-  const input = { prompt: said || prompt, duration: E.dur, resolution: E.vres, generate_audio: E.sound };
+  const draft = E.vres === "draft" && !guide && !edit;
+  const input = { prompt: said || prompt, duration: E.dur, resolution: E.vres === "draft" ? "480p" : E.vres, generate_audio: E.sound, ...(draft && { draft: true }) };
   let id = m.id;
   if (m.way === "frames") {
     if (!pool.image.length) return ctx.toast("Junte com + a imagem do primeiro quadro.", true);
@@ -2146,7 +2149,7 @@ async function generateVideo() {
   if (rec.list.length) input.recipes = rec.list.map(({ id, name }) => ({ id, name }));
   E.busy = true; syncBar();
   try {
-    const label = [m.label, E.vres, guide || edit ? "" : `${E.dur}s`, "estúdio"].filter(Boolean).join(" · ");
+    const label = [m.label, draft ? "rascunho 480p" : E.vres === "draft" ? "480p" : E.vres, guide || edit ? "" : `${E.dur}s`, "estúdio"].filter(Boolean).join(" · ");
     for (let k = 0; k < E.count; k++) {
       const { job } = await call("submit", { item_id: E.item.id, base_option: E.base?.id || null, mode: "video", model: id, label, prompt, input, refs, created_by: ctx.myName() });
       if (E.parent) { SWAPS.set(job.id, E.parent.ref); E.parent.ref.wait = (E.parent.ref.wait || 0) + 1; }
@@ -3319,9 +3322,11 @@ function syncBar() {
   }
   if (video) {
     if (m.ar.length && !m.ar.includes(E.vaspect)) E.vaspect = m.ar[0];
+    // Genjutsu and the Seedance edit have no draft: there a draft choice is plain 480p
+    const vres = m.way === "guide" || m.way === "edit" ? VRES.filter((x) => x !== "draft") : VRES;
     if (!VRES.includes(E.vres)) E.vres = "720p";
     sel("aspect", m.ar, E.vaspect);
-    sel("res", VRES, E.vres);
+    sel("res", vres, E.vres === "draft" && !vres.includes("draft") ? "480p" : E.vres, resLabel);
     sel("quality", [], "");
     sel("dur", m.way === "guide" || m.way === "edit" ? [] : DURS, E.dur, (x) => `${x} s`);
   } else {
@@ -4185,9 +4190,28 @@ export async function openAgain(ctx, { optionId }) {
   for (const r of refs) r.thumb = r.thumb_path ? ctx.urls.get(r.thumb_path) || "" : "";
   return openDrafted(ctx, {
     mode: base ? "edit" : "create", base, item: it, round: it.round_id, scene: it.scene, refs, prompt: job.prompt || inp.prompt || "",
-    ...(video ? { kind: "video", vmodel: job.model, vaspect: inp.aspect_ratio || "16:9", vres: inp.resolution || "720p", dur: DURS.includes(inp.duration) ? inp.duration : 5, sound: inp.generate_audio ?? true }
+    ...(video ? { kind: "video", vmodel: job.model, vaspect: inp.aspect_ratio || "16:9", vres: inp.draft ? "draft" : inp.resolution || "720p", dur: DURS.includes(inp.duration) ? inp.duration : 5, sound: inp.generate_audio ?? true }
       : { kind: "image", ...(MODELS.some((m) => m.id === job.model) && { model: job.model }), aspect: inp.aspect_ratio || "auto", res: inp.resolution || "2k" }),
   }, `again:${optionId}`);
+}
+// team: a Seedance draft (Rascunho 480p) finished at 1080p by the provider, the same take for its whole length (within 7 days of
+// the draft); it lands on the draft's card as a new version (a card's videos are its versions), based_on the draft
+export async function finalizeDraft(ctx, { optionId }) {
+  E.ctx = ctx;
+  const { S } = ctx, o = S.options.find((x) => x.id === optionId), it = o && ctx.itemOf(o.item_id);
+  if (!o || !it) return;
+  const { data, error } = await ctx.sb.from("estudio_jobs").select("id, model, prompt, input, refs, label, created_at").contains("imported", JSON.stringify([optionId])).limit(1); // imported is jsonb: cs.["<id>"]
+  const job = !error && data?.[0];
+  if (!job?.input?.draft) return ctx.toast("Este vídeo não é um rascunho do estúdio, então não dá pra finalizar.", true);
+  if (Date.now() - Date.parse(job.created_at) > 7 * 864e5) return ctx.toast("Este rascunho passou de 7 dias: a Higgsfield não finaliza mais. Gere um rascunho novo.", true);
+  const inp = job.input;
+  const input = { draft_job_id: job.id, resolution: "1080p", prompt: inp.prompt, aspect_ratio: inp.aspect_ratio, generate_audio: inp.generate_audio };
+  const label = String(job.label || "Seedance 2.5").replace("rascunho 480p", "1080p · finalizado");
+  try {
+    const { job: fin } = await call("submit", { item_id: it.id, base_option: o.id, mode: "video", model: job.model, label, prompt: job.prompt || inp.prompt || "", input, refs: job.refs || [], created_by: ctx.myName() });
+    track(fin);
+    ctx.toast("Finalizando em 1080p: o vídeo entra neste card como versão nova");
+  } catch (e) { ctx.toast(`Não deu pra finalizar: ${e.message || e}`, true); }
 }
 // team: a card's kit (item_kits: what Guardar no card saved) opens the studio already like that, its result landing on
 // the card. The references come back in their order, so @image1, @video1, @audio1… still name the same ones; a card

@@ -348,6 +348,9 @@ const src3d = (o) => {
   return `${sceneHref(loc?.round_id || "a1", loc?.scene ?? +m[2], m[1])}/cena3d/${encodeURIComponent(m[3] || "-")}`;
 };
 const BTN3D_T = "Abrir a Cena 3D de onde este blocking veio, pra mudar e exportar de novo";
+// a Seedance draft from the studio (Rascunho 480p): its ✦ finalizes it at 1080p, within 7 days of being made
+const isDraft = (o) => / · rascunho 480p · /.test(o?.model || "");
+const draftUntil = (o) => new Date(Date.parse(o.created_at) + 7 * 864e5);
 const shownOpts = (id) => optsOf(id).filter((o) => !isAngle(o) && (showDrop(o) || !dropped(o)) && inView(o)).sort((a, b) => verOf(b) - verOf(a));
 // versions: inside a delivery round, each round of client feedback is a version (v1 the first delivery, v2 the answer
 // to the first feedback…); the team's own redos are just options. New uploads take the round's version. The team
@@ -1667,7 +1670,9 @@ function veditMenu(btn, id) {
   el.className = "vm-pop";
   el.setAttribute("role", "menu");
   // first, for a result of the studio: the studio again as it was generated (the prompt, the references, the model)
-  el.innerHTML = (again ? `<button type="button" role="menuitem" data-vm="again"><b>Gerar de novo</b><small>abre o estúdio como foi gerado: o prompt, as referências e o modelo</small></button>${models.length ? '<i class="vm-sep"></i>' : ""}` : "")
+  const o = S.options.find((x) => x.id === id), dr = TEAM && isDraft(o) ? draftUntil(o) : null;
+  el.innerHTML = (dr ? (dr > new Date() ? `<button type="button" role="menuitem" data-vm="final"><b>Finalizar em 1080p</b><small>o mesmo take em 1080p, inteiro: entra neste card como versão nova (dá até ${dr.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })})</small></button>` : `<p class="vm-note">Rascunho de mais de 7 dias: não finaliza mais</p>`) + '<i class="vm-sep"></i>' : "")
+    + (again ? `<button type="button" role="menuitem" data-vm="again"><b>Gerar de novo</b><small>abre o estúdio como foi gerado: o prompt, as referências e o modelo</small></button>${models.length ? '<i class="vm-sep"></i>' : ""}` : "")
     + models.map((m) => `<button type="button" role="menuitem" data-vm="${esc(m.id)}"><b>${esc(m.name)}</b>${m.says ? `<small>${esc(m.says)}</small>` : ""}</button>`).join("");
   document.body.append(el);
   const r = btn.getBoundingClientRect(), w = el.offsetWidth, h = el.offsetHeight;
@@ -1682,7 +1687,8 @@ function veditMenu(btn, id) {
     const b = e.target.closest("[data-vm]");
     if (!b) return;
     close();
-    if (b.dataset.vm === "again") Estudio.openAgain(estCtx(), { optionId: id });
+    if (b.dataset.vm === "final") Estudio.finalizeDraft(estCtx(), { optionId: id });
+    else if (b.dataset.vm === "again") Estudio.openAgain(estCtx(), { optionId: id });
     else Estudio.openVideoEdit(estCtx(), { optionId: id, vm: b.dataset.vm });
   };
   el.querySelector("button")?.focus({ preventScroll: true });
@@ -1700,7 +1706,8 @@ function optFace(it, o, { size, by = false, act = "ov-open", del = false, plain 
   const tagTitle = `${kd ? KIND_SAY[kd] : ""}${kd && lab ? " · " : ""}${lab ? (off ? "o cliente não vê" : "a letra que o cliente vê") : ""}`;
   const tag = kd ? `<b class="hz-lab hz-kind" title="${tagTitle}" aria-label="${tagTitle}">${KIND_ICO[kd]}${lab || word ? `<span>${lab || word}</span>` : ""}</b>`
     : lab ? `<b class="hz-lab" title="${off ? "O cliente não vê esta imagem" : "A letra que o cliente vê"}">${lab}</b>` : "";
-  const tr = tag || state ? `<span class="hz-tr">${tag}${state}</span>` : "";
+  const dchip = TEAM && isDraft(o) ? `<b class="hz-lab hz-draft" title="Rascunho 480p: no ✦ do vídeo, Finalizar em 1080p (até ${draftUntil(o).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })})">Rascunho</b>` : "";
+  const tr = tag || state || dchip ? `<span class="hz-tr">${tag}${dchip}${state}</span>` : "";
   const judge = TEAM && !quiet ? `<div class="hz-judge">${extra ? `${extra(o)}<span class="sep"></span>` : ""}${Object.keys(REVIEW).map((v) => `<button class="rv ${rv.verdict === v ? "on" : ""}" data-act="review" data-id="${o.id}" data-v="${v}" aria-pressed="${rv.verdict === v}" title="${REVIEW[v]}${v === "drop" ? " (o cliente não vê)" : ""}">${ICO[v]}</button>`).join("")}${del ? `<span class="sep"></span><button class="hz-del" data-act="opt-del" data-id="${o.id}" title="Apagar esta imagem">${ICO.trash}</button>` : ""}</div>`
     : extra ? `<div class="hz-judge">${extra(o)}</div>` : "";
   const nc = commentsNow(it).length, nd = TEAM ? drawsOf(o) : 0;

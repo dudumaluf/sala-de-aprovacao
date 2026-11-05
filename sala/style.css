@@ -742,6 +742,9 @@ button.hcard-ask:hover { text-decoration: underline; text-underline-offset: 2px;
 .hz-lab { height: 26px; min-width: 26px; padding: 0 7px; display: grid; place-items: center; border-radius: 7px; background: rgba(5, 7, 6, 0.72); color: var(--text); font: 900 13px var(--num); }
 /* team: what the file is, its icon before the letter (or a short word: 3D, corte, voz) */
 .hz-lab.hz-kind { display: inline-flex; align-items: center; gap: 5px; pointer-events: auto; }
+/* a Seedance draft (480p): finalized at 1080p from its ✦ */
+.hz-lab.hz-draft { width: auto; background: #E8A33D; color: #141414; font: 800 11px var(--num); letter-spacing: 0.02em; pointer-events: auto; }
+.vm-note { margin: 0; padding: 8px 12px; font-size: 12px; opacity: 0.7; }
 .hz-kind svg { width: 13px; height: 13px; flex: none; }
 .hz-kind span { font: 900 12px var(--num); }
 .csh-tile .hz-kind { padding: 0 6px; gap: 4px; }
