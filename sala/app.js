@@ -816,14 +816,15 @@ document.addEventListener("pointerout", (e) => {
 
 // ---------- uploads ----------
 // a video's still: a frame a little in (the first ones are often black), taken in the browser from the file itself
-function videoFrame(file, at = 1) {
+// (exact: that very moment, for Tirar o quadro)
+function videoFrame(file, at = 1, exact = false) {
   return new Promise((ok, no) => {
     const v = document.createElement("video"), url = URL.createObjectURL(file);
     let over = false;
     const end = (fn, x) => { if (over) return; over = true; clearTimeout(t); URL.revokeObjectURL(url); fn(x); };
     const t = setTimeout(() => end(no, new Error("o vídeo não abriu a tempo")), 20000);
     v.muted = true; v.playsInline = true; v.preload = "auto";
-    v.onloadedmetadata = () => { v.currentTime = Math.min(at, (v.duration || 2) / 2); };
+    v.onloadedmetadata = () => { v.currentTime = exact ? Math.max(0, Math.min(at, (v.duration || at) - 0.02)) : Math.min(at, (v.duration || 2) / 2); };
     v.onseeked = () => createImageBitmap(v).then((b) => end(ok, b), (e) => end(no, e));
     v.onerror = () => end(no, new Error("o navegador não abriu o vídeo"));
     v.src = url;
@@ -1354,6 +1355,8 @@ function filtersOn(ctx) {
 // moves it to the next color), its name, rename and delete as small icons; the pencil again (lit) ends it
 const PEN_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M10.6 2.9l2.5 2.5-7.4 7.4-3.1.6.6-3.1z" stroke-linejoin="round"/><path d="M9.2 4.3l2.5 2.5"/></svg>';
 const PIN_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M5.8 2.5h4.4l-.7 3.5 2.4 2.6H4.1l2.4-2.6z" stroke-linejoin="round"/><path d="M8 8.6v5"/></svg>';
+const FRAME_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="M2 6h12M2 10h12" stroke-dasharray="1.6 1.6"/><circle cx="8" cy="8" r="1.6"/></svg>';
+const FRAME_T = "Tirar o quadro deste momento do vídeo: vira uma imagem neste card";
 const LINK_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.9.9"/><path d="M9.2 6.8a2.6 2.6 0 0 0-3.7 0L3.3 9a2.6 2.6 0 0 0 3.7 3.7l.9-.9"/></svg>';
 function labelOpts(r) {
   // the cards of this round with the etiqueta, on the card or on one of its images
@@ -1704,7 +1707,7 @@ function optFace(it, o, { size, by = false, act = "ov-open", del = false, plain 
   const meta = [by && o.created_by ? esc(o.created_by.split(" ")[0]) : "", TEAM && roundVers(it.round_id).length > 1 ? `v${verOf(o)}` : ""].filter(Boolean).join(" · ");
   const bl = `<span class="hz-bl"><button class="hz-chip ${nc ? "" : "hz-hover"}" data-act="drawer" data-id="${it.id}" title="${nc ? plural(nc, "comentário", "comentários") : "Comentar"}" aria-label="Comentários">${CHAT}${nc || ""}</button>${nd ? `<b class="hz-chip" title="${plural(nd, "desenho", "desenhos")} em aberto">${Estudio.ICONS.pen}${nd}</b>` : ""}${meta ? `<span class="hz-meta" title="Quem fez · versão">${meta}</span>` : ""}${rv.verdict === "drop" && rv.note ? `<span class="hz-meta" title="${dropWhy(rv)}">${esc(rv.note)}</span>` : ""}</span>`;
   // each file's own ✦: an image goes into the studio as the base; a video opens the menu of the models that edit a video
-  const br = tools ? `<div class="hz-br">${TEAM && AI ? (o.mime.startsWith("video/") ? veditBtn(o) : `<button data-act="estudio" data-id="${o.id}" title="Editar com IA: esta imagem é a base" aria-label="Editar com IA">${Estudio.ICONS.spark}</button>`) : ""}${vsCan(o) ? `<button data-act="vs-open" data-id="${it.id}" data-i="${i}" title="${blockOf(o) ? "Comparar com o blocking 3D" : "Comparar com a versão anterior"}" aria-label="Comparar">${ICON.vs}</button>` : ""}${src3d(o) ? `<button data-act="open-3d" data-id="${o.id}" title="${BTN3D_T}" aria-label="Abrir a Cena 3D">${CUBE}</button>` : ""}<button data-act="download" data-id="${o.id}" title="Baixar o original" aria-label="Baixar">${ICO.down}</button></div>` : "";
+  const br = tools ? `<div class="hz-br">${TEAM && AI ? (o.mime.startsWith("video/") ? veditBtn(o) : `<button data-act="estudio" data-id="${o.id}" title="Editar com IA: esta imagem é a base" aria-label="Editar com IA">${Estudio.ICONS.spark}</button>`) : ""}${vsCan(o) ? `<button data-act="vs-open" data-id="${it.id}" data-i="${i}" title="${blockOf(o) ? "Comparar com o blocking 3D" : "Comparar com a versão anterior"}" aria-label="Comparar">${ICON.vs}</button>` : ""}${TEAM && o.mime.startsWith("video/") ? `<button data-act="frame-grab" data-id="${o.id}" title="${FRAME_T}" aria-label="Tirar o quadro">${FRAME_ICO}</button>` : ""}${src3d(o) ? `<button data-act="open-3d" data-id="${o.id}" title="${BTN3D_T}" aria-label="Abrir a Cena 3D">${CUBE}</button>` : ""}<button data-act="download" data-id="${o.id}" title="Baixar o original" aria-label="Baixar">${ICO.down}</button></div>` : "";
   return `<button class="hero-img" data-act="${act}" data-id="${it.id}" data-i="${i}" aria-label="Abrir ${esc(it.title)} ${lab} grande"${off && !dropped(o) ? ' title="Fora do que o cliente vê nesta versão"' : ""}>${media(o, size)}${vplayBtn(o)}</button>
     ${tr}${judge}${bl}${br}${verPill(o)}`;
 }
@@ -3429,6 +3432,7 @@ function teamLightbox(it, opts, card, i) {
   const more = `${hist.length > 1 && o.id !== face.id && !adj ? `<button class="btn small" data-act="vpick" data-id="${root.id}" data-v="${o.id}" title="O card passa a mostrar esta versão">Tornar atual</button>` : ""}`
     + `${o.mime.startsWith("video/") ? "" : `<button class="lb-info ${adj ? "on" : ""}" data-act="lbx" aria-pressed="${adj}" title="${adj ? "Sair do ajuste sem salvar (Esc)" : "Ajustar sem IA: espelhar, girar ou mudar a escala, e salvar como versão nova"}" aria-label="Ajustar">${Estudio.ICONS.crop}</button>`}`
     + `${can ? `<button class="lb-info ${vs ? "on" : ""}" data-act="vs-toggle" aria-pressed="${!!vs}" title="${vs ? "Sair da comparação" : "Comparar com a versão anterior"} (C)" aria-label="Comparar com a versão anterior">${ICON.vs}</button>` : ""}`
+    + `${!adj && o.mime.startsWith("video/") ? `<button class="lb-info" data-act="frame-grab" data-id="${o.id}" title="${FRAME_T}" aria-label="Tirar o quadro">${FRAME_ICO}</button>` : ""}`
     + `${!adj && src3d(o) ? `<button class="lb-info" data-act="open-3d" data-id="${o.id}" title="${BTN3D_T}" aria-label="Abrir a Cena 3D">${CUBE}</button>` : ""}`
     + `${adj ? "" : `<button class="lb-info" data-act="copy-link" data-id="${it.id}" data-opt="${o.id}" title="Copiar o link ${o.mime.startsWith("video/") ? "deste vídeo, nesta versão e neste segundo" : "desta imagem, nesta versão"}" aria-label="Copiar o link">${LINK_ICO}</button>`}`
     + `${adj ? "" : (() => { const n = lbCmtCount(it, o); return `<button class="lb-info lb-cmtb ${S.lbCmt ? "on" : ""}" data-act="lb-cmt" aria-pressed="${!!S.lbCmt}" title="${S.lbCmt ? "Esconder" : "Mostrar"} os comentários${n ? ` (${n})` : ""}" aria-label="Comentários">${CHAT}${n ? `<b class="lb-n">${n}</b>` : ""}</button>`; })()}`;
@@ -3803,6 +3807,32 @@ const ACTS = {
   reopen(el) { decide(el.dataset.id, null, "pending", `Reaberto para ${A_CL}`); },
   zoom(el) { S.lightbox = { id: el.dataset.id, i: +el.dataset.i }; render(true); },
   "lb-close"() { S.lbx = null; S.lightbox = S.lightbox?.back || null; if (!S.lightbox) S.infoOff = true; render(true); },
+  // the frame the player is on (Ver grande, or the card's video), at the file's own size, as a new image on the same card
+  // (based_on the video); Desfazer takes it back off
+  async "frame-grab"(el) {
+    const o = optById(el.dataset.id), it = o && itemOf(o.item_id);
+    if (!TEAM || !o || !it || !o.mime?.startsWith("video/")) return;
+    const v = el.closest(".lb, .hero, .csh-tile")?.querySelector("video");
+    const t = v && v.readyState >= 1 && Number.isFinite(v.currentTime) ? v.currentTime : 1;
+    v?.pause?.();
+    toast("Tirando o quadro…");
+    await run(async () => {
+      const blob = await (await fetch(await signed(o.path))).blob();
+      const bmp = await videoFrame(new File([blob], o.name || "video.mp4", { type: o.mime }), t, true);
+      const c = Object.assign(document.createElement("canvas"), { width: bmp.width, height: bmp.height });
+      c.getContext("2d").drawImage(bmp, 0, 0);
+      bmp.close?.();
+      const png = await new Promise((ok) => c.toBlob(ok, "image/png"));
+      const sec = t.toFixed(1).replace(".", ","), base = (o.name || "video").replace(/\.[^.]+$/, "");
+      const m = await putFile(`items/${it.id}`, new File([png], `quadro-${base}-${sec}s.png`, { type: "image/png" }));
+      const id = crypto.randomUUID();
+      const { error } = await sb.from("options").insert({ id, item_id: it.id, path: m.path, preview_path: m.preview_path, thumb_path: m.thumb_path, mime: "image/png", name: m.name,
+        caption: `Quadro de ${o.name || "vídeo"} em ${sec} s`, created_by: myName(), version: roundOf(it.round_id)?.version || 1, based_on: o.id });
+      if (error) throw error;
+      await refresh();
+      toast(`O quadro de ${sec} s entrou no card`, false, { label: "Desfazer", fn: () => run(async () => { const { error: e } = await sb.from("options").delete().eq("id", id); if (e) throw e; await refresh(); }, "Quadro tirado do card") });
+    });
+  },
   "open-3d"(el) { const h = src3d(optById(el.dataset.id)); if (!h) return; S.lbx = null; S.lightbox = null; S.infoOff = true; location.hash = h; },
   // the ver grande's history: a version picked in the strip shows (the card keeps its own until Tornar atual)
   "lb-ver"(el) { if (!S.lightbox) return; S.lightbox.ver = el.dataset.v; S.lbx = null; render(true); },
