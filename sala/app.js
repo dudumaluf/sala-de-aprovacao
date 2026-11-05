@@ -93,7 +93,7 @@ const store = {
 };
 const S = {
   session: null, rounds: [], items: [], options: [], comments: [], requests: [], files: [], reviews: [], sig: "",
-  feedback: [], wkRefs: [], tasks: [], pendencias: [], roundNotes: [], envio: [], annotations: [],
+  feedback: [], wkRefs: [], tasks: [], pendencias: [], roundNotes: [], envio: [], annotations: [], twins: new Map(),
   ret: { resolved: false, said: {}, call: {} }, drawerTab: "comentarios",
   page: { kind: "round", round: null, scene: null, item: null }, pageKey: "",
   me: store.get(`sala-name-${SIDE}`), drawer: null, mode: {}, uploading: {}, lightbox: null, lbx: null, modal: null,
@@ -524,6 +524,9 @@ async function allRows(t, col, cols = "*") {
     if (data.length !== PAGE_ROWS) return { data: out, error: null };
   }
 }
+// which rows are one same file (file_twins): each "o:<option>" / "f:<file>" of a group points at the group's list, the
+// same array for all of them (its first ref names the group)
+const twinMap = (rows) => { const m = new Map(); for (const { refs } of rows || []) for (const r of refs || []) m.set(r, refs); return m; };
 async function load(force = false) {
   const q = (t, col) => allRows(t, col);
   const team = TEAM ? [q("option_reviews", "updated_at"), q("item_feedback", "updated_at"), q("feedback_refs", "sort"), q("tasks", "sort"), q("pendencias", "sort"), q("round_notes", "updated_at"), q("envio", "updated_at"),
@@ -535,18 +538,20 @@ async function load(force = false) {
   const labs = TEAM ? [q("labels", "sort"), q("item_labels", "added_at"), q("option_labels", "added_at")] : [];
   // (and a package's links and texts, atualizar-2026-11g.sql: without them its old note shows)
   // (and the cards' kits for the studio, atualizar-2026-11j.sql, team only)
-  const got = await Promise.all([q("rounds", "sort"), q("items", "sort"), q("options", "sort"), q("comments", "created_at"), q("requests", "sort"), q("request_files", "created_at"), q("annotations", "created_at"), ...team, ...labs, q("request_notes", "created_at"), ...(TEAM ? [q("item_kits", "updated_at")] : [])]);
-  const kres = TEAM ? got.pop() : null, nres = got.pop();
+  // (and which rows are one same file, atualizar-2026-11m.sql, team: the Galeria and the studio's + show it once; without
+  // the function every copy shows, as before)
+  const got = await Promise.all([q("rounds", "sort"), q("items", "sort"), q("options", "sort"), q("comments", "created_at"), q("requests", "sort"), q("request_files", "created_at"), q("annotations", "created_at"), ...team, ...labs, q("request_notes", "created_at"), ...(TEAM ? [q("item_kits", "updated_at"), sb.rpc("file_twins", { p_bucket: BUCKET })] : [])]);
+  const tres = TEAM ? got.pop() : null, kres = TEAM ? got.pop() : null, nres = got.pop();
   const res = got.slice(0, got.length - labs.length), lab = got.slice(res.length);
   const bad = res.find((r) => r.error);
   if (bad) throw bad.error;
-  const labelsOn = TEAM && !lab[0].error && !lab[1].error, imgMarks = labelsOn && !lab[2].error, notesOn = !nres.error, kitsOn = !!kres && !kres.error;
-  const sig = JSON.stringify([...res, ...(labelsOn ? lab.slice(0, 2) : []), ...(imgMarks ? [lab[2]] : []), ...(notesOn ? [nres] : []), ...(kitsOn ? [kres] : [])].map((r) => r.data));
+  const labelsOn = TEAM && !lab[0].error && !lab[1].error, imgMarks = labelsOn && !lab[2].error, notesOn = !nres.error, kitsOn = !!kres && !kres.error, twinsOn = !!tres && !tres.error;
+  const sig = JSON.stringify([...res, ...(labelsOn ? lab.slice(0, 2) : []), ...(imgMarks ? [lab[2]] : []), ...(notesOn ? [nres] : []), ...(kitsOn ? [kres] : []), ...(twinsOn ? [tres] : [])].map((r) => r.data));
   if (!force && sig === S.sig) return false;
   const [rounds, items, options, comments, requests, files, annotations, reviews = [], feedback = [], wkRefs = [], tasks = [], pendencias = [], roundNotes = [], envio = [], bshots = []] = res.map((r) => r.data);
   Object.assign(S, { rounds, items, options, comments: comments.filter((c) => !c.deleted_at), requests, files, annotations, reviews, feedback, wkRefs, tasks, pendencias, roundNotes, envio, bshots,
     labels: labelsOn ? lab[0].data : [], itemLabels: labelsOn ? lab[1].data : [], optLabels: imgMarks ? lab[2].data : [], labelsOn, imgMarks,
-    notes: notesOn ? nres.data : [], notesOn, kits: new Map(kitsOn ? kres.data.map((k) => [k.item_id, k]) : []), kitsOn, sig });
+    notes: notesOn ? nres.data : [], notesOn, kits: new Map(kitsOn ? kres.data.map((k) => [k.item_id, k]) : []), kitsOn, twins: twinMap(twinsOn ? tres.data : []), sig });
   // the etiquetas marked padrão filter the room as it opens: once per tab, so a filter someone took off stays off
   if (labelsOn && !S.labelInit) { S.labelInit = true; if (!S.labelF.size) for (const l of S.labels) if (l.padrao) S.labelF.add(l.id); }
   // an etiqueta someone deleted leaves the filter, a card someone deleted leaves the selection

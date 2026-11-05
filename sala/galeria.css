@@ -71,6 +71,10 @@
 .gal-cap small { flex: none; color: var(--muted); font-size: 10.5px; }
 .gal-t:hover .gal-cap { opacity: 1; }
 .gal-t:hover .gal-ver { opacity: 1; bottom: 30px; }
+/* the same file in several places (file_twins): how many, always on; it steps up over the caption on hover like the version */
+.gal-twins { position: absolute; right: 6px; bottom: 6px; z-index: 2; height: 18px; padding: 0 6px 0 5px; display: flex; align-items: center; gap: 3px; border-radius: 9px; background: rgba(6, 8, 7, 0.72); color: var(--text); font: 900 10px/18px var(--num); transition: bottom 0.14s; }
+.gal-twins svg { width: 11px; height: 11px; color: var(--muted); }
+.gal-t:hover .gal-twins { bottom: 30px; }
 
 /* selecting: a check on hover, on every tile once something is selected; a selected image shrinks a little in a ring */
 .gal-chk { position: absolute; top: 6px; left: 6px; z-index: 2; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; border: 1.5px solid rgba(237, 242, 238, 0.85); border-radius: 50%; background: rgba(6, 8, 7, 0.35); color: transparent; opacity: 0; transition: opacity 0.14s, background 0.14s; }
@@ -98,7 +102,7 @@ body.gal-banding, body.gal-banding * { cursor: crosshair !important; }
 .gal-bar-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--line2); }
 
 /* ---------- the right-click menu ---------- */
-.gal-menu { position: fixed; z-index: 80; min-width: 236px; max-width: 320px; padding: 6px; border: 1px solid var(--line2); border-radius: 12px; background: var(--raise); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6); animation: gal-in 0.12s ease-out; }
+.gal-menu { position: fixed; z-index: 80; min-width: 236px; max-width: 320px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 6px; border: 1px solid var(--line2); border-radius: 12px; background: var(--raise); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.6); animation: gal-in 0.12s ease-out; }
 .gal-menu-h { padding: 6px 10px 7px; color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gal-menu button { display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--text); font-size: 13px; text-align: left; }
 .gal-menu button svg { flex: none; width: 15px; height: 15px; color: var(--muted); }

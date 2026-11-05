@@ -12,7 +12,7 @@
 // Team only. The grid is drawn by the room's render (page()), so loaded images survive re-renders; the menu, the viewer,
 // the dialogs and the drag box live on document.body, outside the re-rendered root.
 
-const CSS_V = 1; // bump when galeria.css changes, so an open tab does not keep the old styles
+const CSS_V = 2; // bump when galeria.css changes, so an open tab does not keep the old styles
 let C = null; // the room (app.js galCtx)
 const store = {
   get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
@@ -28,7 +28,7 @@ const G = {
 };
 
 // wk (what the client sent) and motion (renders of the job's motion piece) take the room's words in init()
-const ORIGIN = { estudio: "Estúdio", hf: "Higgsfield", upload: "Subido", wk: "Material do cliente", blocking: "Blocking 3D", motion: "Motion", blender: "Blender" };
+const ORIGIN = { estudio: "Estúdio", hf: "Higgsfield", upload: "Subido", wk: "Material do cliente", cena: "Materiais de cena", blocking: "Blocking 3D", motion: "Motion", blender: "Blender" };
 const STATE = { pick: "★ Aprovadas", keep: "✓ Equipe", none: "Sem marca", drop: "✕ Descartadas" };
 const SORT = { new: "Mais novas", old: "Mais antigas", scene: "Por cena" };
 const MEDIA = { image: "Imagens", video: "Vídeos" };
@@ -81,7 +81,7 @@ function roleOf(o) {
 // key gallery_group_items.ref keeps
 let memo = { k: null, list: [], map: new Map() };
 function entries() {
-  const { S } = C, k = [S.options, S.files, S.items, S.reviews, S.rounds, S.feedback, S.requests, S.envio];
+  const { S } = C, k = [S.options, S.files, S.items, S.reviews, S.rounds, S.feedback, S.requests, S.envio, S.twins];
   if (memo.k && k.every((x, i) => x === memo.k[i])) return memo.list;
   const ok = new Set(S.items.flatMap((it) => C.approvedOpts(it).map((o) => o.id)));
   const byId = new Map(S.options.map((o) => [o.id, o])), kids = new Map(), byFile = new Map();
@@ -112,18 +112,43 @@ function entries() {
     const video = f.mime.startsWith("video/"), web = /^image\/(jpeg|png|webp|gif|avif)$/.test(f.mime);
     if (!video && !f.mime.startsWith("image/")) return null;
     const it = byFile.get(f.id) || null, r = S.requests.find((x) => x.id === f.request_id), still = f.thumb_path || f.preview_path;
+    // a scene's own package (requests.team_only) is the team's: Materiais de cena, by who put it there, in its scene
+    const cena = !!r?.team_only;
     return {
-      k: `f:${f.id}`, f, it, round: it?.round_id || "", scene: it ? String(it.scene) : "", kind: it?.kind || "", author: C.CL,
-      origin: "wk", role: video ? "outro" : "", at: f.created_at, video, angle: false,
+      k: `f:${f.id}`, f, it, round: it?.round_id || "", scene: it ? String(it.scene) : cena && r.scene != null ? String(r.scene) : "", kind: it?.kind || "",
+      author: cena ? f.uploaded_by || "" : C.CL, origin: cena ? "cena" : "wk", role: video ? "outro" : "", at: f.created_at, video, angle: false,
       thumb: still || (web ? f.path : null), big: video ? f.path : f.preview_path || (web ? f.path : null), poster: video ? still : null,
       photo: video ? null : f.preview_path || (web ? f.path : null),
       flags: { pick: false, keep: false, drop: false, none: true }, stack: null,
-      text: fold([f.name, r?.title, f.uploaded_by, it?.title, C.CL].join(" ")),
+      text: fold([f.name, r?.title, f.uploaded_by, it?.title, cena ? "materiais de cena" : C.CL].join(" ")),
     };
   };
-  const list = [...S.options.map(opt), ...S.files.map(file).filter(Boolean)];
-  memo = { k, list, map: new Map(list.map((e) => [e.k, e])) };
+  const all = [...S.options.map(opt), ...S.files.map(file).filter(Boolean)];
+  const map = new Map(all.map((e) => [e.k, e]));
+  // the same file in several places (S.twins, file_twins: a scene package's copy, a file taken into a card) is one tile:
+  // the card's first (not ✕, the client's pick, the team's ✓), then the client's material, then the scenes' in scene order.
+  // places: all of them in that order, for the tile's count and Onde está; a filter by scene finds it in any scene it is in
+  const rank = (e) => (e.o ? 0 : e.origin === "wk" ? 1 : 2), sc = (e) => (e.scene === "" ? 99 : +e.scene);
+  const before = (a, b) => rank(a) - rank(b) || a.flags.drop - b.flags.drop || b.flags.pick - a.flags.pick || b.flags.keep - a.flags.keep || sc(a) - sc(b) || a.at.localeCompare(b.at);
+  const list = [], done = new Set();
+  for (const e of all) {
+    if (done.has(e.k)) continue;
+    const mates = (S.twins?.get(e.k) || []).map((x) => map.get(x)).filter(Boolean);
+    if (mates.length < 2) { list.push(e); continue; }
+    for (const x of mates) done.add(x.k);
+    mates.sort(before);
+    const main = { ...mates[0], places: mates, scenes: new Set(mates.map((x) => x.scene).filter(Boolean)), text: mates.map((x) => x.text).join(" ") };
+    map.set(main.k, main);
+    list.push(main);
+  }
+  memo = { k, list, map };
   return list;
+}
+// where a file is, said short: its card (round · scene title) or its package in Materiais
+function placeName(e) {
+  if (e.o) return `Card · ${C.roundOf(e.it?.round_id)?.code || ""} · ${e.it ? `${two(e.it.scene)} ${e.it.title}` : ""}`;
+  const r = C.S.requests.find((x) => x.id === e.f.request_id);
+  return `${e.origin === "cena" ? "Materiais de cena" : "Materiais"} · ${r?.title || e.f.name}`;
 }
 const entryOf = (k) => (entries(), memo.map.get(k));
 
@@ -131,11 +156,12 @@ const entryOf = (k) => (entries(), memo.map.get(k));
 const FACETS = ["state", "origin", "kind", "round", "scene", "author", "media", "role"];
 const valOf = { origin: (e) => e.origin, kind: (e) => e.kind, round: (e) => e.round, scene: (e) => e.scene, author: (e) => e.author, media: (e) => (e.video ? "video" : "image"), role: (e) => e.role };
 // every group of chips combines with the others; inside a group the chips add up (OR). skip: the group a count is for
+const hasVal = (g, e, v) => (g === "scene" && e.scenes ? e.scenes.has(v) : valOf[g](e) === v);
 function pass(e, skip = null) {
   for (const g of FACETS) {
     const set = G.f[g];
     if (g === skip || !set.size) continue;
-    if (g === "state" ? ![...set].some((s) => e.flags[s]) : !set.has(valOf[g](e))) return false;
+    if (g === "state" ? ![...set].some((s) => e.flags[s]) : ![...set].some((v) => hasVal(g, e, v))) return false;
   }
   return true;
 }
@@ -144,7 +170,8 @@ const soulRefs = (id) => new Set((G.souls.find((s) => s.id === id)?.photos || []
 function narrowed() {
   const words = fold(G.q).split(/\s+/).filter(Boolean);
   const inG = G.group ? groupRefs(G.group) : null, inS = G.soul ? soulRefs(G.soul) : null;
-  return entries().filter((e) => (!inG || inG.has(e.k)) && (!inS || inS.has(e.k)) && words.every((w) => e.text.includes(w)));
+  const holds = (set, e) => set.has(e.k) || !!e.places?.some((x) => set.has(x.k));
+  return entries().filter((e) => (!inG || holds(inG, e)) && (!inS || holds(inS, e)) && words.every((w) => e.text.includes(w)));
 }
 function shown() {
   const list = narrowed().filter((e) => pass(e));
@@ -166,7 +193,7 @@ function filtersOn() {
 // the chips of one group, each with how many it would show next to the other groups that are on
 function facet(g, label, values) {
   const pool = narrowed().filter((e) => pass(e, g));
-  const n = (v) => pool.filter((e) => (g === "state" ? e.flags[v] : valOf[g](e) === v)).length;
+  const n = (v) => pool.filter((e) => (g === "state" ? e.flags[v] : hasVal(g, e, v))).length;
   const opts = values.map((v) => [v, n(v)]).filter(([v, c]) => c || G.f[g].has(v));
   if (!opts.length) return "";
   return `<section class="filt-group"><p class="filt-label">${label}</p><div class="filt-opts">${opts.map(([v, c]) =>
@@ -175,7 +202,7 @@ function facet(g, label, values) {
 function filterPop() {
   const all = entries(), uniq = (f) => [...new Set(all.map(f).filter(Boolean))];
   const rounds = C.S.rounds.map((r) => r.id).filter((id) => all.some((e) => e.round === id));
-  const scenes = uniq((e) => e.scene).sort((a, b) => a - b);
+  const scenes = [...new Set(all.flatMap((e) => (e.scenes ? [...e.scenes] : [e.scene])).filter(Boolean))].sort((a, b) => a - b);
   const kinds = Object.keys(C.KINDS).filter((k) => all.some((e) => e.kind === k));
   const authors = uniq((e) => e.author).sort((a, b) => (a === C.CL) - (b === C.CL) || a.localeCompare(b));
   return `<div class="filt-pop gal-pop" role="dialog" aria-label="Filtros">
@@ -201,10 +228,12 @@ function tile(e) {
   const sig = e.flags.pick ? `<b class="gal-sig s-pick" title="O cliente escolheu ou aprovou">${C.STAR}</b>` : e.flags.drop ? `<b class="gal-sig s-drop" title="Descartada: o cliente não vê">${ico("drop")}</b>`
     : e.flags.keep ? `<b class="gal-sig s-keep" title="✓ da equipe">${ico("keep")}</b>` : "";
   const t = e.it ? `${two(e.it.scene)} ${e.it.title}` : e.f ? e.f.name : "";
-  const cap = [t, e.f ? C.CL : e.author].filter(Boolean).join(" · ");
+  const cap = [t, e.f && e.origin === "wk" ? C.CL : e.author].filter(Boolean).join(" · ");
+  const n = e.places?.length || 0;
   // data-vid: a video shown by its still plays on hover (app.js lays the video over the still)
   return `<div class="gal-t${G.sel.has(e.k) ? " gal-sel" : ""}${e.flags.drop ? " gal-x" : ""}" data-gk="${e.k}"${e.video && p ? ` data-vid="${esc(e.big)}"` : ""} aria-label="${esc(cap)}">
     ${img}${e.video ? `<i class="gal-play">${I.play}</i>` : ""}${sig}
+    ${n ? `<span class="gal-twins" title="${esc(`O mesmo arquivo está em ${n} lugares (botão direito: Onde está): ${e.places.map(placeName).join(" · ")}`)}">${I.copy}${n}</span>` : ""}
     ${e.stack ? `<span class="gal-ver" title="Versão ${e.stack.i} de ${e.stack.n} deste card${e.stack.face ? " · é a que aparece no card" : ""}">${e.stack.i}/${e.stack.n}</span>` : ""}
     <button class="gal-chk" data-g="chk" tabindex="-1" aria-label="Selecionar">${ico("keep")}</button>
     <span class="gal-cap"><span>${esc(cap)}</span><small>${C.fmtTime(e.at)}</small></span>
@@ -531,6 +560,9 @@ function menuItems(list) {
     C.ai && ["soul", "Criar Soul ID…", "soul", pics.length >= 5 && pics.length <= 20 ? `${pics.length} fotos` : "", (pics.length < 5 || pics.length > 20) && `Escolha de 5 a 20 fotos (${pics.length})`],
     vids.length && "-",
     ...(vids.length ? ["take", "compara", "animatic"].map((r) => [`role-${r}`, `É vídeo: ${ROLE[r]}`, "play", vids.every((e) => e.o.role === r) ? "✓" : ""]) : []),
+    one?.places && "-",
+    one?.places && `#Onde está · ${one.places.length} lugares`,
+    ...(one?.places || []).map((x) => [`place:${x.k}`, placeName(x), "open", x.k === one.k ? "este" : ""]),
     del.ok.length && "-",
     del.ok.length && ["delete", `Apagar de vez${del.ok.length < list.length ? ` · ${del.ok.length} de ${list.length}` : ""}…`, "trash", "", "", "danger"],
   ];
@@ -546,6 +578,7 @@ function showMenu(x, y, above = false) {
   m.className = "gal-menu";
   m.setAttribute("role", "menu");
   m.innerHTML = `<p class="gal-menu-h">${C.esc(head)}</p>${menuItems(list).map((it) => it === "-" ? '<i class="gal-menu-sep"></i>'
+    : typeof it === "string" ? `<p class="gal-menu-h">${C.esc(it.slice(1))}</p>`
     : `<button role="menuitem" class="${it[5] || ""}" data-g="act" data-v="${it[0]}" ${it[4] ? `disabled title="${C.esc(it[4])}"` : ""}>${ico(it[2])}<span>${C.esc(it[1])}</span>${it[3] ? `<small>${C.esc(it[3])}</small>` : ""}</button>`).join("")}`;
   document.body.append(m);
   const r = m.getBoundingClientRect();
@@ -658,6 +691,7 @@ function act(v) {
   const list = selList();
   if (!list.length && v !== "view") return;
   if (v.startsWith("role-")) return setRole(list, v.slice(5));
+  if (v.startsWith("place:")) { const x = entryOf(v.slice(6)); if (x) { closeLayers(); openCard(x); } return; }
   const run = {
     open: () => openCard(list[0]),
     view: () => openView(list[0]?.k),
@@ -694,7 +728,7 @@ async function drawView() {
   }
   const i = G.order.indexOf(e.k), n = G.order.length;
   const where = e.it ? `<b>${two(e.it.scene)} ${esc(e.it.title)}</b>` : `<b>${esc(e.f?.name || "")}</b>`;
-  const info = [e.f ? `${esc(C.CL)} · ${esc(e.f.uploaded_by || "")}` : esc(e.author), C.fmtTime(e.at), e.o?.model ? esc(e.o.model) : "", e.stack ? `versão ${e.stack.i}/${e.stack.n}` : "", e.o?.caption ? esc(e.o.caption) : ""].filter(Boolean).join(" · ");
+  const info = [e.f ? `${e.origin === "cena" ? "Materiais de cena" : esc(C.CL)} · ${esc(e.f.uploaded_by || "")}` : esc(e.author), e.places ? `em ${e.places.length} lugares` : "", C.fmtTime(e.at), e.o?.model ? esc(e.o.model) : "", e.stack ? `versão ${e.stack.i}/${e.stack.n}` : "", e.o?.caption ? esc(e.o.caption) : ""].filter(Boolean).join(" · ");
   const sel = G.sel.has(e.k), opt = !!e.o;
   const media = e.video ? `<video data-p="${esc(e.big)}" controls autoplay playsinline${e.poster ? ` data-poster="${esc(e.poster)}"` : ""}></video>` : e.big ? `<img data-p="${esc(e.big)}" alt="">` : '<p class="gal-none">sem prévia</p>';
   v.innerHTML = `<div class="lb-top"><span>${where} · ${info}</span><span class="gal-lb-pos">${i >= 0 ? `${i + 1} de ${n}` : ""}<button class="link" data-gv="close">Fechar ✕</button></span></div>

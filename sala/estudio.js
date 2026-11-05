@@ -3597,8 +3597,16 @@ function lookups(S) {
   for (const r of S.reviews || []) if (!rev.has(r.option_id)) rev.set(r.option_id, r.verdict);
   return { itemBy, verdict: (o) => rev.get(o.id) };
 }
+// a tab's tiles, each file once: the same file in several places (S.twins, file_twins: a scene package's copy of a card's
+// image, the device in every scene's materials) shows where it comes first in the tab, this scene's before the others;
+// keep (the search) goes first, so a word that finds only a later copy still finds the file
+function pickList(tab, here, keep = null) {
+  const tw = E.ctx.S.twins, seen = new Set();
+  const key = (x) => (x.v ? `f:${x.v.f.id}` : x.o?.id?.startsWith?.("file:") ? `f:${x.o.id.slice(5)}` : x.o && !x.o.ref ? `o:${x.o.id}` : null);
+  return pickList0(tab, here).filter((x) => !keep || keep(x)).filter((x) => { const k = key(x), g = k && (tw?.get(k)?.[0] || k); if (!g) return true; if (seen.has(g)) return false; seen.add(g); return true; });
+}
 // a tab's tiles, in order, each {o (or v: a voice), scenes, group, drop}. A file belongs to the scenes whose items use it
-function pickList(tab, here) {
+function pickList0(tab, here) {
   const { ctx } = E, S = ctx.S, video = isVideo() && !E.pickBase;
   const { itemBy, verdict } = lookups(S);
   const sceneOf = (id) => itemBy.get(id)?.scene;
@@ -3651,8 +3659,8 @@ async function syncPicker() {
   const q = fold(E.pq || "").trim();
   const label = pickLabel;
   const keep = (x) => (scope == null || x.scenes.includes(scope)) && pickFind(x, q);
-  const counts = Object.fromEntries(tabs.map(([k]) => [k, k === E.ptab ? 0 : pickList(k, here).filter(keep).length]));
-  const all = pickList(E.ptab, here).filter(keep), shown = all.slice(0, PAGE * (E.pmore || 1));
+  const counts = Object.fromEntries(tabs.map(([k]) => [k, k === E.ptab ? 0 : pickList(k, here, keep).length]));
+  const all = pickList(E.ptab, here, keep), shown = all.slice(0, PAGE * (E.pmore || 1));
   counts[E.ptab] = all.length;
   await ctx.sign(shown.flatMap((x) => (x.v ? [] : [isImg(x.o) ? x.o.thumb_path || x.o.preview_path || x.o.path : x.o.path])));
   if (!E.pick || !E.root) return;
