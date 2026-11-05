@@ -75,6 +75,25 @@ export const POSES = {
   // looking ahead, something held to the chest in the left hand, the right arm free to swing
   runHold: { label: "Correndo, segurando algo numa mão", lThigh: [35, 0, 0], rThigh: [-60, 0, 0], lShin: [70, 0, 0], rShin: [45, 0, 0], rUpper: [40, 0, -8], rFore: [-75, 0, 0],
     spine: [12, 0, 0], chest: [6, 0, 0], neck: [-10, 0, 0], head: [-6, 0, 0], hips: [0, -0.07, 0], ik: { lArm: [0.07, -0.08, 0.2, [0, 0, -90], [1, -0.6, -0.4]] } },
+  // tasting in a vineyard (hands placed where the grape, the mouth and the glass are): pick a grape with the left hand
+  // and pull it off, eat it (the bunch held in the right), hold one up by the chin while talking to the lens, drink from
+  // a glass in the right hand with the head back
+  pickL: { label: "Colhendo uma uva (mão esquerda)", ...ARMS_DOWN, spine: [6, 0, 0], chest: [3, 0, 0], neck: [14, 0, 0], head: [8, 0, 0],
+    ik: { lArm: [0.035, 0.045, 0.361, [-90, 0, 0], [1, -0.6, -0.4]] } },
+  pickLOff: { label: "Puxando a uva (mão esquerda)", ...ARMS_DOWN, spine: [6, 0, 0], chest: [3, 0, 0], neck: [12, 0, 0], head: [8, 0, 0],
+    ik: { lArm: [0.085, 0.059, 0.292, [-80, 0, 0], [1, -0.6, -0.4]] } },
+  eatL: { label: "Comendo uma uva (mão esquerda na boca, o cacho na direita)", spine: [6, 0, 0], chest: [3, 0, 0], neck: [12, -12, 0], head: [10, -9, 0],
+    lUpper: [0, 0, 7], lFore: [-10, 0, 0], ik: { lArm: [-0.044, 0.227, 0.23, [160, 0, 0], [0.6, -1, 0.2]], rArm: [-0.16, 0.2, 0.28, [-80, 0, 0], [-1, -0.6, -0.4]] } },
+  eatLDown: { label: "Mastigando (a mão esquerda descendo, o cacho na direita)", spine: [6, 0, 0], chest: [3, 0, 0], neck: [10, -13, 0], head: [8, -10, 0],
+    lUpper: [0, 0, 7], lFore: [-10, 0, 0], ik: { lArm: [-0.046, 0.141, 0.264, [150, 0, 0], [0.6, -1, 0.2]], rArm: [-0.16, 0.2, 0.28, [-80, 0, 0], [-1, -0.6, -0.4]] } },
+  grapeR: { label: "Uva na mão direita perto do queixo, olhando pra câmera", lUpper: [0, 0, 7], lFore: [-10, 0, 0], neck: [-2, -6, 0], head: [-2, -6, 3],
+    ik: { rArm: [-0.114, 0.118, 0.227, [160, 0, 0], [-0.6, -1, 0.2]] } },
+  grapeRTalk: { label: "Uva na mão direita, a cabeça inclinada (falando)", lUpper: [0, 0, 7], lFore: [-10, 0, 0], neck: [-4, -2, 0], head: [-4, -1, 7],
+    ik: { rArm: [-0.081, 0.132, 0.243, [160, 0, 0], [-0.6, -1, 0.2]] } },
+  drinkR: { label: "Bebendo da taça (mão direita), a cabeça pra trás", ...ARMS_DOWN, spine: [-4, 0, 0], neck: [-12, -8, 0], head: [-14, -6, 0],
+    ik: { rArm: [-0.026, 0.334, 0.054, [-100, 0, 0], [-0.6, -1, 0.2]] } },
+  drinkRBack: { label: "Bebendo da taça (mão direita), a cabeça mais pra trás", ...ARMS_DOWN, spine: [-6, 0, 0], neck: [-18, -8, 0], head: [-20, -6, 0],
+    ik: { rArm: [-0.025, 0.344, 0.02, [-100, 0, 0], [-0.6, -1, 0.2]] } },
 };
 const POSE_BONES = BONES.map(([n]) => n);
 

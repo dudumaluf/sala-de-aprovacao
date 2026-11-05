@@ -89,7 +89,12 @@ async function render(E, H, plan, cast, progress) {
       // who the lens sees, at the shot's first and middle frames; the first frame of each shot as a picture
       if (fr.first || fr.mid) {
         const now = inFrame(E, H, cam), was = seen.get(fr.s) || new Map();
-        for (const x of now) if (!was.has(x.name) || was.get(x.name).h < x.h) was.set(x.name, x);
+        for (const x of now) {
+          // the bigger view of the two, and everything the figure had at either (a grape that shows up mid-shot)
+          const w = was.get(x.name), carries = [...new Set([...(w?.carries || []), ...(x.carries || [])])];
+          if (!w || w.h < x.h) was.set(x.name, x);
+          if (carries.length) was.get(x.name).carries = carries;
+        }
         seen.set(fr.s, was);
       }
       if (fr.first) firsts.set(fr.s, new Promise((ok) => xr.domElement.toBlob(ok, "image/png"))); // the bitmap is taken now
@@ -135,6 +140,8 @@ async function render(E, H, plan, cast, progress) {
 function inFrame(E, H, cam) {
   const things = E.figs.filter((f) => f.visible !== false && f.root.visible).map((f) => ({ name: f.name, kind: "cast", obj: f.root, fig: f }));
   if (H.PRODUCT && E.device?.visible) things.push({ name: H.PRODUCT.title || "Produto", kind: "product", obj: E.device });
+  // and a prop of the set that the prompt can name (sets.js `en`: the bunch on the vine a hand picks from)
+  for (const p of E.props || []) if (p.spec?.en && !p.spec.attach && p.obj.visible) things.push({ name: p.spec.en, kind: "prop", obj: p.obj });
   if (!things.length) return [];
   const solid = [];
   E.scene.traverseVisible((o) => {
@@ -165,10 +172,26 @@ function inFrame(E, H, cam) {
       const first = ray.intersectObjects(solid, false).find((h) => !isIn(h.object, x.obj));
       if (!first) hit++;
     }
-    if (!hit) continue;
+    if (!hit) {
+      // only a hand in the frame (a macro on what it does): which one, and what it holds
+      const hand = x.fig?.bones && [["lHand", "left hand"], ["rHand", "right hand"]].map(([k, w]) => {
+        const hb = x.fig.bones[k], p = hb.localToWorld(new THREE.Vector3(0, -0.075, 0)), q = p.clone().project(cam);
+        if (q.z > 1 || Math.abs(q.x) > 1 || Math.abs(q.y) > 1) return null;
+        const dir = p.clone().sub(cam.position), d = dir.length();
+        ray.set(cam.position, dir.normalize()); ray.far = d - 0.03; ray.near = cam.near;
+        if (ray.intersectObjects(solid, false).find((h) => !isIn(h.object, x.obj))) return null;
+        const hbox = frameBox(new THREE.Box3().setFromObject(hb), cam);
+        return hbox && { w, hbox };
+      }).filter(Boolean).sort((a, b) => (b.hbox.inner.y1 - b.hbox.inner.y0) - (a.hbox.inner.y1 - a.hbox.inner.y0))[0];
+      if (hand) {
+        const carries = propsOn(E, x.fig).filter((p) => p.obj.visible && p.spec.attach?.bone === (hand.w === "left hand" ? "lHand" : "rHand")).map(propWord);
+        out.push({ name: x.name, kind: x.kind, part: hand.w, box: hand.hbox.inner, h: n2(hand.hbox.inner.y1 - hand.hbox.inner.y0), face: 0, facing: null, cut: hand.hbox.cut, seen: 1, ...(carries.length ? { carries } : {}) });
+      }
+      continue;
+    }
     // how big the face is in the frame (its height over the frame's, 0 when the face is out of it): the shot's size
     // and which way the face looks: to the lens, in profile, or away from it (the back of the head)
-    let face = null, facing = null;
+    let face = null, facing = null, turn = null;
     const hb = x.fig?.bones?.head;
     if (hb) {
       const a = hb.getWorldPosition(new THREE.Vector3()), pa = a.clone().project(cam), pb = a.clone().add(new THREE.Vector3(0, 0.26, 0)).project(cam);
@@ -177,8 +200,11 @@ function inFrame(E, H, cam) {
       const look = new THREE.Vector3(0, 0, 1).applyQuaternion(hb.getWorldQuaternion(new THREE.Quaternion())).setY(0).normalize();
       const d = look.dot(cam.position.clone().sub(a).setY(0).normalize());
       facing = d > 0.35 ? "lens" : d < -0.35 ? "away" : "profile";
+      turn = Math.round(THREE.MathUtils.radToDeg(Math.acos(Math.max(-1, Math.min(1, d)))));
     }
-    out.push({ name: x.name, kind: x.kind, box: box.inner, h: n2(box.inner.y1 - box.inner.y0), face, facing, cut: box.cut, seen: n2(hit / tried) });
+    // and what the figure has on it right now (the props on its bones that show at this frame)
+    const carries = x.fig ? propsOn(E, x.fig).filter((p) => p.obj.visible).map(propWord) : [];
+    out.push({ name: x.name, kind: x.kind, box: box.inner, h: n2(box.inner.y1 - box.inner.y0), face, facing, cut: box.cut, seen: n2(hit / tried), ...(turn != null ? { turn } : {}), ...(carries.length ? { carries } : {}) });
   }
   return out;
 }
@@ -260,27 +286,32 @@ function colorWord(hex) {
   return `${l < 0.36 ? "dark " : l > 0.72 ? "light " : ""}${name}`;
 }
 // the cast's clothes, by the colors the set dresses them in (look), else the figure's flat color
-function castColors(E) {
+// the props on a figure (attached to its cast entry), and a prop in words: its English name for the prompt (`en`), else
+// its color and name
+const propsOn = (E, f) => (E.props || []).filter((p) => { const c = p.spec?.attach && E.set.cast?.[p.spec.attach.cast]; return c && `${c.item}:${c.name}` === f.key; });
+const propWord = (p) => p.spec.en || `${colorWord(p.spec.color)} ${String(p.spec.name || p.key).toLowerCase()}`;
+function castColors(E, a, b) {
   return E.figs.filter((f) => f.visible !== false && f.root.visible).map((f) => {
     const look = E.set.cast?.find((c) => `${c.item}:${c.name}` === f.key)?.look;
     const flat = typeof f.color === "number" ? `#${f.color.toString(16).padStart(6, "0")}` : f.color;
     const parts = look ? [["top", "top"], ["hat", "cap"], ["bottom", "trousers"], ["beard", "beard"], ["fur", "fur"]].filter(([k]) => look[k]).map(([k, w]) => `${colorWord(look[k])} ${w}`) : [`${colorWord(flat) || "flat"} figure`];
     // and what the figure carries or wears (a hat, a phone), by its own color
-    const carries = (E.props || []).filter((p) => p.obj.visible && p.spec?.attach && (([c]) => c && `${c.item}:${c.name}` === f.key)([E.set.cast?.[p.spec.attach.cast]]))
-      .map((p) => `${colorWord(p.spec.color)} ${String(p.spec.name || p.key).toLowerCase()}`);
-    return { name: f.name, colors: look || null, carries, words: [...parts, ...carries].join(", ") };
+    // (when the timeline's keys say what it carries, everything it has at some moment of the cut: a grape, then a glass)
+    const keyed = E.tl?.carries?.(f, a, b);
+    const carries = propsOn(E, f).filter((p) => (keyed ? keyed.includes(p.key) : p.obj.visible)).map(propWord);
+    return { name: f.name, colors: look || null, carries: [...new Set(carries)], words: [...new Set([...parts, ...carries])].join(", ") };
   });
 }
 function summary(E, H, plan, out, files, withCast) {
   const c = E.tl?.cut?.() || E.set.cut, fps = plan.fps, N = plan.frames.length, t0 = plan.F0 / fps;
   const vs = (f) => n2(f / fps);
   const ledName = (v) => (H.LED_STATES.find((x) => x[0] === v)?.[1] || v || "").toLowerCase();
-  const cast = withCast ? castColors(E) : [];
+  const cast = withCast ? castColors(E, t0, (plan.F0 + N) / fps) : [];
   const shots = plan.shots.filter((s) => s.f0 != null).map((s) => {
     const k = s.keys, a = k[0], z = k[k.length - 1], p = E.set.cams.find((x) => x.id === s.cam);
     const lens = a ? [Math.round(a.lens), Math.round(z.lens)] : [p?.lens, p?.lens];
     const height = a ? [n2(a.pos[1]), n2(z.pos[1])] : p ? [n2(p.pos[1]), n2(p.pos[1])] : null;
-    const who = [...(out.seen.get(s.i)?.values() || [])].map((x) => ({ name: x.name, kind: x.kind, size: x.h, face: x.face, facing: x.facing, cut: x.cut, seen: x.seen }));
+    const who = [...(out.seen.get(s.i)?.values() || [])].map((x) => ({ name: x.name, kind: x.kind, size: x.h, face: x.face, facing: x.facing, cut: x.cut, seen: x.seen, ...(x.turn != null ? { turn: x.turn } : {}), ...(x.part ? { part: x.part } : {}), ...(x.carries ? { carries: x.carries } : {}) }));
     return { n: s.i + 1, title: s.title, cam: s.cam, note: p?.title || "", cut_in: s.in, cut_out: s.out, video_in: vs(s.f0), video_out: vs(s.f1),
       lens_mm: lens, hfov_deg: lens.map((mm) => (mm ? hfov(mm) : null)), height_m: height, keys: k.length,
       move: a ? moveWith(a, z, out.track?.get(s.i), k.length) : "locked off", on_board: !!s.ride, handheld: n2(k.reduce((m, x) => Math.max(m, x.shake || 0), 0)), in_frame: who,
@@ -296,7 +327,7 @@ function summary(E, H, plan, out, files, withCast) {
   // a person by the size of the face (the shot's size); a thing by its own size in the frame
   const size = (x) => x.face != null
     ? (x.face === 0 ? "in frame without the face" : (x.face >= 0.8 ? "extreme close-up" : x.face >= 0.4 ? "close-up" : x.face >= 0.2 ? "medium close-up" : x.face >= 0.11 ? "medium shot" : x.face >= 0.05 ? "wide" : "very wide, small in frame")
-      + (x.facing === "away" ? ", seen from behind" : x.facing === "profile" ? ", in profile" : "")) + (x.seen < 1 ? ", partly hidden" : "")
+      + (x.facing === "away" ? ", seen from behind" : x.facing === "profile" ? ", in profile" : x.turn >= 35 ? ", three-quarter view" : "")) + (x.seen < 1 ? ", partly hidden" : "")
     : (x.size < 0.12 ? "small" : x.size < 0.4 ? "medium" : x.size < 0.75 ? "large" : "close") + (x.cut ? ", cut by the frame" : "") + (x.seen < 1 ? ", partly hidden" : "");
   const L = [];
   L.push(`3D blocking · ${E.set.name} · ${c?.name || "cut"} ${s2(json.cut_start).replace(" s", "")}–${s2(json.cut_end)} → this video 0.00–${s2(json.duration)} (${fps} fps, ${out.size.join("×")}, no sound), ${withCast ? "with the cast" : "the set and the camera only, no cast"}.`);
@@ -308,7 +339,7 @@ function summary(E, H, plan, out, files, withCast) {
     cam.push(s.move);
     if (s.on_board) cam.push("on board, rocking with the boat");
     if (s.handheld > 0) cam.push(`handheld (${s.handheld < 0.3 ? "light" : s.handheld < 0.7 ? "medium" : "strong"})`);
-    const who = s.in_frame.length ? s.in_frame.map((x) => `${x.name} (${size(x)})`).join(", ") : "only the set";
+    const who = s.in_frame.length ? s.in_frame.map((x) => `${x.name} (${x.part ? `only the ${x.part}${x.cut ? ", coming in from the frame's edge" : ""}` : size(x)}${x.carries?.length ? `; with ${x.carries.join(", ")}` : ""})`).join(", ") : "only the set";
     L.push(`${s.n} · ${s.video_in.toFixed(2)}–${s.video_out.toFixed(2)} s (cut ${s.cut_in.toFixed(2)}–${s.cut_out.toFixed(2)}) · ${s.title} · ${cam.join(", ")} · in frame: ${who}${s.note ? ` · ${s.note}` : ""}`);
   }
   if (json.product && led.length) L.push(`${json.product.name} light: ${led.map((k) => `${k.label} from ${k.video.toFixed(2)} s`).join(", ")}.`);

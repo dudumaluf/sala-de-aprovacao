@@ -7,7 +7,9 @@
 // figs: { name: [[t, pose preset, where, facing, ease]] }, device: [[t, led, ry]], lines: [[in, out, who, text]],
 // audio: { option }, env: { t0, dt, v }, card }. A device key may also turn the product where it stands (ry, degrees) or place it ([x, y, z]).
 // A figure key may carry where the figure stands ([x, y, z]) and its facing (degrees): a figure that covers ground in a
-// moving pose (running, walking, a bear's gallop) strides by the meters it covers (rig.js gait). A shot's `ease` is its
+// moving pose (running, walking, a bear's gallop) strides by the meters it covers (rig.js gait). Its sixth field may
+// say what the figure carries from that key on ({ props: { uvas: false, taca: true } }: the grape gives way to the glass
+// at a cut); a prop no key names stays as its eye in the card says, and a hidden eye wins over any key. A shot's `ease` is its
 // camera's ("linear" follows someone running at an even pace); its `view` lets it see farther ({ near, far, fog: [near,
 // far] }: a drone over the mountains). `motion` makes the set rock as a whole (everything but the meshes marked
 // userData.still, the sea), cameras of shots marked `ride` riding with it; `device.swing` lets the product swing on its
@@ -43,15 +45,17 @@ function flow(ks, i, t, get) {
 }
 const sorted = (ks) => [...ks].sort((a, b) => a.t - b.t);
 // the two keys around t and how far between them (eased); before the first and after the last, that key holds
+// (a key a hair ahead, within EPS, counts as reached, as a shot's in does in shotAt: a pose that changes on a cut's
+// second changes on the cut's first frame, not one frame later)
 function around(ks, t) {
   if (!ks.length) return null;
   if (t <= ks[0].t) return { a: ks[0], b: ks[0], u: 0 };
   const last = ks[ks.length - 1];
-  if (t >= last.t) return { a: last, b: last, u: 0 };
+  if (t >= last.t - EPS) return { a: last, b: last, u: 0 };
   let i = 0;
-  while (ks[i + 1].t < t) i++;
+  while (ks[i + 1].t <= t + EPS) i++;
   const a = ks[i], b = ks[i + 1];
-  return { a, b, u: easeOf(a.ease, (t - a.t) / Math.max(1e-6, b.t - a.t)) };
+  return { a, b, u: easeOf(a.ease, Math.max(0, (t - a.t) / Math.max(1e-6, b.t - a.t))) };
 }
 // where a camera looks, as a tripod head reads it (as cena3d.js glides): pan, tilt, distance to the point it looks at
 function aim(pos, target) {
@@ -105,7 +109,7 @@ export function createTimeline(H) {
     });
     for (const [name, list] of Object.entries(c.figs || {})) {
       const ci = E.set.cast.find((x) => x.name === name);
-      if (ci) figs[`${ci.item}:${ci.name}`] = list.map(([t, preset, pos, ry, ease]) => ({ t, preset, ...(pos ? { pos } : {}), ...(ry != null ? { ry } : {}), ease: ease || "suave" }));
+      if (ci) figs[`${ci.item}:${ci.name}`] = list.map(([t, preset, pos, ry, ease, more]) => ({ t, preset, ...(pos ? { pos } : {}), ...(ry != null ? { ry } : {}), ease: ease || "suave", ...(more?.props ? { props: more.props } : {}) }));
     }
     for (const [t, led, ry, at] of c.device || []) dev.push({ t, led, ...(ry != null ? { ry } : {}), ...(at ? { at } : {}) });
     if (E.set.motion) move.push({ t: c.shots[0].in, amp: 1, ease: "suave" });
@@ -131,7 +135,7 @@ export function createTimeline(H) {
     T.render();
     if (T.touched) T.seek(T.t);
   };
-  T.reset = () => { T.pause(); T.data = null; T.sel = null; T.touched = false; T.hold = false; viewAt(null); T.render(); };
+  T.reset = () => { T.pause(); T.data = null; T.sel = null; T.touched = false; T.hold = false; viewAt(null); for (const p of E.props || []) p.obj.visible = p.visible; T.render(); };
   // the scene's frames for a video (video.js): from the first shot's in to the last one's out on the fps grid, each frame
   // sampled at its middle (so a cut lands between two frames), with its shot, the shot's first and middle frames marked;
   // and each shot with its camera keys and its frames in the video
@@ -290,7 +294,25 @@ export function createTimeline(H) {
     f.root.updateMatrixWorld(true);
     stride(f, ks, t);
     H.fitProps?.(f);
+    const on = propsAt(ks, t);
+    if (on) for (const p of carriedBy(f)) p.obj.visible = p.visible && on[p.key] !== false;
   }
+  // the props on a figure (sets.js props attached to its cast entry) and what its keys say it carries at t: the keys at
+  // or before t, in order, each over the last; before the first key that says, that key holds
+  const carriedBy = (f) => (E.props || []).filter((p) => { const c = p.spec?.attach && E.set.cast?.[p.spec.attach.cast]; return c && `${c.item}:${c.name}` === f.key; });
+  function propsAt(ks, t) {
+    let on = null;
+    for (const k of ks) if (k.props && (k.t <= t + EPS || !on)) on = { ...(on || {}), ...k.props };
+    return on;
+  }
+  // the props a figure shows at some moment between a and b (the video's summary names them), or null when its keys
+  // don't say (then it carries what is visible now)
+  T.carries = (f, a, b) => {
+    const ks = sorted(T.data?.figs?.[f.key] || []);
+    if (!ks.some((k) => k.props)) return null;
+    const times = [a, ...ks.filter((k) => k.props && k.t > a && k.t < b).map((k) => k.t)];
+    return carriedBy(f).filter((p) => p.visible && times.some((t) => propsAt(ks, t)[p.key] !== false)).map((p) => p.key);
+  };
   // A figure covering ground in a moving pose strides: the phase is the meters covered over the stride's length, so the
   // feet keep pace; it fades in with the speed. A jump faster than anyone runs (a cut to another place) doesn't count.
   function stride(f, ks, t) {
