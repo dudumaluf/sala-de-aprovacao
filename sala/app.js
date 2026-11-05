@@ -109,7 +109,7 @@ const S = {
   // no approval filter any more (Atual shows the client's choice next to our work), and the author filter starts off on every
   // load, like the version: a filter left on from yesterday never hides work
   appr: "all",
-  authors: new Set(), itemTab: store.get("sala-item-tab") || "versoes",
+  authors: new Set(), resF: new Set(), itemTab: store.get("sala-item-tab") || "versoes",
   // the cards' etiquetas (team): labelF is the Filtros › Etiquetas pick (starts empty, like the author filter), sel the
   // cards picked to put an etiqueta on many at once
   labels: [], itemLabels: [], labelsOn: false, labelF: new Set(), labelEdit: false, sel: new Set(), selMenu: false,
@@ -349,22 +349,48 @@ const src3d = (o) => {
   return `${sceneHref(loc?.round_id || "a1", loc?.scene ?? +m[2], m[1])}/cena3d/${encodeURIComponent(m[3] || "-")}${m[4] ? `?alt=${m[4]}` : ""}`;
 };
 const BTN3D_T = "Abrir a Cena 3D de onde este blocking veio, pra mudar e exportar de novo";
-// a video's real resolution, read from the file itself: the card's <video preload="metadata"> loads its size anyway; kept per
-// file in memory and in localStorage so it shows at once next time. Until it is known, what the studio's label says
+// a video's real resolution, read from the file itself: options.res (its short side in pixels, atualizar-2026-11n.sql),
+// written when it goes up from a card or the first time a team browser loads its size. The card's <video
+// preload="metadata"> loads the size anyway, kept per file in memory and in localStorage so it shows at once next time.
+// Until it is known, what the studio's label says
 const RES_KEY = "sala-vres";
 const vresSeen = (() => { try { return new Map(Object.entries(JSON.parse(localStorage.getItem(RES_KEY) || "{}"))); } catch { return new Map(); } })();
-const resName = (p) => (p >= 1000 ? "1080p" : p >= 700 ? "720p" : p >= 460 ? "480p" : `${p}p`);
+// the usual sizes by name (1080p, 720p, 480p), any other by its own number (768p)
+const resName = (p) => (p >= 1000 && p < 1200 ? "1080p" : p >= 700 && p < 760 ? "720p" : p >= 460 && p < 520 ? "480p" : `${p}p`);
 const resOf = (o) => {
   if (!o?.mime?.startsWith("video/")) return "";
-  const p = vresSeen.get(o.path);
+  const p = o.res || vresSeen.get(o.path);
   return p ? resName(p) : (/(?:^| · )(?:rascunho )?(480p|720p|1080p)(?: · |$)/.exec(o.model || "") || [])[1] || "";
 };
+// what a team browser learns from a video it loaded goes into options.res, a few at a time, so the Resolução filter knows
+// it in every browser without playing it. A room whose database has no res column (an older job) just goes without
+const resLearnt = new Map();
+let resFlush = 0;
+function resLearn(path, p) {
+  if (!TEAM) return;
+  const os = S.options.filter((o) => o.path === path && "res" in o && o.res !== p);
+  if (!os.length) return;
+  for (const o of os) resLearnt.set(o.id, p);
+  clearTimeout(resFlush);
+  resFlush = setTimeout(async () => {
+    const by = new Map();
+    for (const [id, q] of resLearnt) by.set(q, [...(by.get(q) || []), id]);
+    resLearnt.clear();
+    for (const [q, ids] of by) {
+      const { error } = await sb.from("options").update({ res: q }).in("id", ids);
+      if (error) return console.warn("options.res:", error.message);
+      for (const o of S.options) if (ids.includes(o.id)) o.res = q;
+    }
+  }, 2500);
+}
 let vresSave = 0;
 document.addEventListener("loadedmetadata", (e) => {
   const v = e.target;
   if (!(v instanceof HTMLVideoElement) || !v.dataset.path) return;
   const p = Math.min(v.videoWidth, v.videoHeight);
-  if (!p || vresSeen.get(v.dataset.path) === p) return;
+  if (!p) return;
+  resLearn(v.dataset.path, p);
+  if (vresSeen.get(v.dataset.path) === p) return;
   vresSeen.set(v.dataset.path, p);
   document.querySelectorAll(`.hz-res-br[data-res="${CSS.escape(v.dataset.path)}"] b`).forEach((b) => { b.textContent = resName(p); });
   clearTimeout(vresSave);
@@ -398,9 +424,11 @@ function clientOk(o) {
 const inAppr = (o) => !TEAM || S.appr === "all" || peeked(o.item_id) || (S.appr === "team" ? kept(o) : clientOk(o));
 // who made the option (options.created_by): a person of the team, Claude…; combines with the version and approval filters
 const inAuthor = (o) => !TEAM || !S.authors.size || peeked(o.item_id) || S.authors.has(o.created_by || "");
+// Resolução: only the videos in the sizes marked (an image has none, so it waits); combines with the others like the author
+const inRes = (o) => !TEAM || !S.resF.size || peeked(o.item_id) || S.resF.has(resOf(o));
 // with an approval or author filter on "Atual", every version counts (what matches may be an older one)
 const toggleIn = (set, v) => (v === "all" ? set.clear() : set.has(v) ? set.delete(v) : set.add(v));
-const filtering = () => TEAM && (S.appr !== "all" || S.authors.size > 0);
+const filtering = () => TEAM && (S.appr !== "all" || S.authors.size > 0 || S.resF.size > 0);
 // ---------- etiquetas (team): a name and a color anyone on the team makes and puts on cards; each one is also a filter.
 // The client never sees them. labels and item_labels (atualizar-2026-11e.sql); a card with any of the picked ones shows
 const LABEL_COLORS = { teal: "#2FBFA0", violet: "#8F80F2", coral: "#EE7A57", amber: "#E3AE3C", pink: "#E477A8", blue: "#4F9BE8", green: "#7CC35A", gray: "#A3A39B" };
@@ -460,21 +488,21 @@ const inOptLabels = (o) => {
 };
 // "sem a etiqueta Seedance", "sem as etiquetas Seedance ou Yan": what a card the etiquetas filter hides lacks
 function labelsTxt() {
-  const names = [...S.labelF].map((id) => labelById(id)?.name).filter(Boolean);
+  const names = labelsOnIn().map((id) => labelById(id)?.name).filter(Boolean);
   return names.length ? `sem ${names.length > 1 ? "as etiquetas" : "a etiqueta"} ${names.join(" ou ")}` : "";
 }
 // any filter that can leave a card out: approval, author or etiqueta
 const anyFilter = () => filtering() || (TEAM && labelsOnIn().length > 0);
-const inView = (o) => (filtering() && S.ver === "now" && !peeked(o.item_id) ? true : inVer(o)) && inAppr(o) && inAuthor(o) && inOptLabels(o);
+const inView = (o) => (filtering() && S.ver === "now" && !peeked(o.item_id) ? true : inVer(o)) && inAppr(o) && inAuthor(o) && inRes(o) && inOptLabels(o);
 // a card is on screen when something of it passes the filters (an item with no options yet, unless a filter is on)
 const hasView = (it) => !TEAM || (inLabels(it) && (optsOf(it.id).length ? shownOpts(it.id).length > 0 : !filtering()));
 // "Ver todas juntas" and the Versões groups: every version (or the one picked), with the same approval, author and dropped filters
-const sheetOpts = (it) => optsOf(it.id).filter((o) => !isAngle(o) && (showDrop(o) || !dropped(o)) && inAppr(o) && inAuthor(o) && (S.ver === "now" || S.ver === "all" || peeked(it.id) || verOf(o) === +S.ver));
+const sheetOpts = (it) => optsOf(it.id).filter((o) => !isAngle(o) && (showDrop(o) || !dropped(o)) && inAppr(o) && inAuthor(o) && inRes(o) && (S.ver === "now" || S.ver === "all" || peeked(it.id) || verOf(o) === +S.ver));
 // a card the filters hide stays in its place as one slim line: why it is hidden, what is new in it, Mostrar (just this
 // card) and, on its own page, Limpar. "Locação · Alpendre · escondido pelos filtros (v1, ★ Cliente) · 4 novas na v2 · Mostrar"
 function hiddenRow(r, it, { page = false } = {}) {
   const opts = optsOf(it.id);
-  const why = [S.ver !== "now" && S.ver !== "all" ? `v${esc(S.ver)}` : "", S.appr !== "all" ? APPR[S.appr] : "", S.authors.size ? esc([...S.authors].join(", ")) : "",
+  const why = [S.ver !== "now" && S.ver !== "all" ? `v${esc(S.ver)}` : "", S.appr !== "all" ? APPR[S.appr] : "", S.authors.size ? esc([...S.authors].join(", ")) : "", S.resF.size ? esc([...S.resF].join(", ")) : "",
     !S.ov.dropped && opts.some((o) => dropped(o) && inView(o)) ? "sem descartadas" : "", !inLabels(it) ? esc(labelsTxt()) : ""].filter(Boolean).join(", ");
   const lv = latestVer(it.id), fresh = opts.filter((o) => verOf(o) === lv && !dropped(o)).length;
   const news = !opts.length ? "sem opções ainda" : fresh && lv > 1 ? `${fresh} ${fresh === 1 ? "nova" : "novas"} na v${lv}` : fresh ? plural(fresh, "opção", "opções") : "";
@@ -489,10 +517,11 @@ function apprNote(n) {
   if (!n) return "";
   const what = S.appr === "team" ? " aprovado pela equipe" : S.appr === "client" ? " aprovado pelo cliente" : "";
   const who = S.authors.size ? ` de ${esc([...S.authors].join(" e "))}` : "";
+  const res = S.resF.size ? ` em ${esc([...S.resF].join(" ou "))}` : "";
   const ver = S.ver !== "now" ? ` na ${S.ver === "all" ? "rodada" : `v${S.ver}`}` : "";
   // only the etiquetas filter on: "12 itens sem a etiqueta Seedance"
   if (!filtering()) return `${plural(n, "item", "itens")} ${esc(labelsTxt())}`;
-  return `${plural(n, "item", "itens")} sem nada${what}${who}${ver}${S.labelF.size ? ` ou ${esc(labelsTxt())}` : ""}`;
+  return `${plural(n, "item", "itens")} sem nada${what}${who}${res}${ver}${labelsOnIn().length ? ` ou ${esc(labelsTxt())}` : ""}`;
 }
 function verBase(o) {
   for (let b = o, n = 0; b?.based_on && n < 8; n++) {
@@ -923,6 +952,19 @@ function asMedia(f) {
 const fileNames = (fs) => { const n = fs.map((f) => f.name); return n.length > 3 ? `${n.slice(0, 3).join(", ")} e mais ${n.length - 3}` : n.join(n.length === 2 ? " e " : ", "); };
 // the same file again on this card is asked first; a generic name (a pasted image.png) is not the same file
 const GENERIC_NAME = /^(image|imagem|img|captura|screenshot|screen shot|blob|download|unnamed|untitled)\b/i;
+// a video's short side in pixels, read from the file before it goes up (null when the browser cannot tell in 5 s)
+function fileRes(f) {
+  return new Promise((ok) => {
+    const v = document.createElement("video"), url = URL.createObjectURL(f);
+    let t = 0;
+    const end = (p) => { if (!t) return; clearTimeout(t); t = 0; URL.revokeObjectURL(url); ok(p || null); };
+    t = setTimeout(() => end(null), 5000);
+    v.preload = "metadata"; v.muted = true;
+    v.onloadedmetadata = () => end(Math.min(v.videoWidth, v.videoHeight));
+    v.onerror = () => end(null);
+    v.src = url;
+  });
+}
 async function uploadOptions(itemId, list) {
   const typed = [...list].map((f) => [f, asMedia(f)]);
   let files = typed.filter(([, m]) => m).map(([, m]) => m);
@@ -938,9 +980,11 @@ async function uploadOptions(itemId, list) {
   if (again.length && !confirm(`${fileNames(again)} ${again.length > 1 ? "já estão" : "já está"} neste card. Subir de novo?\n\nOK sobe tudo. Cancelar ${files.length > again.length ? "sobe só os novos" : "não sobe nada"}.`)) files = files.filter((f) => !again.includes(f));
   if (!files.length) return;
   const ids = [];
+  // a video's resolution goes in with it (options.res), read from the file here; only where the database has the column
+  const sizes = "res" in (S.options[0] || {}) ? new Map(await Promise.all(files.filter((f) => f.type.startsWith("video/")).map(async (f) => [`${f.name}|${f.size}`, await fileRes(f)]))) : new Map();
   const done = await uploadMany(itemId, `items/${itemId}`, files, async (m) => {
-    const id = crypto.randomUUID();
-    const { error } = await sb.from("options").insert({ id, item_id: itemId, path: m.path, preview_path: m.preview_path, thumb_path: m.thumb_path, mime: m.mime, name: m.name, created_by: myName(), version: roundOf(it?.round_id)?.version || 1 });
+    const id = crypto.randomUUID(), res = sizes.get(`${m.name}|${m.size}`);
+    const { error } = await sb.from("options").insert({ id, item_id: itemId, path: m.path, preview_path: m.preview_path, thumb_path: m.thumb_path, mime: m.mime, name: m.name, created_by: myName(), version: roundOf(it?.round_id)?.version || 1, ...(res ? { res } : {}) });
     if (error) throw error;
     ids.push(id);
   });
@@ -1003,7 +1047,7 @@ function galeriaPage() {
   }
   return head("Galeria", "Carregando…", "") + '<div class="main-body"></div>';
 }
-const galCtx = () => ({ ...estCtx(), studioCtx: estCtx, Estudio, render, head, run, dlName, zipDownload, openFile, approvedOpts, isPick, reviewOf, offWK, stackRoot,
+const galCtx = () => ({ ...estCtx(), studioCtx: estCtx, Estudio, render, head, run, dlName, zipDownload, openFile, approvedOpts, isPick, reviewOf, offWK, stackRoot, resOf,
   sceneHref, src3d, fmtTime, KINDS, STAR, ICO, CL, DA_CL, TZ, motionLabel: MOTION ? motionLabel() : "", isMotion: motionOpt });
 const drawsOf = (o) => S.annotations.filter((a) => a.option_id === o.id && !a.resolved).length;
 // timecoded comments on a video (the animatic): each keeps its video (option_id) and the second it was written at (t_sec)
@@ -1369,6 +1413,7 @@ function filtersOn(ctx) {
   if (S.ver !== "now") on.push(["ver", S.ver === "all" ? "Todas as rodadas" : `Só a v${S.ver}`]);
   if (S.appr !== "all") on.push(["appr", APPR[S.appr]]);
   for (const a of S.authors) on.push([`author:${a}`, a]);
+  for (const v of S.resF) on.push([`res:${v}`, v]);
   for (const id of labelsOnIn()) { const l = labelById(id); if (l) on.push([`label:${id}`, l.name]); }
   if (ctx.kinds?.length > 1) for (const k of S.ov.kinds) if (ctx.kinds.includes(k)) on.push([`kind:${k}`, KINDS[k]]);
   if (ctx.curate && S.ov.curate) on.push(["curate", "Só o que falta curar"]);
@@ -1376,8 +1421,8 @@ function filtersOn(ctx) {
   return on;
 }
 // Filtros › Etiquetas: a chip per etiqueta with how many cards of the round have it (more than one picked: a card with any
-// of them shows), ＋ Nova makes one, and the pencil turns the list into one row per etiqueta: its color as a dot (a click
-// moves it to the next color), its name, rename and delete as small icons; the pencil again (lit) ends it
+// of them shows). On the group's name, ＋ makes one and the pencil turns the list into one row per etiqueta: its color as
+// a dot (a click moves it to the next color), its name, rename and delete as small icons; the pencil again (lit) ends it
 const PEN_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M10.6 2.9l2.5 2.5-7.4 7.4-3.1.6.6-3.1z" stroke-linejoin="round"/><path d="M9.2 4.3l2.5 2.5"/></svg>';
 const PIN_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M5.8 2.5h4.4l-.7 3.5 2.4 2.6H4.1l2.4-2.6z" stroke-linejoin="round"/><path d="M8 8.6v5"/></svg>';
 const FRAME_ICO = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><rect x="2" y="3.5" width="12" height="9" rx="1.5"/><path d="M2 6h12M2 10h12" stroke-dasharray="1.6 1.6"/><circle cx="8" cy="8" r="1.6"/></svg>';
@@ -1387,13 +1432,19 @@ function labelOpts(r) {
   // the cards of this round with the etiqueta, on the card or on one of its images
   const count = (l) => itemsOf(r.id).filter((it) => labelIdsOf(it.id).has(l.id) || cardImgLabelIds(it.id).has(l.id)).length;
   const edit = S.labelEdit && S.labels.length > 0;
-  const pen = S.labels.length ? `<button class="lab-ico ${edit ? "on" : ""}" data-act="label-edit" aria-pressed="${edit}" title="${edit ? "Pronto" : "Editar etiquetas: cor, nome, padrão, apagar"}" aria-label="${edit ? "Pronto" : "Editar etiquetas"}">${PEN_ICO}</button>` : "";
   // the pin: a padrão etiqueta is the filter the room opens with (on the rounds it marks something in)
   const pin = (l) => (S.imgMarks ? `<button class="lab-ico ${l.padrao ? "on" : ""}" data-act="label-pad" data-id="${l.id}" aria-pressed="${!!l.padrao}" title="${l.padrao ? "Padrão: a sala abre filtrada por esta etiqueta. Clique pra deixar de ser" : "Tornar padrão: a sala abre filtrada por esta etiqueta"}" aria-label="Padrão">${PIN_ICO}</button>` : "");
   const list = edit
     ? S.labels.map((l) => `<span class="lab-edit"><button class="lab-dot" data-act="label-color" data-id="${l.id}" style="--lc:${LABEL_COLORS[l.color] || LABEL_COLORS.gray}" title="Trocar a cor" aria-label="Trocar a cor de ${esc(l.name)}"></button>${labelChip(l)}${pin(l)}<button class="lab-ico" data-act="label-ren" data-id="${l.id}" title="Renomear" aria-label="Renomear ${esc(l.name)}">${PEN_ICO}</button><button class="lab-ico danger" data-act="label-del" data-id="${l.id}" title="Apagar" aria-label="Apagar ${esc(l.name)}">${ICO.trash}</button></span>`).join("")
     : S.labels.map((l) => `<button class="fopt lab-opt ${S.labelF.has(l.id) ? "on" : ""}" data-act="label" data-v="${l.id}" aria-pressed="${S.labelF.has(l.id)}" title="Só os cards com ${esc(l.name)} (junta com as outras marcadas)${l.padrao ? " · padrão: a sala abre com ela" : ""}">${labelChip(l)}${l.padrao ? `<i class="lab-pin" aria-hidden="true">${PIN_ICO}</i>` : ""}<small>${count(l)}</small></button>`).join("");
-  return list + '<button class="fopt" data-act="label-new" title="Nova etiqueta: depois ponha nos cards pelo ⋯ ou selecionando vários">＋ Nova</button>' + pen;
+  return list || '<span class="filt-none">Nenhuma ainda: o ＋ aqui em cima cria a primeira</span>';
+}
+// the Etiquetas group of a Filtros, with ＋ (a new one) and the pencil (edit them) as small icons on the right of its name
+function labelGroup(r) {
+  const edit = S.labelEdit && S.labels.length > 0;
+  const pen = S.labels.length ? `<button class="lab-ico ${edit ? "on" : ""}" data-act="label-edit" aria-pressed="${edit}" title="${edit ? "Pronto" : "Editar etiquetas: cor, nome, padrão, apagar"}" aria-label="${edit ? "Pronto" : "Editar etiquetas"}">${PEN_ICO}</button>` : "";
+  const add = `<button class="lab-ico" data-act="label-new" title="Nova etiqueta: depois ponha nos cards pelo ⋯ ou selecionando vários" aria-label="Nova etiqueta">${ICON.plus}</button>`;
+  return `<section class="filt-group"><div class="filt-label filt-head"><span>Etiquetas</span><span class="filt-acts">${add}${pen}</span></div><div class="filt-opts">${labelOpts(r)}</div></section>`;
 }
 function filterBar(r, ctx, note = "") {
   if (!TEAM) return "";
@@ -1404,6 +1455,14 @@ function filterBar(r, ctx, note = "") {
   const pool = S.options.filter((o) => itemOf(o.item_id)?.round_id === r.id && (S.ver === "now" || inVer(o)) && inAppr(o) && !dropped(o));
   const authors = [...new Set(pool.map((o) => o.created_by).filter(Boolean))].sort((a, b) => pool.filter((o) => o.created_by === b).length - pool.filter((o) => o.created_by === a).length);
   for (const a of S.authors) if (!authors.includes(a)) authors.push(a);
+  // Resolução: the round's videos by their real size, counted on what the cards show with the other filters on
+  const resN = new Map();
+  for (const o of itemsOf(r.id).flatMap((it) => optsOf(it.id))) {
+    const k = o.mime?.startsWith("video/") && (S.ver === "now" || inVer(o)) && inAppr(o) && inAuthor(o) && !dropped(o) ? resOf(o) : "";
+    if (k) resN.set(k, (resN.get(k) || 0) + 1);
+  }
+  for (const v of S.resF) if (!resN.has(v)) resN.set(v, 0);
+  const resVals = [...resN.keys()].sort((a, b) => parseInt(b) - parseInt(a));
   const togs = [ctx.curate ? tog("ov-curate", "Só o que falta curar", S.ov.curate, trioOn(r) ? "Só os itens com opções novas ainda sem ✓ nem ✕" : "Só os itens com mais de 3 opções ou sem nenhuma") : "",
     ctx.dropped ? tog("ov-dropped", "Mostrar descartadas", S.ov.dropped, `As descartadas nos cards (${A_CL} não vê)`) : ""].join("");
   // the round (v1, v2…) is a filter like the others: by default the room shows what is current, item by item
@@ -1413,18 +1472,20 @@ function filterBar(r, ctx, note = "") {
   const pop = S.filt ? `<div class="filt-pop" role="dialog" aria-label="Filtros">
     ${rodada}
     ${authors.length ? group("Autor", [["all", "Todos"], ...authors.map((k) => [k, esc(k)])].map(([k, l]) => opt("author", k, l, k === "all" ? !S.authors.size : S.authors.has(k), k === "all" ? "Opções de todo mundo" : `As opções de ${esc(k)} (junta com as outras marcadas)`)).join("")) : ""}
-    ${S.labelsOn ? group("Etiquetas", labelOpts(r)) : ""}
+    ${resVals.length ? group("Resolução", ["all", ...resVals].map((k) => (k === "all" ? opt("res", "all", "Todas", !S.resF.size, "Imagens e vídeos, de qualquer resolução")
+      : opt("res", k, `${k}<small>${resN.get(k)}</small>`, S.resF.has(k), `Só os vídeos em ${k} (junta com as outras marcadas)`))).join("")) : ""}
+    ${S.labelsOn ? labelGroup(r) : ""}
     ${ctx.kinds?.length > 1 ? group("Tipo", [["all", "Tudo"], ...ctx.kinds.map((k) => [k, KINDS[k]])].map(([k, l]) => opt("ov-kind", k, l, k === "all" ? !S.ov.kinds.size : S.ov.kinds.has(k))).join("")) : ""}
     ${togs ? `<section class="filt-group filt-togs">${togs}</section>` : ""}
   </div>` : "";
   const view = ctx.view ? `<div class="seg seg-ico seg-view" role="group" aria-label="Como ver">${[["hero", ICON.list, "Uma por item", "uma imagem grande por item"], ["grid", ICON.grid, "Grade", "todas as opções de cada item lado a lado"]].map(([k, ico, n, t]) => `<button data-act="ov-view" data-v="${k}" class="${S.ov.view === k ? "on" : ""}" aria-pressed="${S.ov.view === k}" title="${n}: ${t}" aria-label="${n}">${ico}</button>`).join("")}</div>` : "";
-  const btn = `<button class="fbtn ${on.length ? "on" : ""} ${S.filt ? "open" : ""}" data-act="filt" aria-haspopup="dialog" aria-expanded="${!!S.filt}" title="Aprovação, autor${ctx.kinds?.length > 1 ? ", tipo" : ""} e o que aparece nos cards">${ICO.funnel}Filtros${on.length ? `<b aria-label="${plural(on.length, "filtro ligado", "filtros ligados")}">${on.length}</b>` : ""}</button>`;
+  const btn = `<button class="fbtn ${on.length ? "on" : ""} ${S.filt ? "open" : ""}" data-act="filt" aria-haspopup="dialog" aria-expanded="${!!S.filt}" title="Aprovação, autor, resolução${ctx.kinds?.length > 1 ? ", tipo" : ""} e o que aparece nos cards">${ICO.funnel}Filtros${on.length ? `<b aria-label="${plural(on.length, "filtro ligado", "filtros ligados")}">${on.length}</b>` : ""}</button>`;
   const chips = on.length ? `<div class="fchips">${on.map(([k, l]) => `<button class="fchip" data-act="filt-off" data-v="${k}" title="Tirar este filtro">${esc(l)}${ICO.drop}</button>`).join("")}<button class="link fchips-clear" data-act="filt-off" data-v="all">Limpar</button>${note ? `<span class="fchips-note">${note}</span>` : ""}</div>` : "";
   if (ctx.bare) return { btn: `<span class="fbar-bare">${btn}${pop}</span>`, chips };
   // ico: Filtros is one more round icon in the page head, next to the
   // overview's view icons; what is on still shows as chips over the cards
   if (ctx.ico) {
-    const ib = `<button class="btn hico ${on.length ? "on" : ""}" data-act="filt" aria-haspopup="dialog" aria-expanded="${!!S.filt}" title="Filtros: aprovação, autor${ctx.kinds?.length > 1 ? ", tipo" : ""} e o que aparece nos cards" aria-label="Filtros">${ICO.funnel}${on.length ? `<b class="badge" aria-label="${plural(on.length, "filtro ligado", "filtros ligados")}">${on.length}</b>` : ""}</button>`;
+    const ib = `<button class="btn hico ${on.length ? "on" : ""}" data-act="filt" aria-haspopup="dialog" aria-expanded="${!!S.filt}" title="Filtros: aprovação, autor, resolução${ctx.kinds?.length > 1 ? ", tipo" : ""} e o que aparece nos cards" aria-label="Filtros">${ICO.funnel}${on.length ? `<b class="badge" aria-label="${plural(on.length, "filtro ligado", "filtros ligados")}">${on.length}</b>` : ""}</button>`;
     return { btn: `<span class="fbar-bare fbar-head">${view}${ib}${pop}</span>`, chips };
   }
   return `<div class="ov-bar fbar ${ctx.cls || ""}"><span class="fbar-end">${view}${btn}</span>${pop}</div>${chips}`;
@@ -1595,7 +1656,7 @@ function boardFilters(r, all, roundTasks) {
   const kinds = [...new Set(all.map((i) => i.kind))].filter((k) => KINDS[k]);
   const vers = [...new Set(roundTasks.map((t) => t.version || 1))].sort((a, b) => b - a);
   const pop = S.filt ? `<div class="filt-pop" role="dialog" aria-label="Filtros">
-    ${S.labelsOn ? group("Etiquetas", labelOpts(r)) : ""}
+    ${S.labelsOn ? labelGroup(r) : ""}
     ${kinds.length > 1 ? group("Tipo", [["all", "Tudo"], ...kinds.map((k) => [k, KINDS[k]])].map(([k, l]) => opt("ov-kind", k, l, k === "all" ? !S.ov.kinds.size : S.ov.kinds.has(k))).join("")) : ""}
     ${group("Tarefas", [opt("b-tasks", "now", "Atuais", now, `As do último retorno ${DA_CL} (v${cur}) e as que vieram depois`), ...(vers.length > 1 ? vers.map((v) => opt("b-tasks", String(v), `Da v${v}`, v === tv, `Só as tarefas do que ${A_CL} pediu na v${v}`)) : []), opt("b-tasks", "all", "Todas", !now && tv == null, "As tarefas de todas as versões")].join(""))}
     <section class="filt-group filt-togs"><button class="filt-tog ${S.bDone ? "on" : ""}" role="switch" aria-checked="${S.bDone}" data-act="b-done" title="As tarefas feitas e os cards prontos ou já mandados ${AO_CL}"><span class="filt-sw" aria-hidden="true"></span>Mostrar feitas e prontas</button></section>
@@ -1891,7 +1952,7 @@ function madeFrom(o, src) {
 function trioOf(r, it) {
   const pick = pickOf(r, it), lv = latestVer(it.id);
   const all = lv > 1 ? optsOf(it.id).filter((o) => verOf(o) === lv && o.id !== pick?.o.id) : [];
-  const shown = all.filter((o) => (showDrop(o) || !dropped(o)) && inAuthor(o));
+  const shown = all.filter((o) => (showDrop(o) || !dropped(o)) && inAuthor(o) && inRes(o));
   const changes = pick ? shown.filter((o) => madeFrom(o, pick.o)) : [];
   return {
     pick, all, changes, fresh: shown.filter((o) => !changes.includes(o)),
@@ -1899,8 +1960,8 @@ function trioOf(r, it) {
     born: lv > 1 && !optsOf(it.id).some((o) => verOf(o) < lv), // an item that only exists from this version on
   };
 }
-// with the author filter on, an item shows only when that person made something new in it
-const trioShown = (r, it) => { if (!inLabels(it)) return false; const t = trioOf(r, it); return !S.authors.size || t.changes.length + t.fresh.length > 0; };
+// with the author (or resolution) filter on, an item shows only when something new in it matches
+const trioShown = (r, it) => { if (!inLabels(it)) return false; const t = trioOf(r, it); return (!S.authors.size && !S.resF.size) || t.changes.length + t.fresh.length > 0; };
 // tools: the scene page's comments, upload (also by dropping files on the row) and ⋯
 function trioRow(r, it, { tools = false } = {}) {
   const t = trioOf(r, it), f = fbNow(r, it);
@@ -3656,6 +3717,7 @@ const ACTS = {
   appr(el) { S.appr = el.dataset.v; store.set("sala-appr", S.appr); S.peek.clear(); render(true); },
   // Autor and Tipo take more than one value; Todos / Tudo clears the group
   author(el) { toggleIn(S.authors, el.dataset.v); S.peek.clear(); render(true); },
+  res(el) { toggleIn(S.resF, el.dataset.v); S.peek.clear(); render(true); },
   "who-cycle"(el) {
     const it = itemOf(el.dataset.id), ks = [null, ...Object.keys(PEOPLE)];
     const next = ks[(ks.indexOf(it.assignee || null) + 1) % ks.length];
@@ -3788,8 +3850,9 @@ const ACTS = {
     const k = el.dataset.v, all = k === "all";
     if (all || k === "ver") S.ver = "now";
     if (all || k === "appr") { S.appr = "all"; store.set("sala-appr", "all"); }
-    if (all) { S.authors.clear(); S.ov.kinds.clear(); S.labelF.clear(); }
+    if (all) { S.authors.clear(); S.resF.clear(); S.ov.kinds.clear(); S.labelF.clear(); }
     else if (k.startsWith("author:")) S.authors.delete(k.slice(7));
+    else if (k.startsWith("res:")) S.resF.delete(k.slice(4));
     else if (k.startsWith("label:")) S.labelF.delete(k.slice(6));
     else if (k.startsWith("kind:")) S.ov.kinds.delete(k.slice(5));
     if (all || k === "curate") S.ov.curate = false;

@@ -18,7 +18,7 @@ const store = {
   get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
 };
-const blank = () => ({ sort: "new", state: new Set(), origin: new Set(), kind: new Set(), round: new Set(), scene: new Set(), author: new Set(), media: new Set(), role: new Set() });
+const blank = () => ({ sort: "new", state: new Set(), origin: new Set(), kind: new Set(), round: new Set(), scene: new Set(), author: new Set(), media: new Set(), role: new Set(), res: new Set() });
 const G = {
   f: blank(), q: "", group: null, soul: null, filt: false,
   size: Math.min(360, Math.max(120, +store.get("sala-gal-size") || 200)), // the thumbnails' width: a per-viewer convenience
@@ -154,8 +154,9 @@ function placeName(e) {
 const entryOf = (k) => (entries(), memo.map.get(k));
 
 // ---------- filters ----------
-const FACETS = ["state", "origin", "kind", "round", "scene", "author", "media", "role"];
-const valOf = { origin: (e) => e.origin, kind: (e) => e.kind, round: (e) => e.round, scene: (e) => e.scene, author: (e) => e.author, media: (e) => (e.video ? "video" : "image"), role: (e) => e.role };
+const FACETS = ["state", "origin", "kind", "round", "scene", "author", "media", "role", "res"];
+const valOf = { origin: (e) => e.origin, kind: (e) => e.kind, round: (e) => e.round, scene: (e) => e.scene, author: (e) => e.author, media: (e) => (e.video ? "video" : "image"), role: (e) => e.role,
+  res: (e) => (e.video && e.o ? C.resOf?.(e.o) || "" : "") };
 // every group of chips combines with the others; inside a group the chips add up (OR). skip: the group a count is for
 const hasVal = (g, e, v) => (g === "scene" && e.scenes ? e.scenes.has(v) : valOf[g](e) === v);
 function pass(e, skip = null) {
@@ -184,7 +185,7 @@ function shown() {
   return list.sort((a, b) => (G.f.sort === "old" ? a.at.localeCompare(b.at) : b.at.localeCompare(a.at)));
 }
 const chipLabel = { state: (v) => STATE[v], origin: (v) => ORIGIN[v], kind: (v) => C.KINDS[v] || v, round: (v) => C.roundOf(v)?.code || v,
-  scene: (v) => `${two(+v)} ${C.sceneName(+v)}`, author: (v) => v, media: (v) => MEDIA[v], role: (v) => ROLE[v] };
+  scene: (v) => `${two(+v)} ${C.sceneName(+v)}`, author: (v) => v, media: (v) => MEDIA[v], role: (v) => ROLE[v], res: (v) => v };
 function filtersOn() {
   const on = [];
   if (G.f.sort !== "new") on.push(["sort", "", SORT[G.f.sort]]);
@@ -206,6 +207,7 @@ function filterPop() {
   const scenes = [...new Set(all.flatMap((e) => (e.scenes ? [...e.scenes] : [e.scene])).filter(Boolean))].sort((a, b) => a - b);
   const kinds = Object.keys(C.KINDS).filter((k) => all.some((e) => e.kind === k));
   const authors = uniq((e) => e.author).sort((a, b) => (a === C.CL) - (b === C.CL) || a.localeCompare(b));
+  const sizes = uniq(valOf.res).sort((a, b) => parseInt(b) - parseInt(a));
   return `<div class="filt-pop gal-pop" role="dialog" aria-label="Filtros">
     <section class="filt-group"><p class="filt-label">Ordem</p><div class="filt-opts">${Object.entries(SORT).map(([k, l]) =>
       `<button class="fopt ${G.f.sort === k ? "on" : ""}" data-g="sort" data-v="${k}" aria-pressed="${G.f.sort === k}">${l}</button>`).join("")}</div></section>
@@ -217,6 +219,7 @@ function filterPop() {
     ${facet("author", "Autor", authors)}
     ${facet("media", "Mídia", Object.keys(MEDIA))}
     ${facet("role", "Vídeo", Object.keys(ROLE))}
+    ${facet("res", "Resolução", sizes)}
   </div>`;
 }
 
