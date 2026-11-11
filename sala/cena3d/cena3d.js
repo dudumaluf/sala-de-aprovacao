@@ -908,7 +908,7 @@ function placeProxy() {
   E.proxy.updateMatrixWorld(true);
 }
 // a figure with keys on the timeline, dropped somewhere (moved or turned, or a handle posed): its key at the playhead
-// takes it (timeline.js keyFig), so the timeline doesn't pull it back to where it was (Dudu, 05/11)
+// takes it (timeline.js keyFig), so the timeline doesn't pull it back to where it was (05/11)
 function keyDragged() {
   const s = E.sel;
   if (!s?.fig || !E.tl?.keyFig || E.mode === "scale") return;
